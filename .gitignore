@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+*.venv/
+venv/
+
+# Django
+backend/staticfiles/
+backend/media/
+db.sqlite3
+
+# Env / secrets
+.env
+*.env
+!.env.example
+
+# Node / React
+node_modules/
+dashboard/dist/
+dashboard/.vite/
+
+# Entry agent local state
+entry-agent/offline_queue.db
+entry-agent/*.log
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

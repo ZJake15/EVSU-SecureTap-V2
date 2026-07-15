@@ -1,0 +1,8 @@
+# Pinned below 5 deliberately: opencv-python 5.x dropped cv2.CascadeClassifier
+# and no longer bundles any Haar cascade XML files under cv2.data - the 4.x
+# line still ships haarcascade_frontalface_default.xml, which is what draws
+# the face box on the entry-agent's live preview.
+opencv-python>=4.10,<5
+requests>=2.32
+python-dotenv>=1.0
+Pillow>=10.4

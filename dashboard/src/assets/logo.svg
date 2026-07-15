@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="EVSU SecureTap logo placeholder">
+  <path d="M32 4 L58 14 V30 C58 46 47 57 32 60 C17 57 6 46 6 30 V14 Z" fill="#7B1113" stroke="#590c0e" stroke-width="2"/>
+  <text x="32" y="34" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" font-weight="700" fill="#ffffff">EVSU</text>
+  <text x="32" y="47" text-anchor="middle" font-family="system-ui, sans-serif" font-size="7" font-weight="500" fill="#f3c6c7">SECURETAP</text>
+</svg>

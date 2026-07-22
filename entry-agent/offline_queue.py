@@ -91,7 +91,7 @@ class OfflineQueue:
         # blocks enqueue() from the main polling loop.
         for row_id, nfc_id, gate_location, direction in rows:
             try:
-                self.api_client.verify(nfc_id, gate_location, direction)
+                self.api_client.verify(gate_location, direction, nfc_id=nfc_id)
             except requests.RequestException:
                 break  # still offline - stop this cycle, the next interval will retry
             else:

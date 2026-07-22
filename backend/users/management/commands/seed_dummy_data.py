@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from accounts.models import AdminProfile
-from users.models import FaceEncoding, Person
+from users.models import FaceEmbedding, Person
 
 # username, role, password - change these passwords after first login.
 ADMIN_ACCOUNTS = [
@@ -23,7 +23,7 @@ DUMMY_PEOPLE = [
 
 
 class Command(BaseCommand):
-    help = "Seeds demo dashboard accounts and dummy Person/FaceEncoding rows for local testing."
+    help = "Seeds demo dashboard accounts and dummy Person/FaceEmbedding rows for local testing."
 
     def handle(self, *args, **options):
         with transaction.atomic():
@@ -49,7 +49,7 @@ class Command(BaseCommand):
     def _seed_dummy_people(self):
         self.stdout.write(
             self.style.WARNING(
-                "Dummy Person rows get RANDOM face encodings (no real photo behind them) - "
+                "Dummy Person rows get RANDOM face embeddings (no real photo behind them) - "
                 "they're only good for exercising listing/logs/reports. Register at least one "
                 "real person with a real photo (via the dashboard or /api/users) to test actual "
                 "face verification end-to-end."
@@ -67,6 +67,10 @@ class Command(BaseCommand):
                 },
             )
             if created:
-                fake_encoding = rng.normal(size=128).tolist()
-                FaceEncoding.objects.create(person=person, encoding=fake_encoding)
+                # ArcFace embeddings are unit-normalized - matching (a plain
+                # dot product as cosine similarity) assumes that, so a fake
+                # embedding has to be normalized too, not just random.
+                fake_vector = rng.normal(size=512)
+                fake_embedding = (fake_vector / np.linalg.norm(fake_vector)).tolist()
+                FaceEmbedding.objects.create(person=person, embedding=fake_embedding)
                 self.stdout.write(f"  Created dummy person: {full_name} ({student_id})")

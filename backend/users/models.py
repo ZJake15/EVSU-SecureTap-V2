@@ -25,12 +25,30 @@ class Person(models.Model):
         return f"{self.full_name} ({self.student_or_employee_id})"
 
 
-class FaceEncoding(models.Model):
-    """The 128-d face_recognition encoding vector for a Person - not the raw photo."""
+class FaceEmbedding(models.Model):
+    """One 512-d ArcFace (InsightFace buffalo_l) embedding for a Person - a
+    person can have several (a guided multi-photo enrollment captures 3-5
+    with slight variation), not just one, so a gate-time match compares
+    against every embedding a person has and takes their best score. The
+    source photo is kept alongside the vector in case the model changes
+    later and embeddings need to be regenerated from the original images."""
 
-    person = models.OneToOneField(Person, on_delete=models.CASCADE, related_name="face_encoding")
-    encoding = models.JSONField()
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="face_embeddings")
+    embedding = models.JSONField()
+    # Nullable only for fabricated dummy/seed rows with no real photo behind
+    # them (see seed_dummy_data) - every embedding created through the real
+    # API/admin/bulk-import paths always has one.
+    source_image = models.ImageField(upload_to="enrollment_photos/%Y/%m/%d/", null=True, blank=True)
+    # InsightFace's own detection confidence for the face this embedding came
+    # from - not the same thing as match confidence at gate time, just a
+    # record of how confidently the enrollment photo's face was detected.
+    detection_score = models.FloatField(null=True, blank=True)
+    # True for embeddings that came from a single-photo path with no live
+    # quality gate a human confirmed (bulk CSV/XLSX import) - lets the
+    # dashboard/thesis evaluation distinguish "guided capture" enrollments
+    # from "whatever photo happened to be on file" ones.
+    is_low_confidence = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Encoding for {self.person.full_name}"
+        return f"Embedding for {self.person.full_name} ({self.created_at:%Y-%m-%d})"

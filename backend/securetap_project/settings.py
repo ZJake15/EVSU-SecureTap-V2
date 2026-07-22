@@ -136,14 +136,56 @@ CORS_ALLOWED_ORIGINS = env.list(
 # device/service, not a logged-in dashboard user.
 ENTRY_AGENT_SERVICE_TOKEN = env("ENTRY_AGENT_SERVICE_TOKEN")
 
-# face_recognition compare distance threshold - lower is stricter. 0.6 is the
-# upstream library's own documented default, but that's tuned for general
-# face-matching demos, not an access-control gate - at 0.6 an unenrolled
-# stranger can easily land within range of *some* enrolled face by chance,
-# especially as more people get enrolled. 0.45 trades a few more "please
-# scan again" false rejects for far fewer wrongly-granted false accepts,
-# which is the right tradeoff for a security gate.
-FACE_MATCH_THRESHOLD = env.float("FACE_MATCH_THRESHOLD", default=0.45)
+# ArcFace (InsightFace buffalo_l) embeddings are compared by cosine
+# similarity, not the raw Euclidean distance the old dlib/face_recognition
+# pipeline used - HIGHER = MORE similar here (the opposite of the old
+# FACE_MATCH_THRESHOLD, which was lower = stricter). Named differently on
+# purpose so the two can never be silently confused. 0.45 is a starting
+# point, not a validated value - run `manage.py evaluate_threshold` once
+# enough real people are enrolled and use whatever it recommends instead.
+FACE_MATCH_SIMILARITY_THRESHOLD = env.float("FACE_MATCH_SIMILARITY_THRESHOLD", default=0.45)
+
+# A face match is sent to the NFC tiebreak flow (see IdentifyView) instead
+# of being auto-accepted/rejected when either: the top match's similarity is
+# within this margin of the threshold (a "barely passed/failed" call), or
+# the top-1 and top-2 candidates are within this margin of each other (two
+# people who look similar enough to be genuinely ambiguous).
+TIEBREAK_MARGIN = env.float("TIEBREAK_MARGIN", default=0.05)
+# How long a "please tap your card" prompt stays open before the gate scan
+# gives up waiting and logs the attempt as unresolved/ambiguous instead.
+TIEBREAK_TIMEOUT_SECONDS = env.int("TIEBREAK_TIMEOUT_SECONDS", default=10)
+
+# Rolling-window majority vote: a face match isn't confirmed into a real
+# EntryLog row from a single frame - the same person has to be the top match
+# in at least VOTE_REQUIRED_AGREEMENT of the last VOTE_WINDOW_SIZE scan
+# attempts for this gate, within VOTE_WINDOW_SECONDS, before it's trusted.
+# The same voting logic now also gates "Unknown" (see IdentifyView) - widened
+# slightly from 3/3s so someone walking through gets a few more real chances
+# to land a usable frame within the window.
+VOTE_WINDOW_SIZE = env.int("VOTE_WINDOW_SIZE", default=4)
+VOTE_REQUIRED_AGREEMENT = env.int("VOTE_REQUIRED_AGREEMENT", default=2)
+VOTE_WINDOW_SECONDS = env.int("VOTE_WINDOW_SECONDS", default=4)
+
+# Detector input size for the gate-scan path specifically (see
+# insightface_utils._get_scan_app) - smaller than enrollment's fixed 640x640
+# so per-frame detection is faster during the continuous scan, at the cost
+# of some range on faces far from the camera. Not a security-relevant
+# threshold like the ones below, just a speed/range tradeoff - tune based on
+# your camera's typical distance-to-face at the gate.
+GATE_SCAN_DET_SIZE = env.int("GATE_SCAN_DET_SIZE", default=480)
+
+# Below this Laplacian variance, a gate-scan frame is treated as too
+# motion-blurred to trust - skipped entirely (not counted as "no match"),
+# waiting for a sharper frame instead. Deliberately more lenient than
+# enrollment's MIN_BLUR_VARIANCE (80.0, in insightface_utils.py) since a
+# walk-by frame is never going to be as sharp as a posed enrollment photo -
+# a starting point to tune, same as FACE_MATCH_SIMILARITY_THRESHOLD.
+GATE_SCAN_MIN_BLUR_VARIANCE = env.float("GATE_SCAN_MIN_BLUR_VARIANCE", default=25.0)
+
+# A face this close to the edge of the frame (as a fraction of frame
+# width/height) is likely partially cut off - skipped rather than matched,
+# since a partial face produces unreliable embeddings.
+FACE_EDGE_MARGIN_RATIO = env.float("FACE_EDGE_MARGIN_RATIO", default=0.02)
 
 # The continuous camera scan re-checks the gate every couple of seconds, so a
 # person lingering nearby would otherwise create a new log row on every pass.

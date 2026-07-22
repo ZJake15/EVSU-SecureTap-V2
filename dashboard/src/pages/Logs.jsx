@@ -10,6 +10,9 @@ export default function Logs() {
   const [count, setCount] = useState(0);
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
+  const [hideUnknown, setHideUnknown] = useState(false);
+
+  const visibleLogs = hideUnknown ? logs.filter((log) => log.status !== "failed") : logs;
 
   useEffect(() => {
     let isCancelled = false;
@@ -40,13 +43,15 @@ export default function Logs() {
   };
 
   const exportCsv = () => {
-    const header = ["Name", "Timestamp", "Direction", "Method", "Status", "Gate"];
-    const rows = logs.map((log) => [
+    const header = ["Name", "Timestamp", "Direction", "Method", "Status", "Confidence", "Reason", "Gate"];
+    const rows = visibleLogs.map((log) => [
       log.person_name,
       log.timestamp,
       log.direction,
       log.verification_method,
       log.status,
+      log.match_confidence != null ? Math.round(log.match_confidence * 100) : "",
+      log.failure_reason,
       log.gate_location,
     ]);
     const csv = [header, ...rows]
@@ -106,11 +111,21 @@ export default function Logs() {
         </select>
       </div>
 
+      <label className="mb-3 flex items-center gap-2 text-sm text-gray-600">
+        <input
+          type="checkbox"
+          checked={hideUnknown}
+          onChange={(e) => setHideUnknown(e.target.checked)}
+          className="rounded border-gray-300"
+        />
+        Hide unknown/failed entries
+      </label>
+
       <div className="overflow-x-auto rounded border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              {["Name", "Timestamp", "Direction", "Method", "Status", "Gate"].map((heading) => (
+              {["Name", "Timestamp", "Direction", "Method", "Status", "Confidence", "Reason", "Gate"].map((heading) => (
                 <th key={heading} className="px-4 py-2 text-left font-medium text-gray-600">
                   {heading}
                 </th>
@@ -118,7 +133,7 @@ export default function Logs() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {logs.map((log) => (
+            {visibleLogs.map((log) => (
               <tr key={log.id}>
                 <td className="px-4 py-2">{log.person_name || "Unknown"}</td>
                 <td className="px-4 py-2">{new Date(log.timestamp).toLocaleString()}</td>
@@ -127,12 +142,16 @@ export default function Logs() {
                 <td className="px-4 py-2">
                   <StatusBadge status={log.status} />
                 </td>
+                <td className="px-4 py-2">
+                  {log.match_confidence != null ? `${Math.round(log.match_confidence * 100)}%` : "—"}
+                </td>
+                <td className="px-4 py-2 text-gray-600">{log.failure_reason || "—"}</td>
                 <td className="px-4 py-2">{log.gate_location}</td>
               </tr>
             ))}
-            {!isLoading && logs.length === 0 && (
+            {!isLoading && visibleLogs.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                <td colSpan={8} className="px-4 py-6 text-center text-gray-500">
                   No matching logs.
                 </td>
               </tr>

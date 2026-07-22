@@ -24,6 +24,7 @@ class EntryLogSerializer(serializers.ModelSerializer):
             "status",
             "gate_location",
             "failure_reason",
+            "match_confidence",
         ]
 
     def get_person_name(self, obj):
@@ -48,13 +49,24 @@ class EntryLogSerializer(serializers.ModelSerializer):
 
 
 class VerifyRequestSerializer(serializers.Serializer):
-    """A card tap is now a lookup, not a face check - no image involved."""
+    """A card tap is a lookup, not a face check - no image involved. The
+    entry-agent's manual ID-entry fallback (for when the reader itself
+    fails) hits this same endpoint with student_or_employee_id instead of
+    nfc_id - exactly one of the two must be provided."""
 
-    nfc_id = serializers.CharField(max_length=100)
+    nfc_id = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    student_or_employee_id = serializers.CharField(max_length=50, required=False, allow_blank=True)
     gate_location = serializers.CharField(max_length=100)
     direction = serializers.ChoiceField(
         choices=EntryLog.Direction.choices, default=EntryLog.Direction.ENTRY
     )
+
+    def validate(self, data):
+        if not data.get("nfc_id") and not data.get("student_or_employee_id"):
+            raise serializers.ValidationError(
+                "Either nfc_id or student_or_employee_id is required."
+            )
+        return data
 
 
 class IdentifyRequestSerializer(serializers.Serializer):

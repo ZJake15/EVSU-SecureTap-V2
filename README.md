@@ -72,7 +72,7 @@ python manage.py runserver
 
 Backend runs at `http://localhost:8000`. Django admin at `http://localhost:8000/admin` (log in with a seeded admin account below, or `python manage.py createsuperuser`).
 
-**First run only:** the first request that touches face recognition (enrolling someone, or the entry-agent's first scan) downloads the InsightFace `buffalo_l` model (~280MB) automatically, cached afterward under `%USERPROFILE%\.insightface\models\`. Needs internet access the first time; instant after that.
+**First run only:** the first request that touches face recognition (enrolling someone, or the entry-agent's first scan) downloads the InsightFace `buffalo_s` model (~125MB) automatically, cached afterward under `%USERPROFILE%\.insightface\models\`. Needs internet access the first time; instant after that. (`buffalo_s` was chosen over the larger `buffalo_l` for CPU speed on low-power hardware with no GPU - see `insightface_utils.py`. If you ever switch models, run `python manage.py recompute_embeddings` afterward or existing enrollments won't match anymore.)
 
 Seeded demo dashboard logins (from `seed_dummy_data`) - **change these passwords before any real deployment**:
 

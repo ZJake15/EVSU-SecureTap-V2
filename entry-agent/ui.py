@@ -1,7 +1,9 @@
 import io
 import os
 import queue
+import threading
 import tkinter as tk
+import winsound
 from datetime import datetime
 
 import customtkinter as ctk
@@ -31,7 +33,7 @@ FONT_MONO = "Consolas"
 
 FOCUS_CHECK_MS = 300
 RESET_DELAY_MS = 8000
-VIDEO_REFRESH_MS = 80  # ~12 fps - smooth enough for a security preview
+VIDEO_REFRESH_MS = 42  # ~24 fps
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 ICON_PATH = os.path.join(ASSETS_DIR, "icon.png")
@@ -110,6 +112,23 @@ def _scaled_size(source_size, target_size):
         return max(1, target_width), max(1, target_height)
     scale = min(target_width / source_width, target_height / source_height)
     return max(1, int(source_width * scale)), max(1, int(source_height * scale))
+
+
+def _play_alert_sound():
+    """A short alternating-tone alarm for an unrecognized face. winsound.Beep
+    blocks its calling thread for the full duration, so this always runs on
+    a throwaway daemon thread rather than the Tk main thread - otherwise the
+    whole UI would freeze for the length of the alarm."""
+
+    def _beep():
+        try:
+            for _ in range(2):
+                winsound.Beep(1200, 180)
+                winsound.Beep(900, 180)
+        except RuntimeError:
+            pass  # no audio device on this machine - never worth blocking the guard's UI over
+
+    threading.Thread(target=_beep, daemon=True).start()
 
 
 def _hex_to_rgb(color):
@@ -443,8 +462,10 @@ class FeedbackWindow:
     strip would restate the same person every ~0.2s scan cycle.
     """
 
-    MIN_VIDEO_SIZE = (480, 360)
+    MIN_VIDEO_SIZE = (320, 240)
     MAX_LOG_ROWS = 60
+    LOG_GRID_COLUMNS = 2
+    ALERT_DISPLAY_MS = 6000
 
     def __init__(self, parent, gate_location, direction, get_preview_frame, on_close=None):
         self._get_preview_frame = get_preview_frame
@@ -460,12 +481,13 @@ class FeedbackWindow:
         self._log_entries = []  # newest first
         self._log_photo_images = []  # keeps CTkImage refs alive for the log list
         self.stats = {"entries": 0, "exits": 0, "unknown": 0}
+        self._alert_hide_job = None
 
         self.window = ctk.CTkToplevel(parent)
         self.window.title(f"EVSU SecureTap - Camera scanner - {gate_location}")
         self.window.configure(fg_color=BG)
-        self.window.geometry("1180x760")
-        self.window.minsize(880, 600)
+        self.window.geometry("1280x780")
+        self.window.minsize(920, 620)
         self.window.protocol("WM_DELETE_WINDOW", self._handle_close)
         self.window.bind("<Escape>", lambda _e: self._handle_close())
         _apply_icon(self.window)
@@ -515,8 +537,8 @@ class FeedbackWindow:
         area = ctk.CTkFrame(self.window, fg_color="transparent")
         area.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 8))
         area.grid_rowconfigure(0, weight=1)
-        area.grid_columnconfigure(0, weight=3)
-        area.grid_columnconfigure(1, weight=1)
+        area.grid_columnconfigure(0, weight=1)
+        area.grid_columnconfigure(1, weight=2)
 
         video_frame = ctk.CTkFrame(area, fg_color="#111827", corner_radius=12)
         video_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
@@ -528,6 +550,10 @@ class FeedbackWindow:
             video_frame, text="Starting camera...", font=(FONT, 10), text_color="#9CA3AF", fg_color="#111827"
         )
         self.caption_label.place(relx=0.02, rely=0.97, anchor="sw")
+        self.alert_banner = ctk.CTkLabel(
+            video_frame, text="", font=(FONT, 13, "bold"), text_color="white",
+            fg_color=DANGER, corner_radius=10,
+        )
 
         log_frame = ctk.CTkFrame(area, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=BORDER)
         log_frame.grid(row=0, column=1, sticky="nsew")
@@ -538,6 +564,8 @@ class FeedbackWindow:
         )
         self.log_list = ctk.CTkScrollableFrame(log_frame, fg_color="transparent")
         self.log_list.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 10))
+        for col in range(self.LOG_GRID_COLUMNS):
+            self.log_list.grid_columnconfigure(col, weight=1, uniform="log_card")
 
     def _build_status_bar(self):
         bar = ctk.CTkFrame(self.window, fg_color="transparent")
@@ -610,9 +638,29 @@ class FeedbackWindow:
                 self.stats[key] += 1
             else:
                 self.stats["unknown"] += 1
+                self._show_unknown_alert()
+                _play_alert_sound()
             self._push_log_entry(item)
 
         self._refresh_stat_labels()
+
+    def _show_unknown_alert(self):
+        """A visible banner over the video feed plus an audible alarm - each
+        fires once per genuinely new unmatched-face event (the same dedup
+        the stats/log already rely on upstream in this method, keyed off
+        log_id), not on every ~0.2s poll while the person is still in
+        frame, so this can't turn into a continuous blare."""
+        self.alert_banner.configure(text="⚠  Unknown person detected — verify identity")
+        self.alert_banner.place(relx=0.5, rely=0.04, anchor="n")
+        if self._alert_hide_job:
+            self.window.after_cancel(self._alert_hide_job)
+        self._alert_hide_job = self.window.after(self.ALERT_DISPLAY_MS, self._hide_unknown_alert)
+
+    def _hide_unknown_alert(self):
+        self._alert_hide_job = None
+        if self._closed:
+            return
+        self.alert_banner.place_forget()
 
     def _refresh_stat_labels(self):
         self.stat_tiles["entries"].configure(text=str(self.stats["entries"]))
@@ -620,7 +668,7 @@ class FeedbackWindow:
         self.stat_tiles["unknown"].configure(text=str(self.stats["unknown"]))
         self.stat_tiles["today"].configure(text=str(self.stats["entries"] + self.stats["exits"]))
 
-    LOG_THUMB_SIZE = 36
+    LOG_THUMB_SIZE = 64
 
     def _push_log_entry(self, item):
         timestamp = datetime.now().strftime("%I:%M:%S %p")
@@ -654,26 +702,27 @@ class FeedbackWindow:
         if not self._log_entries:
             ctk.CTkLabel(
                 self.log_list, text="Waiting for the first scan...", font=(FONT, 11), text_color=TEXT_MUTED
-            ).pack(pady=12)
+            ).grid(row=0, column=0, columnspan=self.LOG_GRID_COLUMNS, pady=12)
             return
         self._log_photo_images = []  # keep CTkImage refs alive - Tk drops unreferenced ones
-        for entry in self._log_entries:
-            row = ctk.CTkFrame(self.log_list, fg_color=BG, corner_radius=8)
-            row.pack(fill="x", pady=4, padx=2)
+        for index, entry in enumerate(self._log_entries):
+            row, col = divmod(index, self.LOG_GRID_COLUMNS)
+            card = ctk.CTkFrame(self.log_list, fg_color=BG, corner_radius=10)
+            card.grid(row=row, column=col, sticky="nsew", padx=5, pady=5)
 
             thumb_image = self._log_thumbnail(entry)
             self._log_photo_images.append(thumb_image)
-            ctk.CTkLabel(row, image=thumb_image, text="").pack(side="left", padx=(10, 8), pady=8)
+            ctk.CTkLabel(card, image=thumb_image, text="").pack(pady=(12, 6))
 
-            text_block = ctk.CTkFrame(row, fg_color="transparent")
-            text_block.pack(side="left", fill="x", expand=True, padx=(0, 10), pady=8)
             name_color = TEXT_PRIMARY if entry["matched"] else WARNING
             ctk.CTkLabel(
-                text_block, text=entry["name"], font=(FONT, 12, "bold"), text_color=name_color, anchor="w"
-            ).pack(fill="x")
-            ctk.CTkLabel(text_block, text=entry["meta"], font=(FONT, 10), text_color=TEXT_MUTED, anchor="w").pack(
-                fill="x"
-            )
+                card, text=entry["name"], font=(FONT, 12, "bold"), text_color=name_color,
+                wraplength=120, justify="center",
+            ).pack(padx=8)
+            ctk.CTkLabel(
+                card, text=entry["meta"], font=(FONT, 9), text_color=TEXT_MUTED,
+                wraplength=120, justify="center",
+            ).pack(padx=8, pady=(2, 12))
 
     def _update_video(self):
         if self._closed:
@@ -935,6 +984,15 @@ class CardTapWindow:
 
     def _keep_focus(self):
         if self._closed:
+            return
+        # Don't steal focus back from the manual-entry box while it's open -
+        # otherwise every keystroke the guard types there gets yanked away to
+        # this hidden field within FOCUS_CHECK_MS, and nothing visible ever
+        # gets typed. The reader is HID-keyboard-emulation, so it needs this
+        # field focused to catch a tap, but that's only relevant when the
+        # guard isn't already deliberately using the manual fallback.
+        if self.manual_frame.winfo_ismapped():
+            self.window.after(FOCUS_CHECK_MS, self._keep_focus)
             return
         if self.window.focus_get() is not self._card_input:
             self._card_input.focus_force()

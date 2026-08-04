@@ -26,7 +26,7 @@ class Person(models.Model):
 
 
 class FaceEmbedding(models.Model):
-    """One 512-d ArcFace (InsightFace buffalo_l) embedding for a Person - a
+    """One 512-d ArcFace (InsightFace buffalo_s) embedding for a Person - a
     person can have several (a guided multi-photo enrollment captures 3-5
     with slight variation), not just one, so a gate-time match compares
     against every embedding a person has and takes their best score. The

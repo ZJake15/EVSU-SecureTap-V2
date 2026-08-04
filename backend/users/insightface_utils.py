@@ -21,17 +21,41 @@ _scan_app = None
 _scan_app_lock = threading.Lock()
 
 
+# buffalo_s (not buffalo_l): same 512-d ArcFace embedding space either way,
+# but buffalo_l's recognition model (w600k_r50, a ResNet-50) benchmarked at
+# ~900ms/face on this project's target hardware (a fanless low-power laptop
+# CPU, no GPU) - buffalo_s's w600k_mbf (MobileFaceNet) is the same job on a
+# much cheaper backbone. Enrollment and the gate scan MUST use the same pack:
+# they compare embeddings from each other via cosine similarity, which is
+# only meaningful within one model's embedding space. If this ever changes
+# again, every stored FaceEmbedding needs regenerating from its source_image
+# (see the recompute_embeddings management command) before scanning will
+# match anything again.
+_MODEL_PACK = "buffalo_s"
+
+# This pack bundles 5 ONNX models (detection, recognition, genderage,
+# landmark_2d_106, landmark_3d_68), but FaceAnalysis.get() runs every loaded
+# model on every detected face regardless of whether anything downstream
+# reads its output. Neither compute_face_embedding nor
+# compute_face_embeddings_and_boxes ever touch face.gender/age/landmark_* -
+# only bbox, det_score and normed_embedding - so loading/running the other 3
+# is pure wasted CPU time on every enrollment and every ~0.2s gate scan.
+_REQUIRED_MODULES = ["detection", "recognition"]
+
+
 def _get_app():
-    """Lazily loads the full-size InsightFace buffalo_l model once per
-    process and reuses it for enrollment, where accuracy on a deliberately
-    posed, human-confirmed photo matters more than speed - constructing
-    FaceAnalysis is expensive (loads 5 ONNX models), so this must not
+    """Lazily loads the full-size InsightFace model once per process and
+    reuses it for enrollment, where accuracy on a deliberately posed,
+    human-confirmed photo matters more than speed - constructing
+    FaceAnalysis is expensive (loads multiple ONNX models), so this must not
     happen per-request."""
     global _app
     if _app is None:
         with _app_lock:
             if _app is None:
-                app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+                app = FaceAnalysis(
+                    name=_MODEL_PACK, providers=["CPUExecutionProvider"], allowed_modules=_REQUIRED_MODULES
+                )
                 app.prepare(ctx_id=0, det_size=(640, 640))
                 _app = app
     return _app
@@ -40,20 +64,21 @@ def _get_app():
 def _get_scan_app():
     """A second, smaller-input InsightFace instance dedicated to the gate
     scan (compute_face_embeddings_and_boxes). The continuous scan needs to
-    keep up with someone walking through at normal pace - detection time is
-    the dominant per-poll cost (~0.4-0.9s at the full 640x640 enrollment
-    size), so a smaller GATE_SCAN_DET_SIZE trades some far-away-face
-    detection range for a meaningfully faster per-frame turnaround, which
-    in turn means more real polls land inside the multi-frame voting window
-    while someone crosses the gate. Kept as a genuinely separate model
-    instance (not just a different det_size on the same one) so enrollment
-    quality is never affected by this - costs extra memory (~280MB) for
-    the second model, accepted deliberately for this project's scale."""
+    keep up with someone walking through at normal pace, so a smaller
+    GATE_SCAN_DET_SIZE trades some far-away-face detection range for a
+    meaningfully faster per-frame turnaround, which in turn means more real
+    polls land inside the multi-frame voting window while someone crosses
+    the gate. Kept as a genuinely separate model instance (not just a
+    different det_size on the same one) so enrollment quality is never
+    affected by this - costs extra memory for the second model, accepted
+    deliberately for this project's scale."""
     global _scan_app
     if _scan_app is None:
         with _scan_app_lock:
             if _scan_app is None:
-                app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+                app = FaceAnalysis(
+                    name=_MODEL_PACK, providers=["CPUExecutionProvider"], allowed_modules=_REQUIRED_MODULES
+                )
                 det_size = settings.GATE_SCAN_DET_SIZE
                 app.prepare(ctx_id=0, det_size=(det_size, det_size))
                 _scan_app = app

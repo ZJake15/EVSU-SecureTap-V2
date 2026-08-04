@@ -136,7 +136,7 @@ CORS_ALLOWED_ORIGINS = env.list(
 # device/service, not a logged-in dashboard user.
 ENTRY_AGENT_SERVICE_TOKEN = env("ENTRY_AGENT_SERVICE_TOKEN")
 
-# ArcFace (InsightFace buffalo_l) embeddings are compared by cosine
+# ArcFace (InsightFace buffalo_s) embeddings are compared by cosine
 # similarity, not the raw Euclidean distance the old dlib/face_recognition
 # pipeline used - HIGHER = MORE similar here (the opposite of the old
 # FACE_MATCH_THRESHOLD, which was lower = stricter). Named differently on

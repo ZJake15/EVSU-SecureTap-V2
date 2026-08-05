@@ -464,7 +464,7 @@ class FeedbackWindow:
 
     MIN_VIDEO_SIZE = (320, 240)
     MAX_LOG_ROWS = 60
-    LOG_GRID_COLUMNS = 2
+    LOG_GRID_COLUMNS = 4
     ALERT_DISPLAY_MS = 6000
 
     def __init__(self, parent, gate_location, direction, get_preview_frame, on_close=None):
@@ -487,7 +487,7 @@ class FeedbackWindow:
         self.window.title(f"EVSU SecureTap - Camera scanner - {gate_location}")
         self.window.configure(fg_color=BG)
         self.window.geometry("1280x780")
-        self.window.minsize(920, 620)
+        self.window.minsize(1040, 640)
         self.window.protocol("WM_DELETE_WINDOW", self._handle_close)
         self.window.bind("<Escape>", lambda _e: self._handle_close())
         _apply_icon(self.window)
@@ -668,18 +668,21 @@ class FeedbackWindow:
         self.stat_tiles["unknown"].configure(text=str(self.stats["unknown"]))
         self.stat_tiles["today"].configure(text=str(self.stats["entries"] + self.stats["exits"]))
 
-    LOG_THUMB_SIZE = 64
+    LOG_THUMB_SIZE = 84
 
     def _push_log_entry(self, item):
         timestamp = datetime.now().strftime("%I:%M:%S %p")
         if item["matched"]:
-            meta = f"{item.get('student_id') or '—'} · {item['direction'].capitalize()} · {timestamp}"
+            meta = f"{item.get('student_id') or '—'} · {timestamp}"
+            badge_text = item["direction"].upper()
         else:
-            meta = f"not matched · flagged · {timestamp}"
+            meta = f"Not matched · {timestamp}"
+            badge_text = "UNKNOWN"
         self._log_entries.insert(0, {
             "name": item["name"] if item["matched"] else "Unknown face",
             "matched": item["matched"],
             "meta": meta,
+            "badge_text": badge_text,
             "photo_bytes": item.get("photo_bytes"),
         })
         self._log_entries = self._log_entries[: self.MAX_LOG_ROWS]
@@ -707,22 +710,36 @@ class FeedbackWindow:
         self._log_photo_images = []  # keep CTkImage refs alive - Tk drops unreferenced ones
         for index, entry in enumerate(self._log_entries):
             row, col = divmod(index, self.LOG_GRID_COLUMNS)
-            card = ctk.CTkFrame(self.log_list, fg_color=BG, corner_radius=10)
-            card.grid(row=row, column=col, sticky="nsew", padx=5, pady=5)
+            status_color = SUCCESS if entry["matched"] else WARNING
+            card = ctk.CTkFrame(
+                self.log_list, fg_color=CARD_BG, corner_radius=14,
+                border_width=2, border_color=status_color,
+            )
+            card.grid(row=row, column=col, sticky="nsew", padx=6, pady=6)
+
+            ctk.CTkLabel(
+                card, text=entry["badge_text"], font=(FONT, 9, "bold"), text_color="white",
+                fg_color=status_color, corner_radius=8,
+            ).pack(pady=(10, 8), ipadx=8, ipady=2)
 
             thumb_image = self._log_thumbnail(entry)
             self._log_photo_images.append(thumb_image)
-            ctk.CTkLabel(card, image=thumb_image, text="").pack(pady=(12, 6))
+            thumb_wrap = ctk.CTkFrame(
+                card, fg_color="transparent", corner_radius=12,
+                border_width=2, border_color=status_color,
+            )
+            thumb_wrap.pack(pady=(0, 8), padx=10)
+            ctk.CTkLabel(thumb_wrap, image=thumb_image, text="").pack(padx=3, pady=3)
 
             name_color = TEXT_PRIMARY if entry["matched"] else WARNING
             ctk.CTkLabel(
-                card, text=entry["name"], font=(FONT, 12, "bold"), text_color=name_color,
-                wraplength=120, justify="center",
-            ).pack(padx=8)
+                card, text=entry["name"], font=(FONT, 13, "bold"), text_color=name_color,
+                wraplength=140, justify="center",
+            ).pack(padx=10)
             ctk.CTkLabel(
                 card, text=entry["meta"], font=(FONT, 9), text_color=TEXT_MUTED,
-                wraplength=120, justify="center",
-            ).pack(padx=8, pady=(2, 12))
+                wraplength=140, justify="center",
+            ).pack(padx=10, pady=(2, 14))
 
     def _update_video(self):
         if self._closed:

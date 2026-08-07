@@ -25,6 +25,12 @@ class EntryLog(models.Model):
     class Status(models.TextChoices):
         SUCCESS = "success", "Success"
         FAILED = "failed", "Failed"
+        # A face passed detection/quality checks but failed the passive
+        # liveness (anti-spoofing) check before ever being compared against
+        # enrolled embeddings - kept distinct from FAILED (a clean scan that
+        # simply didn't match anyone) since this is a security event, not a
+        # recognition miss. See users/liveness_utils.py.
+        SPOOF_SUSPECTED = "spoof_suspected", "Spoof suspected"
 
     # Nullable: an unrecognized NFC tap (no matching Person) must still be logged.
     person = models.ForeignKey(
@@ -33,22 +39,28 @@ class EntryLog(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
     direction = models.CharField(max_length=10, choices=Direction.choices, default=Direction.ENTRY)
     verification_method = models.CharField(max_length=24, choices=VerificationMethod.choices)
-    status = models.CharField(max_length=10, choices=Status.choices)
+    status = models.CharField(max_length=20, choices=Status.choices)
     gate_location = models.CharField(max_length=100)
     failure_reason = models.CharField(max_length=255, blank=True)
     # A cropped photo of the face as actually seen at the gate - only saved for
     # unrecognized faces (no matching enrolled Person), so a guard/admin can
     # see who was denied instead of just a text reason.
     captured_photo = models.ImageField(upload_to="unenrolled_captures/%Y/%m/%d/", null=True, blank=True)
-    # The 512-d ArcFace vector for an unrecognized face, saved only on
-    # FAILED/FACE_ONLY rows so a later unmatched scan can be compared against
-    # it to tell "the same stranger lingering" apart from "a different
-    # stranger" - there's no Person to key a cooldown on otherwise.
+    # The 512-d ArcFace vector for an unrecognized or spoof-suspected face,
+    # saved only on FAILED/SPOOF_SUSPECTED FACE_ONLY rows so a later scan can
+    # be compared against it to tell "the same stranger/attempt still there"
+    # apart from "a different one" - there's no Person to key a cooldown on
+    # otherwise.
     unmatched_encoding = models.JSONField(null=True, blank=True)
     # The match similarity (0-1, ArcFace cosine similarity) at the moment
     # this row was confirmed - null for NFC-only rows and pre-embedding
     # historical rows. Kept for the thesis's threshold/accuracy evaluation.
     match_confidence = models.FloatField(null=True, blank=True)
+    # Passive liveness/anti-spoofing score (0-1, higher = more likely a real,
+    # live face) at the moment this row was confirmed - null for NFC-only
+    # rows and rows created before this check existed. See
+    # settings.LIVENESS_SCORE_THRESHOLD and users/liveness_utils.py.
+    liveness_score = models.FloatField(null=True, blank=True)
 
     class Meta:
         ordering = ["-timestamp"]
@@ -98,3 +110,22 @@ class PendingTiebreak(models.Model):
     candidate_person_ids = models.JSONField()
     direction = models.CharField(max_length=10)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class SpoofAttempt(models.Model):
+    """The liveness-check counterpart to UnmatchedAttempt: one face from the
+    continuous scan that failed the passive liveness (anti-spoofing) check,
+    before it was ever compared against enrolled embeddings. There's no
+    confirmed Person to key voting on, so IdentifyView groups recent rows by
+    embedding similarity the same way UnmatchedAttempt does, and only
+    confirms a real EntryLog(status=SPOOF_SUSPECTED) once enough recent
+    attempts agree within the same VOTE_REQUIRED_AGREEMENT/VOTE_WINDOW_SIZE/
+    VOTE_WINDOW_SECONDS window a face match/non-match already votes with -
+    so one oddly-lit or motion-blurred real frame can't alone flag someone as
+    a spoof attempt. Not a permanent audit record - old rows can be pruned
+    freely."""
+
+    gate_location = models.CharField(max_length=100)
+    embedding = models.JSONField()
+    liveness_score = models.FloatField()
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)

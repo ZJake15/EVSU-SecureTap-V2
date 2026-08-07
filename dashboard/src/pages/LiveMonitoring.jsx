@@ -68,6 +68,13 @@ function EventPhoto({ event }) {
 }
 
 function MethodBadge({ event }) {
+  if (event.status === "spoof_suspected") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-800">
+        Spoof suspected
+      </span>
+    );
+  }
   if (event.status !== "success") {
     return (
       <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-800">
@@ -142,7 +149,8 @@ export default function LiveMonitoring() {
   }, []);
 
   const enrolledCount = events.filter((event) => event.status === "success").length;
-  const unknownCount = events.filter((event) => event.status !== "success").length;
+  const spoofCount = events.filter((event) => event.status === "spoof_suspected").length;
+  const unknownCount = events.filter((event) => event.status === "failed").length;
   const confidences = events
     .map((event) => event.match_confidence)
     .filter((value) => value !== null && value !== undefined);
@@ -154,10 +162,11 @@ export default function LiveMonitoring() {
     <div>
       <h1 className="mb-4 text-xl font-semibold text-gray-900">Live Monitoring - Today's Gate Activity</h1>
 
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <MetricCard label="Passes today" value={events.length} />
         <MetricCard label="Enrolled matches" value={enrolledCount} />
         <MetricCard label="Unknown attempts" value={unknownCount} tone="danger" />
+        <MetricCard label="Spoof suspected" value={spoofCount} tone="danger" />
         <MetricCard label="Avg confidence" value={avgConfidence !== null ? `${avgConfidence}%` : "—"} />
       </div>
 

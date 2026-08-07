@@ -10,11 +10,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import HasServiceToken, IsSecurityOrAbove
-from users import insightface_utils
+from users import insightface_utils, liveness_utils
 from users.models import Person
 
 from .filters import EntryLogFilter
-from .models import EntryLog, PendingTiebreak, RecognitionAttempt, UnmatchedAttempt
+from .models import EntryLog, PendingTiebreak, RecognitionAttempt, SpoofAttempt, UnmatchedAttempt
 from .serializers import EntryLogSerializer, IdentifyRequestSerializer, VerifyRequestSerializer
 
 
@@ -89,9 +89,15 @@ class GateSummaryView(APIView):
             direction=EntryLog.Direction.EXIT, status=EntryLog.Status.SUCCESS
         ).count()
         unknown_today = logs.filter(status=EntryLog.Status.FAILED).count()
+        spoof_today = logs.filter(status=EntryLog.Status.SPOOF_SUSPECTED).count()
 
         return Response(
-            {"entries_today": entries_today, "exits_today": exits_today, "unknown_today": unknown_today}
+            {
+                "entries_today": entries_today,
+                "exits_today": exits_today,
+                "unknown_today": unknown_today,
+                "spoof_today": spoof_today,
+            }
         )
 
 
@@ -325,6 +331,7 @@ class IdentifyView(APIView):
             return Response({
                 "results": [self._transient_payload("No face detected.")],
                 "threshold": settings.FACE_MATCH_SIMILARITY_THRESHOLD,
+                "liveness_threshold": settings.LIVENESS_SCORE_THRESHOLD,
             })
 
         image_height, image_width = bgr_image.shape[:2]
@@ -334,7 +341,11 @@ class IdentifyView(APIView):
             # A setup/config gap (nothing enrolled yet), not a per-frame security
             # event - same reasoning as above, don't log every idle cycle.
             payload = self._transient_payload("No enrolled faces to compare against.")
-            return Response({"results": [payload], "threshold": settings.FACE_MATCH_SIMILARITY_THRESHOLD})
+            return Response({
+                "results": [payload],
+                "threshold": settings.FACE_MATCH_SIMILARITY_THRESHOLD,
+                "liveness_threshold": settings.LIVENESS_SCORE_THRESHOLD,
+            })
 
         known_matrix, owners = self._build_candidate_matrix(candidates)
         results = []
@@ -343,15 +354,29 @@ class IdentifyView(APIView):
             if skip_result is not None:
                 results.append(skip_result)
                 continue
+            # Liveness (anti-spoofing) runs after quality checks but before
+            # this face is ever compared against enrolled embeddings - a
+            # face that looks like a photo/screen replay is never given the
+            # chance to match anyone. See users/liveness_utils.py.
+            liveness_score = liveness_utils.compute_liveness_score(bgr_image, box)
+            if liveness_score < settings.LIVENESS_SCORE_THRESHOLD:
+                results.append(
+                    self._confirm_or_vote_spoof(
+                        embedding, bgr_image, box, direction, gate_location, request, liveness_score
+                    )
+                )
+                continue
             results.append(
                 self._match_one_face(
-                    embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image
+                    embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image,
+                    liveness_score,
                 )
             )
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},
             "threshold": settings.FACE_MATCH_SIMILARITY_THRESHOLD,
+            "liveness_threshold": settings.LIVENESS_SCORE_THRESHOLD,
         })
 
     @staticmethod
@@ -403,7 +428,9 @@ class IdentifyView(APIView):
             }
         return None
 
-    def _match_one_face(self, embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image):
+    def _match_one_face(
+        self, embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image, liveness_score,
+    ):
         query = np.array(embedding, dtype=np.float32)
         similarities = known_matrix @ query  # both sides are unit-normalized -> cosine similarity
         best_index = int(np.argmax(similarities))
@@ -412,7 +439,7 @@ class IdentifyView(APIView):
 
         if best_similarity < settings.FACE_MATCH_SIMILARITY_THRESHOLD:
             return self._confirm_or_vote_unmatched(
-                embedding, bgr_image, box, direction, gate_location, request, best_similarity
+                embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score
             )
 
         other_best = None
@@ -429,9 +456,11 @@ class IdentifyView(APIView):
             candidate_ids = [best_person.id] + ([other_owner.id] if close_second else [])
             return self._start_tiebreak(gate_location, direction, candidate_ids, box, best_similarity)
 
-        return self._confirm_or_vote(best_person, best_similarity, direction, gate_location, request, box)
+        return self._confirm_or_vote(
+            best_person, best_similarity, direction, gate_location, request, box, liveness_score
+        )
 
-    def _confirm_or_vote(self, person, similarity, direction, gate_location, request, box):
+    def _confirm_or_vote(self, person, similarity, direction, gate_location, request, box, liveness_score):
         """A face match is never confirmed from a single frame - it has to
         be the top match in enough recent scans first (see class docstring).
         Not-yet-confirmed matches come back with log_id: null, which the
@@ -453,6 +482,7 @@ class IdentifyView(APIView):
                 "reason": None,
                 "log_id": None,
                 "similarity": similarity,
+                "liveness_score": liveness_score,
                 "box": _box_to_dict(box),
                 **person_payload(person, request),
             }
@@ -475,6 +505,7 @@ class IdentifyView(APIView):
                 "reason": None,
                 "log_id": recent_log.id,
                 "similarity": similarity,
+                "liveness_score": liveness_score,
                 "deduped": True,
                 "box": _box_to_dict(box),
                 **person_payload(person, request),
@@ -487,6 +518,7 @@ class IdentifyView(APIView):
             status=EntryLog.Status.SUCCESS,
             gate_location=gate_location,
             match_confidence=similarity,
+            liveness_score=liveness_score,
         )
         return {
             "success": True,
@@ -494,6 +526,7 @@ class IdentifyView(APIView):
             "reason": None,
             "log_id": log.id,
             "similarity": similarity,
+            "liveness_score": liveness_score,
             "box": _box_to_dict(box),
             **person_payload(person, request),
         }
@@ -535,7 +568,9 @@ class IdentifyView(APIView):
         )
         stale.delete()
 
-    def _confirm_or_vote_unmatched(self, embedding, bgr_image, box, direction, gate_location, request, best_similarity):
+    def _confirm_or_vote_unmatched(
+        self, embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score,
+    ):
         """Symmetric with _confirm_or_vote: an unrecognized face is never
         logged as "Unknown" from a single frame either. There's no Person to
         key voting on the way a match has, so recent UnmatchedAttempt rows
@@ -569,14 +604,17 @@ class IdentifyView(APIView):
                 "reason": "Checking...",
                 "log_id": None,
                 "similarity": best_similarity,
+                "liveness_score": liveness_score,
                 "box": _box_to_dict(box),
             }
 
         return self._handle_unmatched_face(
-            embedding, bgr_image, box, direction, gate_location, request, best_similarity
+            embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score
         )
 
-    def _handle_unmatched_face(self, embedding, bgr_image, box, direction, gate_location, request, best_similarity):
+    def _handle_unmatched_face(
+        self, embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score,
+    ):
         """Only reached once _confirm_or_vote_unmatched has enough recent
         agreement to trust this as a real non-match, not a blurry fluke. An
         unrecognized face has no Person to key a cooldown on the way a
@@ -614,13 +652,14 @@ class IdentifyView(APIView):
 
         captured_photo_bytes = insightface_utils.crop_face(bgr_image, box)
         return self._failure_payload(
-            direction, gate_location, reason, best_similarity, captured_photo_bytes, request, embedding, box
+            direction, gate_location, reason, best_similarity, captured_photo_bytes, request, embedding, box,
+            liveness_score,
         )
 
     @staticmethod
     def _failure_payload(
         direction, gate_location, reason, similarity=None, captured_photo_bytes=None, request=None,
-        embedding=None, box=None,
+        embedding=None, box=None, liveness_score=None,
     ):
         log = EntryLog(
             person=None,
@@ -629,6 +668,7 @@ class IdentifyView(APIView):
             status=EntryLog.Status.FAILED,
             gate_location=gate_location,
             failure_reason=reason,
+            liveness_score=liveness_score,
         )
         if embedding is not None:
             log.unmatched_encoding = list(embedding)
@@ -639,9 +679,124 @@ class IdentifyView(APIView):
         payload = {"success": False, "retry": False, "reason": reason, "person_name": None, "log_id": log.id}
         if similarity is not None:
             payload["similarity"] = similarity
+        if liveness_score is not None:
+            payload["liveness_score"] = liveness_score
         if box is not None:
             payload["box"] = _box_to_dict(box)
         if log.captured_photo and request is not None:
+            payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
+        return payload
+
+    def _confirm_or_vote_spoof(self, embedding, bgr_image, box, direction, gate_location, request, liveness_score):
+        """A failed liveness check is never logged as spoof_suspected from a
+        single frame either - same grace-period reasoning _confirm_or_vote
+        and _confirm_or_vote_unmatched already use (see class docstring), so
+        unusual lighting or a motion-blurred real frame can't alone flag
+        someone as a spoof attempt. There's no confirmed identity to key
+        voting on (liveness is checked before matching - see post()), so
+        recent SpoofAttempt rows for this gate are grouped by embedding
+        similarity instead, the same way _confirm_or_vote_unmatched groups
+        UnmatchedAttempt rows - reusing the exact same VOTE_WINDOW_SIZE/
+        VOTE_REQUIRED_AGREEMENT/VOTE_WINDOW_SECONDS settings a face match/
+        non-match already votes with."""
+        SpoofAttempt.objects.create(gate_location=gate_location, embedding=embedding, liveness_score=liveness_score)
+
+        query = np.array(embedding, dtype=np.float32)
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
+        recent_attempts = list(
+            SpoofAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
+            .order_by("-timestamp")[: settings.VOTE_WINDOW_SIZE]
+        )
+        agreement = sum(
+            1
+            for attempt in recent_attempts
+            if attempt.liveness_score < settings.LIVENESS_SCORE_THRESHOLD
+            and float(np.dot(np.array(attempt.embedding, dtype=np.float32), query))
+            >= settings.FACE_MATCH_SIMILARITY_THRESHOLD
+        )
+
+        if agreement < settings.VOTE_REQUIRED_AGREEMENT:
+            # Unlike an unmatched face (which stays neutral "Checking..."
+            # until confirmed, so a real person can't be flagged Unknown off
+            # one bad frame), a suspected spoof is flagged red on the entry-
+            # agent's preview as soon as THIS frame's liveness score misses
+            # the threshold - retry=True still keeps it out of the log/
+            # stats/alarm until the vote actually confirms it, but a guard
+            # should see the warning the moment it's suspected, not several
+            # frames later.
+            return {
+                "success": False,
+                "retry": True,
+                "spoof_suspected": True,
+                "reason": "Checking...",
+                "log_id": None,
+                "liveness_score": liveness_score,
+                "box": _box_to_dict(box),
+            }
+
+        return self._handle_spoof_face(embedding, bgr_image, box, direction, gate_location, request, liveness_score)
+
+    def _handle_spoof_face(self, embedding, bgr_image, box, direction, gate_location, request, liveness_score):
+        """Only reached once _confirm_or_vote_spoof has enough recent
+        agreement to trust this as a real spoof attempt, not a one-off
+        misread. A spoof attempt has no Person to key a cooldown on the way
+        a matched face does, so instead this compares the new embedding
+        against every spoof-suspected face logged in the last
+        SPOOF_CAPTURE_COOLDOWN_SECONDS: close enough counts as "the same
+        photo/screen still being held up" and reuses that log row rather
+        than creating a new one and capturing another photo - same pattern
+        as _handle_unmatched_face's stranger-still-there dedup."""
+        reason = "Possible spoof detected - photo, screen, or printout, not a live face."
+        cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=settings.SPOOF_CAPTURE_COOLDOWN_SECONDS)
+        recent_spoof = EntryLog.objects.filter(
+            status=EntryLog.Status.SPOOF_SUSPECTED, timestamp__gte=cooldown_cutoff
+        ).exclude(unmatched_encoding__isnull=True)
+
+        query = np.array(embedding, dtype=np.float32)
+        for log in recent_spoof:
+            stored = np.array(log.unmatched_encoding, dtype=np.float32)
+            similarity = float(np.dot(stored, query))
+            if similarity >= settings.FACE_MATCH_SIMILARITY_THRESHOLD:
+                payload = {
+                    "success": False,
+                    "retry": False,
+                    "spoof_suspected": True,
+                    "reason": reason,
+                    "person_name": None,
+                    "log_id": log.id,
+                    "liveness_score": liveness_score,
+                    "deduped": True,
+                    "box": _box_to_dict(box),
+                }
+                if log.captured_photo:
+                    payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
+                return payload
+
+        captured_photo_bytes = insightface_utils.crop_face(bgr_image, box)
+        log = EntryLog(
+            person=None,
+            direction=direction,
+            verification_method=EntryLog.VerificationMethod.FACE_ONLY,
+            status=EntryLog.Status.SPOOF_SUSPECTED,
+            gate_location=gate_location,
+            failure_reason=reason,
+            liveness_score=liveness_score,
+            unmatched_encoding=list(embedding),
+        )
+        log.captured_photo.save("spoof_capture.jpg", ContentFile(captured_photo_bytes), save=False)
+        log.save()
+
+        payload = {
+            "success": False,
+            "retry": False,
+            "spoof_suspected": True,
+            "reason": reason,
+            "person_name": None,
+            "log_id": log.id,
+            "liveness_score": liveness_score,
+            "box": _box_to_dict(box),
+        }
+        if log.captured_photo:
             payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
         return payload
 

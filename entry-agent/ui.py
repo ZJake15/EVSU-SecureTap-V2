@@ -480,7 +480,7 @@ class FeedbackWindow:
         self._seen_log_ids = set()
         self._log_entries = []  # newest first
         self._log_photo_images = []  # keeps CTkImage refs alive for the log list
-        self.stats = {"entries": 0, "exits": 0, "unknown": 0}
+        self.stats = {"entries": 0, "exits": 0, "unknown": 0, "spoof": 0}
         self._alert_hide_job = None
 
         self.window = ctk.CTkToplevel(parent)
@@ -519,6 +519,7 @@ class FeedbackWindow:
             ("entries", "Entries", TEXT_PRIMARY),
             ("exits", "Exits", TEXT_PRIMARY),
             ("unknown", "Unknown", WARNING),
+            ("spoof", "Spoof", DANGER),
             ("in_frame", "In frame", TEXT_PRIMARY),
         ]
         self.stat_tiles = {}
@@ -587,8 +588,8 @@ class FeedbackWindow:
     def show_offline(self, offline):
         self._queue.put(("offline", offline))
 
-    def seed_stats(self, entries_today, exits_today, unknown_today):
-        self._queue.put(("seed", (entries_today, exits_today, unknown_today)))
+    def seed_stats(self, entries_today, exits_today, unknown_today, spoof_today=0):
+        self._queue.put(("seed", (entries_today, exits_today, unknown_today, spoof_today)))
 
     def set_threshold(self, threshold):
         self._queue.put(("threshold", threshold))
@@ -607,8 +608,9 @@ class FeedbackWindow:
                 elif kind == "offline":
                     self._render_offline(payload)
                 elif kind == "seed":
-                    entries, exits, unknown = payload
-                    self.stats["entries"], self.stats["exits"], self.stats["unknown"] = entries, exits, unknown
+                    entries, exits, unknown, spoof = payload
+                    self.stats["entries"], self.stats["exits"] = entries, exits
+                    self.stats["unknown"], self.stats["spoof"] = unknown, spoof
                     self._refresh_stat_labels()
                 elif kind == "threshold":
                     self.threshold_label.configure(text=f"Recognition running · threshold {payload:.2f}")
@@ -633,30 +635,35 @@ class FeedbackWindow:
             if not is_new_event:
                 continue
             self._seen_log_ids.add(log_id)
-            if item["matched"]:
+            if item.get("spoof_suspected"):
+                self.stats["spoof"] += 1
+                self._show_alert_banner("⚠  Possible spoof detected — photo/screen, not a live face")
+                _play_alert_sound()
+            elif item["matched"]:
                 key = "exits" if item["direction"] == "exit" else "entries"
                 self.stats[key] += 1
             else:
                 self.stats["unknown"] += 1
-                self._show_unknown_alert()
+                self._show_alert_banner("⚠  Unknown person detected — verify identity")
                 _play_alert_sound()
             self._push_log_entry(item)
 
         self._refresh_stat_labels()
 
-    def _show_unknown_alert(self):
+    def _show_alert_banner(self, text):
         """A visible banner over the video feed plus an audible alarm - each
-        fires once per genuinely new unmatched-face event (the same dedup
-        the stats/log already rely on upstream in this method, keyed off
-        log_id), not on every ~0.2s poll while the person is still in
-        frame, so this can't turn into a continuous blare."""
-        self.alert_banner.configure(text="⚠  Unknown person detected — verify identity")
+        fires once per genuinely new unmatched-face or spoof-suspected event
+        (the same dedup the stats/log already rely on upstream in this
+        method, keyed off log_id), not on every ~0.2s poll while the
+        person/attempt is still in frame, so this can't turn into a
+        continuous blare."""
+        self.alert_banner.configure(text=text)
         self.alert_banner.place(relx=0.5, rely=0.04, anchor="n")
         if self._alert_hide_job:
             self.window.after_cancel(self._alert_hide_job)
-        self._alert_hide_job = self.window.after(self.ALERT_DISPLAY_MS, self._hide_unknown_alert)
+        self._alert_hide_job = self.window.after(self.ALERT_DISPLAY_MS, self._hide_alert_banner)
 
-    def _hide_unknown_alert(self):
+    def _hide_alert_banner(self):
         self._alert_hide_job = None
         if self._closed:
             return
@@ -666,21 +673,30 @@ class FeedbackWindow:
         self.stat_tiles["entries"].configure(text=str(self.stats["entries"]))
         self.stat_tiles["exits"].configure(text=str(self.stats["exits"]))
         self.stat_tiles["unknown"].configure(text=str(self.stats["unknown"]))
+        self.stat_tiles["spoof"].configure(text=str(self.stats["spoof"]))
         self.stat_tiles["today"].configure(text=str(self.stats["entries"] + self.stats["exits"]))
 
     LOG_THUMB_SIZE = 84
 
     def _push_log_entry(self, item):
         timestamp = datetime.now().strftime("%I:%M:%S %p")
-        if item["matched"]:
+        spoof = bool(item.get("spoof_suspected"))
+        if spoof:
+            meta = f"Liveness check failed · {timestamp}"
+            badge_text = "SPOOF"
+            name = "Possible spoof"
+        elif item["matched"]:
             meta = f"{item.get('student_id') or '—'} · {timestamp}"
             badge_text = item["direction"].upper()
+            name = item["name"]
         else:
             meta = f"Not matched · {timestamp}"
             badge_text = "UNKNOWN"
+            name = "Unknown face"
         self._log_entries.insert(0, {
-            "name": item["name"] if item["matched"] else "Unknown face",
+            "name": name,
             "matched": item["matched"],
+            "spoof": spoof,
             "meta": meta,
             "badge_text": badge_text,
             "photo_bytes": item.get("photo_bytes"),
@@ -688,15 +704,21 @@ class FeedbackWindow:
         self._log_entries = self._log_entries[: self.MAX_LOG_ROWS]
         self._rebuild_log_list()
 
+    def _entry_status_color(self, entry):
+        if entry.get("spoof"):
+            return DANGER
+        return SUCCESS if entry["matched"] else WARNING
+
     def _log_thumbnail(self, entry):
         """The reference photo for a match, or the actual cropped capture
-        for an unrecognized face - so the guard sees who the system thinks
-        this is, not just a name. Falls back to an initials/? badge when no
-        photo is available (fetch failed, or nothing was captured)."""
+        for an unrecognized/spoof-suspected face - so the guard sees who or
+        what the system caught, not just a name. Falls back to an
+        initials/? badge when no photo is available (fetch failed, or
+        nothing was captured)."""
         avatar = _avatar_image(entry["photo_bytes"], self.LOG_THUMB_SIZE)
         if avatar is None:
             badge_text = entry["name"] if entry["matched"] else "?"
-            avatar = _initials_avatar(badge_text, self.LOG_THUMB_SIZE, bg=MAROON if entry["matched"] else WARNING)
+            avatar = _initials_avatar(badge_text, self.LOG_THUMB_SIZE, bg=MAROON if entry["matched"] else self._entry_status_color(entry))
         return ctk.CTkImage(light_image=avatar, dark_image=avatar, size=(self.LOG_THUMB_SIZE, self.LOG_THUMB_SIZE))
 
     def _rebuild_log_list(self):
@@ -710,7 +732,7 @@ class FeedbackWindow:
         self._log_photo_images = []  # keep CTkImage refs alive - Tk drops unreferenced ones
         for index, entry in enumerate(self._log_entries):
             row, col = divmod(index, self.LOG_GRID_COLUMNS)
-            status_color = SUCCESS if entry["matched"] else WARNING
+            status_color = self._entry_status_color(entry)
             card = ctk.CTkFrame(
                 self.log_list, fg_color=CARD_BG, corner_radius=14,
                 border_width=2, border_color=status_color,
@@ -786,7 +808,17 @@ class FeedbackWindow:
         x1 = origin_x + (box["right"] / src_w) * img_w
         y1 = origin_y + (box["bottom"] / src_h) * img_h
 
-        if item.get("retry"):
+        if item.get("spoof_suspected"):
+            # Liveness (anti-spoofing) is flagging this face - shown red as
+            # soon as THIS frame's score misses the threshold, not only once
+            # the multi-frame vote confirms it (see IdentifyView.
+            # _confirm_or_vote_spoof) - a guard should see the warning the
+            # moment it's suspected. Still just a suspicion, not yet logged/
+            # alarmed, while item["retry"] is also true (see _render_
+            # recognitions) - the label makes that distinction visible too.
+            color = DANGER
+            label = "⚠ Possible spoof" if not item.get("retry") else "⚠ Checking - possible spoof"
+        elif item.get("retry"):
             # Not a decided outcome yet - a skipped blurry/edge-cropped
             # frame, or an unmatched face still short of enough agreement
             # to count as a real "Unknown" (see IdentifyView). Neutral

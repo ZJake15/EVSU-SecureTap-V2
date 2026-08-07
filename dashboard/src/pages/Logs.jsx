@@ -108,6 +108,7 @@ export default function Logs() {
           <option value="">All statuses</option>
           <option value="success">Success</option>
           <option value="failed">Failed</option>
+          <option value="spoof_suspected">Spoof suspected</option>
         </select>
       </div>
 

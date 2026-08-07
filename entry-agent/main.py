@@ -75,13 +75,19 @@ def _build_recognition(direction, result, api_client, photo_cache):
     # Neither is a decided outcome, so the UI shows "Checking..." instead of
     # flashing red on a single bad frame.
     retry = bool(result.get("retry"))
+    # A face that failed the liveness (anti-spoofing) check - see
+    # IdentifyView._confirm_or_vote_spoof. Checked before matching, so this
+    # is never also `success`; kept as its own flag rather than folded into
+    # "Unknown" since it's a security event, not a recognition miss.
+    spoof_suspected = bool(result.get("spoof_suspected"))
     photo_url = result.get("person_photo") if success else result.get("captured_photo")
     return {
         "box": box,
         "matched": success,
         "tiebreak": tiebreak,
         "retry": retry,
-        "name": result.get("person_name") if success else "Unknown",
+        "spoof_suspected": spoof_suspected,
+        "name": result.get("person_name") if success else ("Possible spoof" if spoof_suspected else "Unknown"),
         "candidate_names": result.get("candidate_names") or [],
         "student_id": result.get("student_or_employee_id"),
         "department": result.get("department_or_course"),
@@ -243,7 +249,8 @@ def main():
         try:
             summary = api_client.gate_summary(config.gate_location)
             scan_ui.seed_stats(
-                summary.get("entries_today", 0), summary.get("exits_today", 0), summary.get("unknown_today", 0)
+                summary.get("entries_today", 0), summary.get("exits_today", 0),
+                summary.get("unknown_today", 0), summary.get("spoof_today", 0),
             )
         except requests.RequestException:
             pass  # stats just start at zero for this session if unreachable

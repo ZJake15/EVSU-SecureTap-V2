@@ -145,6 +145,15 @@ ENTRY_AGENT_SERVICE_TOKEN = env("ENTRY_AGENT_SERVICE_TOKEN")
 # enough real people are enrolled and use whatever it recommends instead.
 FACE_MATCH_SIMILARITY_THRESHOLD = env.float("FACE_MATCH_SIMILARITY_THRESHOLD", default=0.45)
 
+# Passive liveness (anti-spoofing) check - see users/liveness_utils.py. Runs
+# on a standard 2D webcam frame (no depth/IR hardware available at the gate),
+# so this is classical texture/frequency/reflectance analysis, not a depth
+# check. Same "higher = more likely real" sense as FACE_MATCH_SIMILARITY_
+# THRESHOLD above. 0.5 is a starting point, not a validated value - same
+# caveat as the face-match threshold: tune against real photo/screen-replay
+# test attempts once they exist.
+LIVENESS_SCORE_THRESHOLD = env.float("LIVENESS_SCORE_THRESHOLD", default=0.5)
+
 # A face match is sent to the NFC tiebreak flow (see IdentifyView) instead
 # of being auto-accepted/rejected when either: the top match's similarity is
 # within this margin of the threshold (a "barely passed/failed" call), or
@@ -199,3 +208,9 @@ RECOGNITION_COOLDOWN_SECONDS = env.int("RECOGNITION_COOLDOWN_SECONDS", default=6
 # lingering at the gate unrecognized doesn't flood the log/Live Monitoring the
 # way idle no-face scans used to.
 UNENROLLED_CAPTURE_COOLDOWN_SECONDS = env.int("UNENROLLED_CAPTURE_COOLDOWN_SECONDS", default=30)
+
+# Same "same attempt still there" dedup idea as
+# UNENROLLED_CAPTURE_COOLDOWN_SECONDS above, but tracked separately for
+# spoof-suspected faces so it can be tuned independently once real
+# spoof-attempt data exists.
+SPOOF_CAPTURE_COOLDOWN_SECONDS = env.int("SPOOF_CAPTURE_COOLDOWN_SECONDS", default=30)

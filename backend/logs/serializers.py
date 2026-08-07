@@ -25,6 +25,7 @@ class EntryLogSerializer(serializers.ModelSerializer):
             "gate_location",
             "failure_reason",
             "match_confidence",
+            "liveness_score",
         ]
 
     def get_person_name(self, obj):

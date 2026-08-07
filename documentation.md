@@ -1,13 +1,15 @@
 # EVSU SecureTap — System Documentation
 
 A face-recognition + NFC-card gate entry/exit system for EVSU. A camera watches the
-gate continuously and identifies people by face (1:N, ArcFace embeddings); an NFC
-card tap provides a second, independent verification channel and resolves cases
-where the face match is ambiguous. Every event is logged, and a web dashboard gives
-admin/security/IT staff live monitoring, user management, and reporting.
+gate continuously and identifies people by face (1:N, ArcFace embeddings), checks
+that what it's looking at is a real live face (not a photo or screen), and an NFC
+card tap provides a second, independent verification channel that also resolves
+cases where the face match is ambiguous. Every event is logged, and a web dashboard
+gives admin/security/IT staff live monitoring, user management, and reporting.
 
-This document describes what the system does, how it's built, and the algorithms
-behind face recognition. For setup/installation steps, see [README.md](README.md).
+This document describes what the system does, how it's built, the step-by-step
+process each scanner follows, and the algorithms behind face recognition and
+liveness detection. For setup/installation steps, see [README.md](README.md).
 
 ---
 
@@ -27,7 +29,7 @@ The system has three independent programs that talk to each other over HTTP:
   webcam and the NFC reader, but does **no machine learning itself** — it just
   captures frames/taps and sends them to the backend.
 - **backend** — a Django REST API that owns the database, runs all face-recognition
-  computation (embedding + matching), enforces roles/auth, and serves reports.
+  and liveness-detection computation, enforces roles/auth, and serves reports.
 - **dashboard** — a React single-page app used by admin/security/IT staff to watch
   live activity, manage enrolled people, and view reports.
 
@@ -36,15 +38,152 @@ are thin clients around its API.
 
 ---
 
-## 2. Technology stack
+## 2. How the scanners work — step by step
+
+The entry-agent has two independent scanner windows, and they can both be open at
+the same gate at once. This section walks through exactly what happens, in order,
+for each one. See §5 for the algorithms/thresholds each step refers to.
+
+### 2.1 Camera scanner (continuous face scan)
+
+The camera scanner is CCTV-style — always watching, not a stop-and-pose kiosk.
+Every cycle below repeats roughly every 0.2 seconds, independently for every face
+currently in frame.
+
+1. **Capture.** The entry-agent's `Camera` class keeps the webcam open continuously
+   (DirectShow, up to 1280×720). Every `SCAN_INTERVAL_SECONDS` (0.2s) it grabs the
+   latest frame, downsizes it to at most 960px on the long edge, and JPEG-encodes
+   it — this happens whether or not anyone is actually standing at the gate.
+2. **Upload.** The JPEG is POSTed to `/api/identify` along with the entry-agent's
+   fixed `gate_location`/`direction` and its shared `X-Service-Token`. No identity
+   is claimed — this is a "who, if anyone, is in this frame" request, not a lookup.
+3. **Face detection.** The backend decodes the frame and runs InsightFace's
+   scan-dedicated detector (`buffalo_s`, `det_size=480×480` by default) to find
+   every face in the frame. Because InsightFace's `FaceAnalysis.get()` computes
+   detection and recognition together, each detected face already has its 512-d
+   ArcFace embedding at this point, regardless of what happens in later steps.
+4. **Per-face quality gate.** Each face is checked for (a) sitting too close to the
+   frame's edge (`FACE_EDGE_MARGIN_RATIO` — likely partially cut off) and (b)
+   motion blur below `GATE_SCAN_MIN_BLUR_VARIANCE`. Either one skips this face for
+   this frame entirely — not counted toward a match *or* a non-match, just "still
+   checking," so one bad frame mid-stride can't cost someone a vote either way.
+5. **Liveness check.** A face that passes the quality gate is scored for liveness
+   (§5.5) *before* it's ever compared against anyone enrolled. A face scoring below
+   `LIVENESS_SCORE_THRESHOLD` (default `0.5`) is routed to step 6a instead of 6b.
+6. **6a — Spoof voting** (low-liveness face). Tallied in `SpoofAttempt`, grouped by
+   embedding similarity to recent low-liveness attempts at the same gate (there's
+   no confirmed identity to key on yet). Only once enough recent attempts agree —
+   `VOTE_REQUIRED_AGREEMENT` of the last `VOTE_WINDOW_SIZE`, within
+   `VOTE_WINDOW_SECONDS`, the same voting settings used everywhere in this list —
+   is it confirmed into a permanent `EntryLog(status=spoof_suspected)` row, with a
+   cropped photo and the embedding saved so the same held-up photo/screen doesn't
+   get logged again every cycle. The entry-agent's box turns **red immediately**
+   on the first suspicious frame for guard awareness, even before it's confirmed —
+   see step 9.
+7. **6b — Identity matching** (live face). The face's embedding is compared, in one
+   vectorized operation, against every active enrolled person's stored embeddings
+   (up to 5 each — a guided enrollment captures several angles). The
+   highest-scoring person and similarity win.
+8. **Match decision:**
+   - Below `FACE_MATCH_SIMILARITY_THRESHOLD` → not a match; goes through the same
+     kind of multi-frame vote-then-log path as a spoof, via `UnmatchedAttempt` →
+     eventually `EntryLog(status=failed)`.
+   - Within `TIEBREAK_MARGIN` of the threshold ("barely passed"), or two enrolled
+     people scoring within `TIEBREAK_MARGIN` of each other (they look alike) → too
+     ambiguous to decide alone. A `PendingTiebreak` opens for the gate and the
+     entry-agent asks for a confirming card tap (see §2.2, step 4, and §3).
+   - Clearly above threshold with no close second → a real match candidate,
+     tallied in `RecognitionAttempt` for voting.
+9. **Multi-frame confirmation.** Matches, non-matches, *and* spoof suspicions all
+   go through the same debounce: nothing becomes a permanent `EntryLog` row (and
+   nothing increments a stat tile or sounds the alarm) until it's been the
+   consistent answer across enough recent frames. This is what stops one bad frame
+   from wrongly flagging a real, enrolled person as Unknown or as a spoof, and
+   stops one lucky frame from wrongly confirming a stranger as a match.
+10. **Response & rendering.** The backend returns one result per detected face
+    (box, verdict, similarity/liveness score, log id). The entry-agent draws a
+    colored box per face straight from this response — **green** = matched,
+    **amber** = confirmed unknown, **red** = spoof suspected (shown as soon as
+    suspected, confirmed or not), **blue** = tiebreak ("tap your card"), **gray** =
+    still checking — appends a card to the live-log grid, updates the stats strip,
+    and, for a newly *confirmed* unknown-person or spoof event specifically, plays
+    an audible alarm and shows a banner over the video feed.
+
+### 2.2 Card scanner (NFC tap / manual ID)
+
+Unlike the camera scanner, a card tap is a deliberate, guard- or student-initiated
+action, not a continuous background process.
+
+1. **Input capture.** The NFC reader is HID-keyboard-emulation hardware — tapping a
+   card "types" its ID followed by Enter into a hidden, always-focused text field
+   in the Card scanner window. A guard can alternatively type a student/employee ID
+   manually as a fallback if the reader itself fails.
+2. **Lookup request.** The entry-agent POSTs to `/api/verify` with either `nfc_id`
+   or `student_or_employee_id`, plus the gate's fixed location/direction.
+3. **Backend lookup.** The backend looks up a `Person` by whichever identifier was
+   given. Not found → logged as a failed `nfc_only` attempt, reason "not
+   registered." Found but `is_active=False` → logged as failed, reason
+   "deactivated."
+4. **Tiebreak check.** If there's currently a `PendingTiebreak` open for this gate
+   (an ambiguous face match still waiting — see §2.1 step 8) and it hasn't expired
+   (`TIEBREAK_TIMEOUT_SECONDS`, default 10s), this tap resolves *that* instead of
+   being treated as an independent lookup — logged as `face_and_card_tiebreak`
+   using the tiebreak's original direction, not a fresh `nfc_only` row.
+5. **Cooldown dedupe.** A successful plain tap (not a tiebreak resolution) within
+   `RECOGNITION_COOLDOWN_SECONDS` of the same person's last successful tap reuses
+   that existing log row instead of creating a new one, so a guard tapping the
+   same card twice in a row for a spot-check doesn't double-log an entry.
+6. **Log & respond.** On success, a permanent `EntryLog(status=success)` row is
+   written and the full match payload (photo, name, role, ID, department,
+   direction, timestamp) is returned. On failure, a permanent
+   `EntryLog(status=failed)` row is written too — a rejected card is still a
+   security-relevant event worth keeping visible — with a specific reason code
+   (`not_registered` / `deactivated` / `read_error`).
+7. **Rendering.** The Card scanner window shows the full result card (photo, name,
+   ID, course, card ID, direction, timestamp) on success, so the guard can visually
+   cross-check the tapped card against the person standing in front of them, or a
+   red failure headline on rejection. Either way it auto-resets back to "Tap a
+   card" after 8 seconds.
+
+---
+
+## 3. Face-and-card interplay (why there's a second credential)
+
+The NFC card is not just a shortcut — it's the system's tiebreaker and
+manual-override channel:
+
+1. **Clean face match** (similarity clearly above threshold, no close second
+   candidate) → auto-confirmed after enough voting agreement, logged as
+   `face_only`.
+2. **Ambiguous face match** (borderline score, or two enrolled people who look
+   similar) → the gate scan opens a `PendingTiebreak` for that gate and the
+   entry-agent shows "Tap card to confirm." A card tap within
+   `TIEBREAK_TIMEOUT_SECONDS` (default **10s**) resolves it and logs
+   `face_and_card_tiebreak`. If nobody taps in time, it's logged as an
+   unresolved/ambiguous failure.
+3. **No face match** (confirmed via the same voting process) → logged as a failed
+   `face_only` attempt; a cropped photo of the face and its embedding are saved so
+   the same lingering stranger doesn't get logged repeatedly.
+4. **Suspected spoof** (confirmed via the same voting process — see §5.5) → logged
+   as `spoof_suspected`, distinct from a plain no-match, since this is a security
+   event (someone actively trying to fool the camera), not just an unrecognized
+   visitor.
+5. **Plain NFC tap / manual ID entry** (no camera match involved) → its own
+   independent verification path, logged as `nfc_only`. Used for routine spot
+   checks or when the camera isn't practical.
+
+---
+
+## 4. Technology stack
 
 | Component | Language | Framework / key libraries |
 |---|---|---|
-| **backend** | Python | Django 5.x, Django REST Framework, djangorestframework-simplejwt (JWT auth), django-filter, django-cors-headers, django-environ, MySQL (`mysqlclient`), **InsightFace** (ArcFace) on **ONNX Runtime**, OpenCV, NumPy, Pillow (+ `pillow-heif` for iPhone HEIC photos), pandas + openpyxl (bulk import), bcrypt |
+| **backend** | Python | Django 5.x, Django REST Framework, djangorestframework-simplejwt (JWT auth), django-filter, django-cors-headers, django-environ, MySQL (`mysqlclient`), **InsightFace** (ArcFace) + **MiniFASNetV2** on **ONNX Runtime**, OpenCV, NumPy, Pillow (+ `pillow-heif` for iPhone HEIC photos), pandas + openpyxl (bulk import), bcrypt |
 | **dashboard** | JavaScript (React, JSX) | React 19, React Router 7, Axios, Recharts (charts), Tailwind CSS, `jwt-decode`, Vite (dev server/bundler) |
 | **entry-agent** | Python | CustomTkinter (UI), OpenCV (webcam capture only, no ML), Pillow, `requests` (HTTP client), `python-dotenv`, `winsound` (Windows alert tone), SQLite (offline queue) |
 | **Database** | — | MySQL 8.0+ |
 | **Face recognition model** | — | InsightFace `buffalo_s` model pack (ArcFace recognition + RetinaFace-family detection), run via ONNX Runtime, CPU only |
+| **Liveness/anti-spoofing model** | — | MiniFASNetV2 (Minivision AI, Silent-Face-Anti-Spoofing project), from-source ONNX export, run via the same ONNX Runtime, CPU only |
 
 No Node.js backend, no separate microservices, no message queue/Celery, no
 WebSocket server — the dashboard and entry-agent both use plain HTTP polling
@@ -52,13 +191,13 @@ against the same Django REST API.
 
 ---
 
-## 3. Does it use machine learning?
+## 5. Does it use machine learning?
 
-**Yes — for face recognition specifically, and nowhere else in the system.**
-User management, reporting, and authentication are conventional CRUD/business logic
-with no ML involved.
+**Yes — two separate models, both for the camera scanner, and nowhere else in the
+system.** User management, reporting, and authentication are conventional
+CRUD/business logic with no ML involved.
 
-### 3.1 Model: InsightFace / ArcFace (`buffalo_s`)
+### 5.1 Model 1 — identity: InsightFace / ArcFace (`buffalo_s`)
 
 - Uses the open-source **InsightFace** library, running the **`buffalo_s`** model
   pack via **ONNX Runtime** (CPU execution provider — no GPU required).
@@ -78,7 +217,7 @@ with no ML involved.
   continuous gate scan, trading some far-away-face detection range for
   faster per-frame turnaround.
 
-### 3.2 What the model produces
+### 5.2 What the identity model produces
 
 Every detected face is converted into a **512-dimensional embedding vector**
 (`face.normed_embedding`, L2-normalized) — a numeric fingerprint of that face in
@@ -87,7 +226,7 @@ that are close together in that space; different people produce embeddings that
 are far apart. Raw photos are **not** compared pixel-by-pixel — only these vectors
 are compared at match time.
 
-### 3.3 Matching algorithm — cosine similarity
+### 5.3 Matching algorithm — cosine similarity
 
 Because embeddings are unit-normalized, comparing two of them is a single dot
 product:
@@ -117,36 +256,115 @@ their single best-scoring embedding.
 > is explicitly not built to scale to a very large student body — a proper vector
 > index (e.g. FAISS) would be the next step if enrollment grew much larger.
 
-### 3.4 Decision thresholds (configurable, in `backend/.env`)
+### 5.4 Decision thresholds (configurable, in `backend/.env`)
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `FACE_MATCH_SIMILARITY_THRESHOLD` | `0.45` | Minimum cosine similarity to count as a match at all. Explicitly documented as "a starting point, not a validated value" — see §3.6. |
+| `FACE_MATCH_SIMILARITY_THRESHOLD` | `0.45` | Minimum cosine similarity to count as a match at all. Explicitly documented as "a starting point, not a validated value" — see §5.7. |
 | `TIEBREAK_MARGIN` | `0.05` | If the top match's score is within this margin of the threshold ("barely passed"), or the top-2 candidates are within this margin of each other (two people who look alike), the match is sent to NFC tiebreak instead of being auto-accepted/rejected. |
 | `GATE_SCAN_MIN_BLUR_VARIANCE` | `25.0` | Below this Laplacian-variance blur score, a frame is skipped entirely (not counted as a match attempt in either direction) rather than trusted. |
 | `FACE_EDGE_MARGIN_RATIO` | `0.02` | A face within 2% of the frame's edge is treated as likely partially cut off and skipped. |
 | `GATE_SCAN_DET_SIZE` | `480` | Detector input resolution for the continuous scan (speed/range tradeoff). |
+| `LIVENESS_SCORE_THRESHOLD` | `0.5` | Minimum combined liveness score (§5.5) to be treated as a real, live face. |
 
-### 3.5 Multi-frame majority voting (anti-flicker / anti-false-positive)
+### 5.5 Model 2 — liveness/anti-spoofing
 
-A single video frame is **never** trusted enough to log a real entry/exit or flag
-someone as "Unknown" on its own — a person has to be identified consistently across
-several recent scan cycles first:
+**Hardware constraint:** the gate camera is a standard 2D webcam — no depth or
+infrared sensor — so a depth-map liveness check (the most robust approach against
+photo/screen attacks) isn't possible on this hardware. Everything here is
+"silent"/passive: a verdict from a single frame, no blink/head-turn challenge
+prompt shown to the person at the gate.
+
+Two independent signals are combined into one score, per detected face, after the
+quality gate and before identity matching (§2.1, steps 5–7):
+
+**Signal 1 — MiniFASNetV2 (primary, weight `0.65`).** A small trained CNN from the
+Silent-Face-Anti-Spoofing project by Minivision AI (Apache-2.0), which classifies
+an 80×80 face crop as live / print-attack / replay-attack. Chosen as the primary
+signal because it's trained specifically on print/screen spoof data — the attack
+this gate is most exposed to. Integrated as a **from-source ONNX export**, not a
+downloaded pre-converted file:
+1. The official `.pth` weights were downloaded and their SHA-256 verified against
+   the officially documented hash.
+2. The model architecture was reconstructed from the official source and the
+   weights loaded with `strict=True` — zero missing/unexpected keys.
+3. Exported to ONNX and checked for numerical parity against the original PyTorch
+   model (max difference `1.4×10⁻⁶` across random inputs).
+4. Verified end-to-end (real InsightFace detection → the same 2.7× context-crop
+   the original model was trained on → this ONNX model) against the official
+   repo's own labeled sample photos: a real face scored 99.97% live, two spoof
+   photos scored 0.8% and 0.07% live.
+5. Full provenance, hashes, and this verification trail live in
+   `backend/users/liveness_models/NOTICE.md`.
+
+The model expects a specific preprocessing: an 80×80 BGR crop taken not tightly
+around the face but expanded 2.7× around its center (matching how the model was
+trained), fed in as raw `[0, 255]` pixel values — **not** normalized to `[0, 1]`
+(a real bug caught during integration: the official repo's own normalization step
+is present in its source but commented out, so the model was actually trained on
+un-normalized input).
+
+**Signal 2 — classical texture/frequency/reflectance cues (secondary, weight
+`0.35`).** Three peer-reviewed, non-deep-learning cues computed directly with
+OpenCV/NumPy on the detected face crop — kept both as an always-on secondary
+signal and as an automatic fallback (weighted `1.0`) if the ONNX model file is
+ever missing or fails to load:
+- **Micro-texture (Local Binary Patterns).** Real skin has fine-grained texture
+  entropy a printout or screen surface doesn't reproduce.
+  (Määttä, Hadid & Pietikäinen, IJCB 2011)
+- **Frequency-domain analysis (2D FFT).** Printed halftone dots and screen
+  pixel-grid moiré both add high-frequency artifacts a direct camera shot of a
+  real face doesn't have.
+  (Li, Wang, Cui et al., SPIE 2004)
+- **Color/reflectance (HSV saturation + specular highlights).** Screens and glossy
+  prints reflect light differently than skin.
+  (Boulkenafet, Komulainen & Hadid, ICIP 2015)
+
+**Combined score:**
+
+```
+liveness_score = 0.65 × MiniFASNet_P(live) + 0.35 × classical_score
+```
+
+compared against `LIVENESS_SCORE_THRESHOLD` the same "higher = more likely real"
+way `FACE_MATCH_SIMILARITY_THRESHOLD` is used for identity. Measured latency: **~2.3ms per face**
+(warm) — negligible next to the ~400–900ms ArcFace inference that already
+dominates each gate-scan cycle.
+
+**Why not MiniFASNet alone:** it's explicitly a single-frame method trained mainly
+on print/screen attacks — it is not reliable against a 3D/silicone mask, and can
+struggle against a very steady, high-quality video replay held right up to the
+camera. The classical cues use independent signals with different failure modes,
+so they're a genuine second layer, not redundancy — and they keep the feature
+working even if the model file is unavailable.
+
+**Note on the multi-frame vote (§2.1, step 9):** it applies identically to
+liveness as it does to identity matches/non-matches, and is a general
+noise-reduction mechanism, not a liveness signal in its own right — there is no
+blink-detection or motion-consistency check in this system.
+
+### 5.6 Multi-frame majority voting (anti-flicker / anti-false-positive)
+
+A single video frame is **never** trusted enough to log a real entry/exit, flag
+someone as "Unknown," or flag a spoof attempt on its own — the same result has to
+come back consistently across several recent scan cycles first:
 
 - Every ~0.2 seconds (`SCAN_INTERVAL_SECONDS`), the entry-agent sends the current
   frame to `/api/identify`.
-- Each per-frame result is tallied as a `RecognitionAttempt` (for a match) or an
-  `UnmatchedAttempt` (for a non-match), scoped to that specific gate.
-- A match/non-match is only **confirmed** into a real, permanent `EntryLog` row
-  once the same person (or "probably the same unrecognized face," grouped by
+- Each per-frame result is tallied as a `RecognitionAttempt` (match),
+  `UnmatchedAttempt` (non-match), or `SpoofAttempt` (failed liveness), scoped to
+  that specific gate.
+- A result is only **confirmed** into a real, permanent `EntryLog` row once the
+  same person (or "probably the same unrecognized/spoofed face," grouped by
   embedding similarity) has been the top result in at least
   `VOTE_REQUIRED_AGREEMENT` (default **2**) of the last `VOTE_WINDOW_SIZE`
   (default **4**) attempts, within `VOTE_WINDOW_SECONDS` (default **4s**).
-- Until confirmed, the entry-agent shows a neutral "Checking…" box rather than a
-  green/amber verdict — so one bad frame mid-stride can't flag a real person as
-  Unknown, and one lucky frame can't wrongly confirm a match.
+- Until an unknown or spoof event is confirmed, the entry-agent doesn't log,
+  count, or alarm on it (a confirmed match, and a suspected-but-unconfirmed
+  spoof, still color their box immediately — see §2.1 step 10 — but neither
+  writes a permanent record until confirmed).
 
-### 3.6 Accuracy evaluation — FAR/FRR
+### 5.7 Accuracy evaluation — FAR/FRR
 
 A leave-one-out evaluation (`backend/users/threshold_eval.py`, exposed via
 `manage.py evaluate_threshold` and the dashboard's Reports page) computes
@@ -154,41 +372,12 @@ A leave-one-out evaluation (`backend/users/threshold_eval.py`, exposed via
 thresholds, by comparing every enrolled person's photos against each other. This is
 explicitly labeled a **preliminary estimate** in both the API response and the UI —
 it's computed from currently-enrolled photos, not an independent held-out test set,
-so it should not be read as a rigorous, unbiased accuracy claim.
-
-### 3.7 Anti-spoofing note
-
-There is currently **no liveness/anti-spoofing detection** — the system does not
-try to distinguish a live face from a printed photo or a video played at the
-camera. This is a known limitation worth addressing before any real, unsupervised
-deployment (see §9).
+so it should not be read as a rigorous, unbiased accuracy claim. (This evaluation
+currently covers identity matching only, not the liveness threshold — see §10.)
 
 ---
 
-## 4. Face-and-card interplay (why there's a second credential)
-
-The NFC card is not just a shortcut — it's the system's tiebreaker and
-manual-override channel:
-
-1. **Clean face match** (similarity clearly above threshold, no close second
-   candidate) → auto-confirmed after enough voting agreement, logged as
-   `face_only`.
-2. **Ambiguous face match** (borderline score, or two enrolled people who look
-   similar) → the gate scan opens a `PendingTiebreak` for that gate and the
-   entry-agent shows "Tap card to confirm." A card tap within
-   `TIEBREAK_TIMEOUT_SECONDS` (default **10s**) resolves it and logs
-   `face_and_card_tiebreak`. If nobody taps in time, it's logged as an
-   unresolved/ambiguous failure.
-3. **No face match** (confirmed via the same voting process) → logged as a failed
-   `face_only` attempt; a cropped photo of the face and its embedding are saved so
-   the same lingering stranger doesn't get logged repeatedly.
-4. **Plain NFC tap / manual ID entry** (no camera match involved) → its own
-   independent verification path, logged as `nfc_only`. Used for routine spot
-   checks or when the camera isn't practical.
-
----
-
-## 5. Data model
+## 6. Data model
 
 ### `accounts` app
 - **AdminProfile** — one-to-one extension of Django's built-in `User`
@@ -211,12 +400,14 @@ manual-override channel:
   (nullable FK — stays `Unknown` if the person is later deleted), `timestamp`,
   `direction` (`entry`/`exit`), `verification_method` (`nfc_only`, `face_only`,
   `manual_override`, `face_and_card_tiebreak`, plus a legacy `nfc_and_face` value
-  kept only for old rows), `status` (`success`/`failed`), `gate_location` (free
-  text), `failure_reason`, `captured_photo` (saved only for unrecognized faces),
-  `unmatched_encoding` (embedding of an unrecognized face, for dedupe),
-  `match_confidence` (cosine similarity at confirmation time).
-- **RecognitionAttempt** / **UnmatchedAttempt** — short-lived, per-frame voting
-  rows (see §3.5); pruneable, not permanent audit records.
+  kept only for old rows), `status` (`success` / `failed` / `spoof_suspected`),
+  `gate_location` (free text), `failure_reason`, `captured_photo` (saved for
+  unrecognized *and* spoof-suspected faces), `unmatched_encoding` (embedding of an
+  unrecognized or spoof-suspected face, for dedupe), `match_confidence` (ArcFace
+  cosine similarity at confirmation time), `liveness_score` (combined liveness
+  score at confirmation time — populated on every face-scan row, matched or not).
+- **RecognitionAttempt** / **UnmatchedAttempt** / **SpoofAttempt** — short-lived,
+  per-frame voting rows (see §5.6); pruneable, not permanent audit records.
 - **PendingTiebreak** — at most one active "please tap your card" prompt per gate.
 
 > Note: `gate_location` is a free-text string, not a separate Gate/Device model —
@@ -226,7 +417,7 @@ manual-override channel:
 
 ---
 
-## 6. Backend API
+## 7. Backend API
 
 All endpoints are served under `/api/`. Two auth schemes are used side by side:
 **JWT** (dashboard users, via `Authorization: Bearer <token>`) and a **shared
@@ -237,10 +428,10 @@ entry-agent is treated as a trusted device, not a logged-in user.
 |---|---|---|---|
 | `/api/auth/login` | POST | open | JWT login; embeds role/username/full name in the token |
 | `/api/auth/refresh` | POST | open | Refresh access token (rotated + blacklisted on rotation) |
-| `/api/health` | GET | open | Liveness check |
-| `/api/identify` | POST | service token | Continuous camera-frame face identification (§3) |
-| `/api/verify` | POST | service token | NFC tap / manual ID lookup, tiebreak resolution |
-| `/api/gate-summary` | GET | service token | Today's entries/exits/unknown counts for the entry-agent's stats strip |
+| `/api/health` | GET | open | Liveness check (server up/down — unrelated to face liveness) |
+| `/api/identify` | POST | service token | Continuous camera-frame face identification + liveness check (§2.1, §5) |
+| `/api/verify` | POST | service token | NFC tap / manual ID lookup, tiebreak resolution (§2.2) |
+| `/api/gate-summary` | GET | service token | Today's entries/exits/unknown/spoof counts for the entry-agent's stats strip |
 | `/api/logs/live` | GET | JWT (any role) | "New logs since X" feed for Live Monitoring (polling, not push) |
 | `/api/logs/` | GET | JWT (any role) | Paginated, filterable log history (read-only) |
 | `/api/users/` | GET/POST/PUT/PATCH/DELETE | JWT (admin/IT) | Person CRUD; DELETE = soft-deactivate |
@@ -249,7 +440,7 @@ entry-agent is treated as a trusted device, not a logged-in user.
 | `/api/users/bulk-import` | POST | JWT (admin/IT) | CSV/XLSX import matched against staged photos |
 | `/api/users/check-photo-quality` | POST | JWT (admin/IT) | Stateless blur/face-count/face-size pre-check for guided enrollment |
 | `/api/reports/summary` | GET | JWT (any role) | Daily/weekly counts, peak hour, by-method breakdown, confidence histogram, busiest hours |
-| `/api/reports/far-frr` | GET | JWT (any role) | Preliminary FAR/FRR table (§3.6) |
+| `/api/reports/far-frr` | GET | JWT (any role) | Preliminary FAR/FRR table (§5.7) |
 | `/admin/` | — | Django superuser | Full Django admin panel |
 
 Roles: **admin**, **security**, **it** — enforced by two permission classes,
@@ -258,16 +449,17 @@ no finer-grained per-object permission system.
 
 ---
 
-## 7. Dashboard (web app) features
+## 8. Dashboard (web app) features
 
 - **Login** — username/password, JWT-based session (auto-refresh on expiry, forced
   logout if refresh fails).
 - **Live Monitoring** — polls every second; a live photo-grid feed of today's gate
-  events with method badges (Face / Face+NFC tiebreak / Flagged), plus stat tiles
-  (passes today, enrolled matches, unknown attempts, average confidence).
-- **Logs** — paginated (25/page), filterable by date/name/gate/status, with a
-  "hide unknown" toggle and a **client-side CSV export** (built in-browser from
-  loaded rows; there's no server-generated export file).
+  events with method badges (Face / Face+NFC tiebreak / Spoof suspected / Flagged),
+  plus stat tiles (passes today, enrolled matches, unknown attempts, spoof
+  suspected, average confidence).
+- **Logs** — paginated (25/page), filterable by date/name/gate/status (including
+  Spoof suspected), with a "hide unknown" toggle and a **client-side CSV export**
+  (built in-browser from loaded rows; there's no server-generated export file).
 - **User Management** *(admin/IT only)* — full Person CRUD; profile-photo upload
   via webcam capture or file; **guided 5-shot enrollment** (front/left/right/
   neutral/smile, each live quality-checked against `/api/users/check-photo-quality`)
@@ -285,24 +477,27 @@ management command or Django admin only).
 
 ---
 
-## 8. entry-agent (gate device) features
+## 9. entry-agent (gate device) features
 
 Three windows, all built with CustomTkinter:
 
 - **Launcher** — pick "Camera scanner" or "Card scanner" (both can be open at
   once); shows live NFC reader/camera/server status pills.
 - **Camera scanner** — CCTV-style continuous monitoring, not a one-person kiosk;
-  several faces in frame are each identified independently. Draws bounding
+  several faces in frame are each identified independently (§2.1). Draws bounding
   boxes/names/confidence straight from the backend's `/api/identify` response
   (one source of truth — the entry-agent runs no local detector of its own).
   Green box = confirmed match, amber box + audible alarm + red banner = confirmed
-  unknown person, blue box = "tap card to confirm" (ambiguous), gray box =
-  "Checking…" (not yet confirmed). A live-log panel (4-column grid) shows recent
-  events with photo, name, and an ENTRY/EXIT/UNKNOWN status badge.
+  unknown person, **red box = spoof suspected** (shown as soon as suspected, plus
+  an audible alarm and banner once confirmed), blue box = "tap card to confirm"
+  (ambiguous), gray box = "Checking…" (not yet confirmed). A live-log panel
+  (4-column grid) shows recent events with photo, name, and an
+  ENTRY/EXIT/UNKNOWN/SPOOF status badge. The stats strip includes a dedicated
+  Spoof tile alongside Today/Entries/Exits/Unknown/In frame.
 - **Card scanner** — waits for an NFC tap (the reader emulates a USB keyboard; a
   hidden always-focused input field catches the typed card ID) or a manual
-  student/employee ID entry as fallback. Shows a full result card (photo, name,
-  role, ID, department, timestamp) on success or a specific failure reason
+  student/employee ID entry as fallback (§2.2). Shows a full result card (photo,
+  name, role, ID, department, timestamp) on success or a specific failure reason
   (not registered / deactivated / read error) on rejection.
 
 **Offline resilience**: NFC tap lookups that fail due to a network error are
@@ -319,20 +514,25 @@ separate instances.
 
 ---
 
-## 9. Known limitations (documented in the codebase itself)
+## 10. Known limitations (documented in the codebase itself)
 
 These are called out explicitly in code comments/docstrings, not bugs — worth
 knowing before extending the system:
 
-- **No anti-spoofing/liveness detection** — a printed photo or video held up to
-  the camera is not currently defended against.
-- `FACE_MATCH_SIMILARITY_THRESHOLD` (0.45 default) is an untuned starting point,
-  not a value validated against a real deployment's enrolled population.
+- **Liveness detection has real, known blind spots** — MiniFASNetV2 is a
+  single-frame method trained mainly on print/screen attacks; it is not a defense
+  against a 3D/silicone mask, and can struggle against a very steady, high-quality
+  video replay. The classical texture/frequency/reflectance cues are heuristic,
+  not learned, and their internal normalization ranges are unvalidated starting
+  points (same caveat as the thresholds below).
+- `LIVENESS_SCORE_THRESHOLD` (0.5 default) and `FACE_MATCH_SIMILARITY_THRESHOLD`
+  (0.45 default) are both untuned starting points, not values validated against a
+  real deployment's enrolled population or real spoof-attempt data.
+- The FAR/FRR evaluation (§5.7) covers identity matching only — there is no
+  equivalent held-out accuracy benchmark for the liveness threshold yet.
 - Face matching is a brute-force vectorized NumPy scan — fine at hundreds of
   embeddings, not built to scale to a very large student body without a proper
   vector index.
-- FAR/FRR reporting is a leave-one-out estimate over enrolled photos, not a
-  rigorous held-out accuracy benchmark.
 - `backend/media/` (reference/enrollment photos) is not access-controlled beyond
   Django's default file serving — flagged in the README's own privacy section.
 - No rate limiting/throttling is configured on the API.
@@ -350,7 +550,7 @@ knowing before extending the system:
 
 ---
 
-## 10. Security & privacy notes
+## 11. Security & privacy notes
 
 - Passwords are hashed with **bcrypt** (`BCryptSHA256PasswordHasher`, listed
   first in `PASSWORD_HASHERS`).
@@ -362,6 +562,11 @@ knowing before extending the system:
 - Biometric data is stored as **512-d embedding vectors**, not raw face images,
   specifically to reduce biometric exposure — though reference/enrollment photos
   are still kept separately in `backend/media/`.
+- The MiniFASNetV2 model is a **from-source ONNX export with a verified chain of
+  custody** (official Apache-2.0 weights, hash-checked, numerically verified
+  against the original PyTorch model, end-to-end tested against labeled samples)
+  rather than a downloaded pre-converted binary — see
+  `backend/users/liveness_models/NOTICE.md`.
 - The project's README includes an explicit **Philippine Data Privacy Act (RA
   10173)** notice: continuous camera scanning captures biometric data on everyone
   passing the gate, not just consenting enrollees (including visitors), and lists
@@ -371,16 +576,20 @@ knowing before extending the system:
 
 ---
 
-## 11. Summary: what makes this system's approach distinctive
+## 12. Summary: what makes this system's approach distinctive
 
 - **Continuous 1:N CCTV-style recognition**, not a stop-and-scan kiosk — multiple
   people in frame are each identified independently, every scan cycle.
+- **Two-signal passive liveness detection** — a trained model (MiniFASNetV2) aimed
+  at the most likely attack (print/screen) combined with independent classical
+  cues as a second layer and an automatic fallback, entirely from a standard 2D
+  webcam with no depth/IR hardware.
 - **Face and NFC are complementary, not redundant** — NFC specifically resolves
   ambiguous face matches (tiebreak) and serves as an independent fallback channel,
   rather than requiring both every time.
-- **Multi-frame majority voting** on both the "match" and "no match" paths
-  prevents a single bad frame from either wrongly confirming or wrongly flagging
-  someone.
+- **Multi-frame majority voting** on the match, no-match, *and* spoof-suspected
+  paths alike prevents a single bad frame from wrongly confirming, wrongly
+  flagging, or wrongly clearing someone.
 - **Deliberately thin edge device** — the entry-agent has zero ML dependencies;
-  all recognition computation happens server-side, so the gate PC only needs to
-  capture and display, not run a model.
+  all recognition and liveness computation happens server-side, so the gate PC
+  only needs to capture and display, not run a model.

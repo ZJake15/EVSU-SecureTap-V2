@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from users.models import Person
@@ -21,6 +22,14 @@ class EntryLog(models.Model):
         # to break that tie - distinct from NFC_ONLY (a plain lookup) and
         # NFC_AND_FACE (the old, no-longer-used dual-check flow).
         FACE_AND_CARD_TIEBREAK = "face_and_card_tiebreak", "Face + card tiebreak"
+        # The top face match was confidently, unambiguously itself - and was
+        # STILL sent to a card tap, because the matched person is on record
+        # (see users.models.ConfusablePair) as unusually similar to someone
+        # else, e.g. identical twins. Deliberately its own value, not folded
+        # into FACE_AND_CARD_TIEBREAK: that one means the match itself looked
+        # uncertain; this one means the match looked fine and was overridden
+        # anyway, which is a very different thing to see in the data.
+        CONFUSABLE_PAIR_TIEBREAK = "confusable_pair_tiebreak", "Confusable pair tiebreak"
 
     class Status(models.TextChoices):
         SUCCESS = "success", "Success"
@@ -31,6 +40,13 @@ class EntryLog(models.Model):
         # simply didn't match anyone) since this is a security event, not a
         # recognition miss. See users/liveness_utils.py.
         SPOOF_SUSPECTED = "spoof_suspected", "Spoof suspected"
+        # The mouth/nose read as covered (hand, mask, high collar) before the
+        # face was ever compared against enrolled embeddings - kept distinct
+        # from FAILED for the same reason SPOOF_SUSPECTED is: an occluded
+        # face isn't a clean non-match, ArcFace was never given a fair look
+        # at it, so calling it "Unknown" would be wrong. See
+        # users/insightface_utils.mouth_visibility_ratio.
+        OCCLUSION_DETECTED = "occlusion_detected", "Occlusion detected"
 
     # Nullable: an unrecognized NFC tap (no matching Person) must still be logged.
     person = models.ForeignKey(
@@ -61,6 +77,29 @@ class EntryLog(models.Model):
     # rows and rows created before this check existed. See
     # settings.LIVENESS_SCORE_THRESHOLD and users/liveness_utils.py.
     liveness_score = models.FloatField(null=True, blank=True)
+    # True if an occluded frame (mouth/nose covered) was seen at this gate in
+    # the moments before this row was written - regardless of how the row
+    # itself concluded. Sits alongside status rather than replacing it: a
+    # SUCCESS row with this True means "matched fine, but their face was
+    # briefly covered a moment earlier in this same encounter" - worth
+    # keeping visible rather than silently dropped once the match resolved
+    # it, since covering your face at a security gate and then uncovering it
+    # is itself a security-relevant moment. Also set True on the row's own
+    # OCCLUSION_DETECTED status (redundant with status there, kept anyway so
+    # a report can filter on this one field regardless of outcome).
+    occlusion_detected = models.BooleanField(default=False)
+    # Which dashboard account logged this row by hand - set ONLY on a
+    # MANUAL_OVERRIDE row (a Security Officer's judgment call after visually
+    # checking a physical ID when the scanner itself failed), never on an
+    # automatic face/NFC match. This is what actually makes an override
+    # "tied to their own account" rather than just labeled as one - without
+    # this field, nothing on EntryLog identifies which staff member acted,
+    # only which Person was verified. Null for every other row: there's no
+    # dashboard account behind an automatic scan.
+    performed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="manual_override_logs",
+    )
 
     class Meta:
         ordering = ["-timestamp"]
@@ -102,14 +141,50 @@ class UnmatchedAttempt(models.Model):
 
 class PendingTiebreak(models.Model):
     """An in-progress "please tap your card" prompt for one gate: the camera
-    scan saw a borderline or ambiguous face match and is waiting (up to
-    TIEBREAK_TIMEOUT_SECONDS) for a card tap to say which of the close
-    candidates it actually is. At most one active tiebreak per gate."""
+    scan saw a borderline/ambiguous face match, OR a confident match that's
+    flagged as part of a confusable pair, and is waiting (up to
+    TIEBREAK_TIMEOUT_SECONDS) for a card tap to confirm identity. At most one
+    active tiebreak per gate."""
+
+    class Reason(models.TextChoices):
+        # The normal case: the score gap itself looked uncertain (see
+        # IdentifyView._match_one_face's borderline/close_second checks).
+        AMBIGUOUS_MATCH = "ambiguous_match", "Ambiguous match"
+        # The score gap looked completely fine - the match was overridden
+        # anyway because the matched person is on record as confusable with
+        # someone else (see users.models.ConfusablePair). Runs independently
+        # of, and takes priority over, the ambiguous-match check above.
+        CONFUSABLE_PAIR = "confusable_pair", "Confusable pair"
 
     gate_location = models.CharField(max_length=100, unique=True)
     candidate_person_ids = models.JSONField()
     direction = models.CharField(max_length=10)
+    reason = models.CharField(max_length=20, choices=Reason.choices, default=Reason.AMBIGUOUS_MATCH)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class OcclusionAttempt(models.Model):
+    """The occlusion counterpart to UnmatchedAttempt/SpoofAttempt: one frame
+    from the continuous scan whose mouth/nose read as covered, tallied here
+    before it's trusted enough to confirm a real EntryLog(status=
+    OCCLUSION_DETECTED) row - so one anomalous frame (a narrow-mouthed
+    person, a bad angle) can't misclassify someone on its own; see
+    IdentifyView._confirm_or_vote_occlusion.
+
+    Deliberately simpler than the other two: no embedding stored. Unmatched/
+    SpoofAttempt group recent rows by embedding similarity ("probably the
+    same face across frames") before counting agreement - but an occluded
+    frame's embedding is exactly the thing insightface_utils.
+    mouth_visibility_ratio's docstring says not to trust, so leaning on it
+    for even a same-face grouping would undermine the reason this exists.
+    Agreement here is just a raw count of recent rows at this gate within the
+    window instead - coarser (it can't tell two different occluded people
+    apart within the same few seconds), but doesn't pretend a certainty the
+    underlying signal doesn't have. Not a permanent audit record - old rows
+    can be pruned freely, same as its siblings."""
+
+    gate_location = models.CharField(max_length=100)
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
 
 
 class SpoofAttempt(models.Model):

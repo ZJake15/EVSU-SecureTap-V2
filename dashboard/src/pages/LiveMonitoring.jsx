@@ -61,7 +61,11 @@ function EventPhoto({ event }) {
     return <img src={event.captured_photo} alt="" className="aspect-square w-full object-cover" />;
   }
   return (
-    <div className="flex aspect-square w-full items-center justify-center bg-red-50">
+    <div
+      className={`flex aspect-square w-full items-center justify-center ${
+        event.status === "occlusion_detected" ? "bg-teal-50" : "bg-red-50"
+      }`}
+    >
       <UnknownFaceIcon />
     </div>
   );
@@ -70,28 +74,53 @@ function EventPhoto({ event }) {
 function MethodBadge({ event }) {
   if (event.status === "spoof_suspected") {
     return (
-      <span className="inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-800">
+      <span className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-800">
         Spoof suspected
+      </span>
+    );
+  }
+  if (event.status === "occlusion_detected") {
+    return (
+      <span className="inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-teal-800">
+        Face covered
+      </span>
+    );
+  }
+  if (event.verification_method === "confusable_pair_tiebreak" && event.status !== "success") {
+    // Unresolved - no card tap came in time, and (per EntryLog.person being
+    // null on this row) nobody was auto-accepted either. Distinct from the
+    // generic "Flagged" case below: this needs a specific manual review,
+    // not just "didn't match".
+    return (
+      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+        Needs review - confusable pair
       </span>
     );
   }
   if (event.status !== "success") {
     return (
-      <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-800">
+      <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-800">
         Flagged
+      </span>
+    );
+  }
+  if (event.verification_method === "confusable_pair_tiebreak") {
+    return (
+      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+        Confusable pair + NFC
       </span>
     );
   }
   if (event.verification_method === "face_and_card_tiebreak") {
     return (
-      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800">
         Face + NFC
       </span>
     );
   }
   if (event.verification_method === "face_only") {
     return (
-      <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-800">
+      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
         Face
       </span>
     );
@@ -100,18 +129,26 @@ function MethodBadge({ event }) {
   // nfc_and_face) - no longer created, but may still be visible if today's
   // feed happens to include one from right after a restart.
   return (
-    <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-700">
+    <span className="inline-flex items-center rounded-full border border-ink-200 bg-ink-50 px-2 py-0.5 text-[10px] font-bold text-ink-600">
       NFC
     </span>
   );
 }
 
 function MetricCard({ label, value, tone = "default" }) {
-  const toneClasses = tone === "danger" ? "text-red-700" : "text-gray-900";
+  const toneClasses =
+    tone === "danger"
+      ? "border-red-200 bg-red-50"
+      : tone === "accent"
+        ? "border-gold-300 bg-gold-50"
+        : tone === "teal"
+          ? "border-teal-200 bg-teal-50"
+          : "border-ink-900/10 bg-white";
+  const valueClasses = tone === "danger" ? "text-red-700" : tone === "teal" ? "text-teal-700" : "text-ink-900";
   return (
-    <div className="rounded border border-gray-200 bg-white p-3 shadow-sm">
-      <p className="text-xs uppercase tracking-wide text-gray-500">{label}</p>
-      <p className={`mt-1 text-2xl font-semibold ${toneClasses}`}>{value}</p>
+    <div className={`rounded-xl border p-4 shadow-sm ${toneClasses}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">{label}</p>
+      <p className={`mt-1 font-display text-2xl font-semibold ${valueClasses}`}>{value}</p>
     </div>
   );
 }
@@ -151,6 +188,7 @@ export default function LiveMonitoring() {
   const enrolledCount = events.filter((event) => event.status === "success").length;
   const spoofCount = events.filter((event) => event.status === "spoof_suspected").length;
   const unknownCount = events.filter((event) => event.status === "failed").length;
+  const occludedCount = events.filter((event) => event.status === "occlusion_detected").length;
   const confidences = events
     .map((event) => event.match_confidence)
     .filter((value) => value !== null && value !== undefined);
@@ -160,43 +198,64 @@ export default function LiveMonitoring() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold text-gray-900">Live Monitoring - Today's Gate Activity</h1>
+      <div className="mb-6">
+        <h1 className="font-display text-2xl font-semibold text-ink-900">Live Monitoring</h1>
+        <p className="mt-1 text-sm text-ink-500">Today&rsquo;s gate activity, updated in real time.</p>
+      </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <MetricCard label="Passes today" value={events.length} />
         <MetricCard label="Enrolled matches" value={enrolledCount} />
         <MetricCard label="Unknown attempts" value={unknownCount} tone="danger" />
         <MetricCard label="Spoof suspected" value={spoofCount} tone="danger" />
-        <MetricCard label="Avg confidence" value={avgConfidence !== null ? `${avgConfidence}%` : "—"} />
+        <MetricCard label="Occlusion detected" value={occludedCount} tone="teal" />
+        <MetricCard label="Avg confidence" value={avgConfidence !== null ? `${avgConfidence}%` : "—"} tone="accent" />
       </div>
 
-      {error && <p className="mb-3 text-sm text-amber-600">{error}</p>}
+      {error && <p className="mb-3 text-sm font-medium text-amber-700">{error}</p>}
       {events.length === 0 && (
-        <p className="text-sm text-gray-500">Waiting for the next scan...</p>
+        <p className="text-sm text-ink-500">Waiting for the next scan...</p>
       )}
-      <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+      <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
         {events.map((event) => (
           <div
             key={event.id}
-            className="flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"
+            className="flex flex-col overflow-hidden rounded-xl border border-ink-900/10 bg-white shadow-sm"
           >
             <EventPhoto event={event} />
-            <div className="flex flex-1 flex-col gap-0.5 p-2">
-              <p className="truncate text-xs font-medium text-gray-900">{event.person_name || "Unknown"}</p>
-              <p className="truncate text-[10px] text-gray-500">
+            <div className="flex flex-1 flex-col gap-0.5 border-t-2 border-gold-400/70 p-2">
+              <p className="truncate text-xs font-semibold text-ink-900">{event.person_name || "Unknown"}</p>
+              <p className="truncate text-[10px] text-ink-500">
                 {event.student_or_employee_id || "No ID on file"}
               </p>
-              <p className="truncate text-[10px] text-gray-400">
+              <p className="truncate text-[10px] text-ink-400">
                 {new Date(event.timestamp).toLocaleTimeString()}
               </p>
               <div className="mt-1 flex items-center gap-1">
                 <MethodBadge event={event} />
                 {event.status === "success" && event.match_confidence != null && (
-                  <span className="text-[10px] font-medium text-gray-500">
+                  <span className="text-[10px] font-medium text-ink-500">
                     {Math.round(event.match_confidence * 100)}%
                   </span>
                 )}
               </div>
+              {/* A moment of occlusion seen earlier in this same encounter,
+                  even though it resolved into this row's own outcome - the
+                  point of keeping the note rather than dropping it once
+                  resolved (see EntryLog.occlusion_detected). Not shown on an
+                  occlusion_detected row itself - its own badge already says so. */}
+              {event.occlusion_detected && event.status !== "occlusion_detected" && (
+                <p className="truncate text-[10px] text-teal-700">Face briefly covered earlier</p>
+              )}
+              {/* A manual backstop for a confusable pair (see users.models.
+                  ConfusablePair) - shown specifically on a confusable-pair
+                  tiebreak, the one moment a guard actually needs it to
+                  double-check by eye. Never used by matching itself. */}
+              {event.verification_method === "confusable_pair_tiebreak" && event.distinguishing_note && (
+                <p className="truncate text-[10px] font-medium text-amber-700" title={event.distinguishing_note}>
+                  Note: {event.distinguishing_note}
+                </p>
+              )}
             </div>
           </div>
         ))}

@@ -4,11 +4,26 @@
 
 body {
   margin: 0;
-  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
-  background-color: #f3f4f6;
-  color: #1f2937;
+  font-family: "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+  background-color: #faf7f2;
+  color: #1c1917;
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* Concentric-ring motif echoing the university seal's circular band - a
+   texture behind the page shell, never under text or table rows (it's on the
+   Layout wrapper, cards sit solid white on top of it). Anchored off the top
+   edge so it reads as one continuous texture rather than a logo repeated. */
+.shell-bg {
+  background-color: #faf7f2;
+  background-image: repeating-radial-gradient(
+    circle at 88% -12%,
+    rgba(123, 17, 19, 0.035) 0px,
+    rgba(123, 17, 19, 0.035) 1.5px,
+    transparent 1.5px,
+    transparent 44px
+  );
 }

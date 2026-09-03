@@ -8,6 +8,8 @@ Campus entry monitoring system for Eastern Visayas State University, with a real
 
 ```
 evsu-securetap/
+├── SecureTap.bat  # double-click this - opens the launcher
+├── launcher.py    # one menu: starts the backend, opens the dashboard or entry-agent
 ├── backend/       # Django + DRF API (accounts, users, logs, reports apps) + MySQL
 ├── entry-agent/   # Windows app: webcam capture + NFC card read -> calls the API
 ├── dashboard/     # React + Tailwind admin dashboard
@@ -46,8 +48,10 @@ This creates a dedicated `securetap` database and a least-privilege `securetap_a
 
 ## 3. Backend setup (Django)
 
+**One** virtual environment at the **repo root** serves both the backend and the entry-agent. They share most of their dependencies (Pillow, NumPy, OpenCV), and `SecureTap.bat` looks for exactly one interpreter at `.venv\Scripts\python.exe`.
+
 ```powershell
-cd backend
+# from the repo root - not inside backend/
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 # If PowerShell blocks this with an execution-policy error, run:
@@ -59,16 +63,20 @@ python -m venv .venv
 # version, a plain `pip install` can look stuck for several minutes - pip's
 # resolver is scanning years of old scipy/etc. releases for compatibility,
 # not actually hanging - this flag avoids that entirely.
-pip install -r requirements.txt --only-binary=:all:
+pip install -r backend\requirements.txt --only-binary=:all:
+pip install -r entry-agent\requirements.txt
 
-copy .env.example .env
-# edit .env now - see "Getting your secrets" below for DB_PASSWORD,
+copy backend\.env.example backend\.env
+# edit backend\.env now - see "Getting your secrets" below for DB_PASSWORD,
 # DJANGO_SECRET_KEY, and ENTRY_AGENT_SERVICE_TOKEN specifically.
 
+cd backend
 python manage.py migrate
 python manage.py seed_dummy_data
-python manage.py runserver
+cd ..
 ```
+
+You don't need to start the server by hand - `SecureTap.bat` does that (see "Running everything together"). To run it manually anyway: `cd backend`, `python manage.py runserver`.
 
 Backend runs at `http://localhost:8000`. Django admin at `http://localhost:8000/admin` (log in with a seeded admin account below, or `python manage.py createsuperuser`).
 
@@ -86,30 +94,24 @@ The seeded dummy *people* (students/staff) have **random, fake face embeddings**
 
 ## 4. Entry-agent setup (Windows, plain Python)
 
-The entry-agent doesn't run face recognition itself - it captures frames and posts them to the backend, which does the actual matching, so it needs no special ML dependencies.
+The entry-agent doesn't run face recognition itself - it captures frames and posts them to the backend, which does the actual matching, so it needs no special ML dependencies. Its Python packages already went into the shared root venv in step 3, so all that's left here is its own `.env`:
 
 ```powershell
-cd entry-agent
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-# If PowerShell blocks this with an execution-policy error, run:
-#   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-# then retry the activate command above (this only affects the current
-# terminal session, not the whole machine).
-pip install -r requirements.txt
-
-copy .env.example .env
+copy entry-agent\.env.example entry-agent\.env
 # SERVICE_TOKEN must match ENTRY_AGENT_SERVICE_TOKEN in backend/.env exactly.
-python main.py
 ```
 
-Two things happen once it's running:
+Open it from `SecureTap.bat` (see "Running everything together"). To run it manually anyway: `cd entry-agent`, `python main.py`.
+
+Picking **Entry Agent** in the launcher opens the **gate monitor** directly - no second menu to click through. It's a single window handling both credentials at once: a live log on the right (the widest panel), the camera feed filling the left column above a compact card-scanner strip, and a status bar carrying camera/backend/queue state. Closing it exits the entry-agent. Two things happen while it's running:
 - **Continuous scan** (primary): every ~0.2s it grabs a webcam frame and posts it to `/api/identify`. A match needs to agree across several recent frames before it's confirmed (not a single frame); a blurry or partially-out-of-frame face is skipped and shown as "Checking..." rather than risked as a false "Unknown". A recognized person shows a green box + name + confidence; a confirmed unrecognized face shows an amber "Unknown" box; a borderline/ambiguous match shows a blue "Tap card to confirm" prompt.
 - **Card tap** (secondary): posts to `/api/verify` - normally just a lookup that shows the guard the tapped person's on-file photo for a visual cross-check, but if the camera currently has a pending tiebreak for this gate, the tap resolves that instead. Either way, a successful tap is logged as a real gate entry (deduped if the same card is tapped again within the cooldown window) and appears in Live Monitoring/Logs like a face-scan entry does.
 
+Both land in the same live log on the right of the monitor - face events badged `ENTRY`/`EXIT`/`UNKNOWN`/`SPOOF`, card taps badged `CARD · ENTRY` or `CARD ✗` - so the log is one chronological record of the gate no matter which credential was used.
+
 **About the NFC reader:** cheap "13.56MHz IC / 125KHz ID" combo readers (and many similar low-cost USB RFID modules) are **not** PC/SC smart-card devices - they're USB HID-keyboard-emulation devices. Tapping a card literally "types" the card's ID followed by Enter into whatever window currently has keyboard focus, exactly like a very fast typist. Because of this:
 
-- The entry-agent's card-scanner window keeps a hidden, always-focused input to catch that typing - **keep its window focused/on top** rather than clicking into some other application while it's running.
+- The entry-agent's gate-monitor window keeps a hidden, always-focused input to catch that typing - **keep its window focused/on top** rather than clicking into some other application while it's running.
 - There's no separate reader-detection step and no Windows service dependency for this - if it types into Notepad, it'll type into the entry-agent.
 - **Tip:** to find out what ID a given card produces (e.g. when registering a new person), click into the "NFC ID" field on the dashboard's Add User form and tap the card there - it types the ID directly into that field.
 - If you have a genuine PC/SC reader instead (e.g. an actual ACR122U), this approach won't see it; that would need reintroducing `pyscard` and reading via APDU commands instead.
@@ -158,11 +160,26 @@ Paste the **same value** into both `backend/.env`'s `ENTRY_AGENT_SERVICE_TOKEN` 
 
 ## Running everything together
 
-1. MySQL running (Windows service).
-2. `cd backend`, activate its venv, `python manage.py runserver`.
-3. `cd dashboard`, `npm run dev`.
-4. `cd entry-agent`, activate its venv, `python main.py`.
-5. Log into the dashboard and register a real person via the Users page - guided capture walks through 5 near-frontal shots (front, slight left/right turn, neutral, smile), or use the single-photo fallback if you're staging one for bulk import instead. The entry-agent should recognize them automatically within a few seconds of facing the webcam, after enough frames agree - no tap needed. Optionally tap their NFC card too and confirm their photo pops up on the entry-agent window. Both should appear on the dashboard's Live Monitoring page and in Logs.
+**Double-click `SecureTap.bat`.** That's it - no terminal commands.
+
+It opens one window that starts the Django backend for you and then asks the only question that's genuinely a choice:
+
+- **Dashboard** - starts the Vite dev server if it isn't already up, then opens your browser at whatever port it actually bound to.
+- **Entry Agent** - opens the gate monitor (camera + NFC) in its own window.
+
+The backend isn't a third button because it isn't a choice - both front ends are useless without it, so it just starts.
+
+Worth knowing:
+
+- **MySQL still has to be running.** It's a Windows service, outside the launcher's control - if it's down, the backend starts but every page that touches data will error.
+- **Already have things running?** If `runserver` or `npm run dev` is already up in a terminal, the launcher detects that and uses those instead of starting duplicates that would die on "port already in use" - and it won't kill them when it quits.
+- **Show log** reveals the merged output of everything it started. That's where a backend that failed to start explains itself (MySQL down, bad `.env`, port taken).
+- **Quitting stops everything it started**, and asks first. Anything it merely adopted is left alone.
+- `npm install` in `dashboard/` is still a one-time manual step; the launcher says so plainly if it hasn't been done.
+
+Equivalent manual commands, if you prefer them or you're on a machine without the `.bat`: `python manage.py runserver` in `backend/`, `npm run dev` in `dashboard/`, `python main.py` in `entry-agent/` - all using the shared root venv.
+
+Then: log into the dashboard and register a real person via the Users page - guided capture walks through 5 near-frontal shots (front, slight left/right turn, neutral, smile), or use the single-photo fallback if you're staging one for bulk import instead. The entry-agent should recognize them automatically within a few seconds of facing the webcam, after enough frames agree - no tap needed. Optionally tap their NFC card too and confirm their photo pops up on the entry-agent window. Both should appear on the dashboard's Live Monitoring page and in Logs.
 
 ## Data privacy notice
 
@@ -179,10 +196,11 @@ The system stores face **embeddings** (512-dimensional ArcFace vectors), not raw
 ## Architecture notes
 
 - **Continuous 1:N face identification** (`POST /api/identify`) is the primary gate check - it compares a sampled frame's embedding against every enrolled active person's stored embeddings (a vectorized cosine-similarity scan, fast enough for hundreds of enrolled people/embeddings, not built to scale to a huge student body without a proper vector index like FAISS). A single frame is never trusted alone: the same person has to be the top match across several recent scans (a rolling-window majority vote) before a real log row is written, and the same grace period applies to "Unknown" so a single blurry frame can't falsely flag someone. A borderline or genuinely ambiguous match (two similar-looking candidates) triggers an NFC tiebreak instead of guessing.
-- **`POST /api/verify`** handles a card tap or the manual ID-entry fallback - normally a lookup that returns the matched person's profile for the guard to visually cross-check, but resolves an active NFC tiebreak if one is pending for that gate. A successful tap logs a real gate entry (deduped against a recent tap of the same person).
+- **`POST /api/verify`** handles a card tap - normally a lookup that returns the matched person's profile for the guard to visually cross-check, but resolves an active NFC tiebreak if one is pending for that gate. A successful tap logs a real gate entry (deduped against a recent tap of the same person). The endpoint still accepts a `student_or_employee_id` instead of an `nfc_id`, but nothing sends it - the entry-agent's typed-ID fallback was removed, so a tap is the only way in.
 - **Real-time updates** use short-interval polling (`GET /api/logs/live`) rather than WebSockets/Django Channels - simpler to run reliably without adding Redis + an ASGI server.
 - **`admin_accounts`** is implemented as Django's built-in `User` model plus an `AdminProfile(role)` model (see `backend/accounts/`), with `bcrypt` configured as the primary password hasher - not a hand-rolled auth table.
 - The entry-agent authenticates to `/api/verify` and `/api/identify` with a shared-secret `X-Service-Token` header, not a JWT - it's a trusted device, not a logged-in dashboard user.
 - **Bulk import** (`POST /api/users/bulk-import`) matches photos already placed on the server at `backend/seed_data/photos/<student_or_employee_id>.jpg` by filename, and flags the resulting single-photo enrollment as lower-confidence in the data.
+- **Photo uploads are restricted to JPEG, PNG and HEIC** (`.jpg/.jpeg/.png/.heic/.heif`) - the enrollment photo, every guided-capture slot, extra photos, and the profile picture. HEIC is included because iPhones save that way by default. The backend checks the file's *actual decoded format* via Pillow, not its extension or `Content-Type`, so a renamed `.webp` is still rejected - which matters here because `pillow-heif` also teaches Pillow to read **AVIF**, and AVIF is deliberately *not* accepted. Note that no non-Apple browser can render a HEIC, so the dashboard shows a "HEIC - no preview" placeholder before upload; the file itself uploads and is stored re-encoded as JPEG, so it displays normally afterwards.
 - The entry-agent queues NFC tap lookups (not scan frames) in a local SQLite file (`entry-agent/offline_queue.db`) when the backend is unreachable, and a background thread syncs them automatically once connectivity returns.
-- The NFC reader is read as HID-keyboard-emulation input (a focused, off-screen Tkinter `Entry` widget) rather than through `pyscard`/PC-SC - see the note in the entry-agent section above. The continuous scan and each tap lookup run on their own worker threads so camera/network I/O never freezes the feedback window.
+- The NFC reader is read as HID-keyboard-emulation input (a focused, off-screen Tkinter `Entry` widget) rather than through `pyscard`/PC-SC - see the note in the entry-agent section above. The continuous scan and each tap lookup run on their own worker threads, pushing updates to the gate monitor through a thread-safe queue, so camera/network I/O never freezes the UI.

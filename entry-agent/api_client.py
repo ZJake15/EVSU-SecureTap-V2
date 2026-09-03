@@ -13,17 +13,13 @@ class ApiClient:
         # every call the continuous scan loop makes.
         self.session = requests.Session()
 
-    def verify(self, gate_location, direction, nfc_id=None, student_or_employee_id=None):
-        """POSTs a card tap (or a manual ID-entry fallback) to /verify - a
-        lookup only, no image involved. Exactly one of nfc_id/
-        student_or_employee_id should be given. Raises
-        requests.RequestException on any network failure so the caller can
-        fall back to the offline queue."""
+    def verify(self, gate_location, direction, nfc_id=None):
+        """POSTs a card tap to /verify - a lookup only, no image involved.
+        Raises requests.RequestException on any network failure so the
+        caller can fall back to the offline queue."""
         data = {"gate_location": gate_location, "direction": direction}
         if nfc_id:
             data["nfc_id"] = nfc_id
-        if student_or_employee_id:
-            data["student_or_employee_id"] = student_or_employee_id
         response = self.session.post(
             f"{self.base_url}/verify",
             headers={"X-Service-Token": self.service_token},

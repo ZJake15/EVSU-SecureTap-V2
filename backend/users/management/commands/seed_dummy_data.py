@@ -6,11 +6,12 @@ from django.db import transaction
 from accounts.models import AdminProfile
 from users.models import FaceEmbedding, Person
 
-# username, role, password - change these passwords after first login.
+# username, role, assigned_gate_location (only meaningful for Security
+# Officer), password - change these passwords after first login.
 ADMIN_ACCOUNTS = [
-    ("admin_demo", AdminProfile.Role.ADMIN, "ChangeMe123!"),
-    ("security_demo", AdminProfile.Role.SECURITY, "ChangeMe123!"),
-    ("it_demo", AdminProfile.Role.IT, "ChangeMe123!"),
+    ("admin_demo", AdminProfile.Role.ADMIN, "", "ChangeMe123!"),
+    ("saso_demo", AdminProfile.Role.SASO, "", "ChangeMe123!"),
+    ("guard_demo", AdminProfile.Role.SECURITY_OFFICER, "Main Gate", "ChangeMe123!"),
 ]
 
 DUMMY_PEOPLE = [
@@ -32,11 +33,11 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("Seed data loaded."))
 
     def _seed_admin_accounts(self):
-        for username, role, password in ADMIN_ACCOUNTS:
+        for username, role, gate, password in ADMIN_ACCOUNTS:
             user, created = User.objects.get_or_create(
                 username=username,
                 defaults={
-                    "is_staff": role in (AdminProfile.Role.ADMIN, AdminProfile.Role.IT),
+                    "is_staff": role == AdminProfile.Role.ADMIN,
                     "is_superuser": role == AdminProfile.Role.ADMIN,
                 },
             )
@@ -44,7 +45,9 @@ class Command(BaseCommand):
                 user.set_password(password)
                 user.save()
                 self.stdout.write(f"  Created login: {username} / {password} (role={role})")
-            AdminProfile.objects.update_or_create(user=user, defaults={"role": role})
+            AdminProfile.objects.update_or_create(
+                user=user, defaults={"role": role, "assigned_gate_location": gate},
+            )
 
     def _seed_dummy_people(self):
         self.stdout.write(

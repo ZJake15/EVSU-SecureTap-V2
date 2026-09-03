@@ -131,22 +131,196 @@ def compute_face_embedding(image_file):
     return face.normed_embedding.tolist(), float(face.det_score)
 
 
+def head_yaw_ratio(kps):
+    """How far a face is turned away from the camera, derived from the
+    detector's own 5 keypoints (both eyes, nose tip, both mouth corners) - so
+    it costs nothing beyond the detection that already ran, and needs no
+    extra ONNX model loaded (this pack deliberately loads only detection and
+    recognition - see _REQUIRED_MODULES).
+
+    Measures how far the nose tip sits from the midpoint between the eyes,
+    along the eye-to-eye axis, as a fraction of the inter-eye distance. A
+    face looking straight at the camera puts its nose tip almost exactly
+    between the eyes (~0.0); turning the head slides the nose toward the
+    trailing eye, and by roughly 30 degrees the ratio clears 0.35. Measuring
+    along the eye axis rather than the image's x-axis makes this independent
+    of head tilt - a head cocked sideways but still facing the camera scores
+    ~0.0, as it should.
+
+    Pitch (looking up or down) is deliberately NOT measured here. With only 5
+    keypoints it can't be separated from the camera's mounting height: a
+    gate camera above head height makes every single person read as
+    "looking down", so a fixed pitch threshold would reject everyone at one
+    gate and nobody at another. Yaw has no such bias.
+
+    Returns None when the keypoints are missing or degenerate (both eyes
+    detected at the same spot), so callers can fall through to their existing
+    behaviour rather than reject a face on a measurement that never happened.
+    """
+    if kps is None or len(kps) < 3:
+        return None
+    points = np.asarray(kps, dtype=np.float64)
+    eye_left, eye_right, nose = points[0], points[1], points[2]
+    eye_vector = eye_right - eye_left
+    eye_distance = float(np.linalg.norm(eye_vector))
+    if eye_distance < 1e-6:
+        return None
+    eye_axis = eye_vector / eye_distance
+    nose_offset = nose - (eye_left + eye_right) / 2.0
+    return abs(float(np.dot(nose_offset, eye_axis))) / eye_distance
+
+
+def mouth_visibility_ratio(kps):
+    """A proxy for whether the mouth/nose are occluded (a hand, mask, or high
+    collar), derived from the same 5 keypoints head_yaw_ratio uses - so, like
+    that function, it costs nothing beyond the detection that already ran.
+
+    IMPORTANT - this is NOT a per-landmark confidence score, and InsightFace
+    exposes no such thing anywhere in this installation - checked directly in
+    the installed package source, not assumed. This pack's detector
+    (SCRFD/det_500m, the buffalo_s detection model) outputs exactly one
+    confidence value per face (det_score, the box-level detection confidence
+    - see IdentifyView._occlusion_reason for how that's used as a separate
+    signal) plus 5 keypoint *coordinates* with no per-point uncertainty
+    attached. The richer landmark model this pack also bundles but doesn't
+    load (landmark_2d_106/landmark_3d_68 - see _REQUIRED_MODULES) is the same
+    story: pure coordinate regression (optionally a 3-axis pose estimate),
+    still no visibility/confidence output anywhere.
+
+    An earlier version of this check assumed a covered feature would produce
+    an *implausible* landmark arrangement (eyes not level, nose not between/
+    below them, mouth corners not symmetric below the nose) and planned to
+    check that directly. Verified empirically instead of assumed, and it
+    does NOT hold: painting a skin-toned patch over the mouth/nose of real
+    enrolled photos and re-running this exact detector, every plausibility
+    measure (eye level, eye-distance-to-box-size, nose offset from the eyes,
+    mouth position/symmetry relative to the nose) came back statistically
+    indistinguishable between clean and occluded faces. SCRFD's regression
+    head doesn't produce a distorted-looking guess for a covered feature -
+    it produces a *plausible-looking but wrong* one, geometrically
+    self-consistent with the rest of the face. Plausibility alone doesn't
+    detect that.
+
+    What DOES move, on the same test: mouth WIDTH specifically (measured
+    below) and how texture-rich the lower face looks (see
+    lower_face_texture_ratio) - because a hand or mask genuinely narrows
+    the space between the mouth corners and flattens the region's texture,
+    even while its shape stays "plausible". The gap between "clearly
+    visible" and "clearly covered" on mouth width is still much thinner than
+    FACE_MAX_YAW_RATIO's (that one had a >10x separation on the same kind of
+    test; this one does not) - so treat this as a rough proxy, not a
+    validated occlusion classifier, and keep FACE_MIN_MOUTH_VISIBILITY_
+    RATIO's default conservative (biased toward under-detecting rather than
+    misreading a visible face as occluded - see that setting's own comment).
+
+    On its own this also badly under-detects partial coverage - real-world
+    testing found a hand covering just the mouth/chin (not reaching the
+    nose) very often doesn't shrink this ratio enough to trip a threshold
+    that can't be loosened further without misreading visible faces as
+    covered. That's why IdentifyView combines THREE independent signals -
+    this ratio, lower_face_texture_ratio, and det_score - and flags
+    occlusion if *any one* fires, since each misses different real cases.
+
+    Measures mouth width (the two mouth-corner keypoints) as a fraction of
+    the inter-eye distance - a real, unobstructed mouth sits in a fairly
+    consistent proportion to eye spacing; a hand or mask over it collapses
+    that width toward the point where the coordinates end up nearly
+    coincident. Only meaningful on a face that's already roughly frontal -
+    yaw foreshortens mouth width on its own (for the same reason
+    head_yaw_ratio exists), which is why IdentifyView checks yaw before this.
+
+    Returns None when keypoints are missing/degenerate, mirroring
+    head_yaw_ratio's contract, so callers fall through rather than flag
+    occlusion on a measurement that never happened.
+    """
+    if kps is None or len(kps) < 5:
+        return None
+    points = np.asarray(kps, dtype=np.float64)
+    eye_left, eye_right, mouth_left, mouth_right = points[0], points[1], points[3], points[4]
+    eye_distance = float(np.linalg.norm(eye_right - eye_left))
+    if eye_distance < 1e-6:
+        return None
+    mouth_width = float(np.linalg.norm(mouth_right - mouth_left))
+    return mouth_width / eye_distance
+
+
+def lower_face_texture_ratio(bgr_image, box):
+    """A second, independent occlusion signal - added after real-world
+    testing showed mouth_visibility_ratio alone misses a lot of genuine
+    partial occlusion (a hand covering just the mouth/chin, not reaching the
+    nose). That check trusts SCRFD's regressed mouth-corner *positions*
+    under occlusion; this one doesn't trust the keypoints at all, only the
+    face BOUNDING BOX (which degrades far less under occlusion than fine
+    landmarks) - so it catches real cases the geometry check misses, because
+    the two fail in different ways.
+
+    Reuses the exact Laplacian-variance technique _blur_variance already
+    uses, but compares two regions of the SAME face instead of the whole
+    frame against a fixed threshold: the lower third (mouth/chin) against the
+    upper-middle (forehead/eyes, always visible). A real, unobstructed mouth
+    is texture-rich (lips, teeth edges, the shadow under the nose) relative
+    to the rest of the face; a hand or flat cloth over it is comparatively
+    smooth, so the ratio drops. Normalizing against the same face's own upper
+    region (rather than a fixed absolute variance) means per-photo
+    lighting/sharpness differences mostly wash out.
+
+    Verified empirically alongside mouth_visibility_ratio (see that
+    function's docstring for the test setup): on the same 10 photos, clean
+    ran 0.463-1.103; occlusion patterns that mouth_visibility_ratio's
+    threshold missed entirely - a hand covering only the mouth/chin, not the
+    nose - showed 0.000-0.328 here, well below the clean floor. Not a
+    guarantee either (a beard, heavy shadow, or a very smooth-skinned mouth
+    could plausibly read low without anything covering it) - see
+    FACE_MAX_MOUTH_TEXTURE_RATIO's own comment.
+
+    A third, independent signal (det_score, the detector's own per-face
+    confidence) is checked alongside this and mouth_visibility_ratio in
+    IdentifyView._occlusion_reason - see that method for why, and why a
+    fourth idea (landmark-arrangement "plausibility") was tested and
+    dropped.
+
+    Returns None if the box is too small/degenerate to sample meaningfully,
+    same fall-through contract as the other two ratio functions.
+    """
+    x1, y1, x2, y2 = box
+    height = y2 - y1
+    if height <= 0:
+        return None
+    upper = bgr_image[y1 + int(height * 0.10):y1 + int(height * 0.45), x1:x2]
+    lower = bgr_image[y1 + int(height * 0.60):y2, x1:x2]
+    if upper.size == 0 or lower.size == 0:
+        return None
+    upper_variance = cv2.Laplacian(cv2.cvtColor(upper, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
+    lower_variance = cv2.Laplacian(cv2.cvtColor(lower, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
+    if upper_variance < 1e-6:
+        return None
+    return float(lower_variance / upper_variance)
+
+
 def compute_face_embeddings_and_boxes(bgr_image):
     """For the gate scan: every face in the frame, no rejection here - a
     continuous CCTV-style scan has to work with whatever it gets, and
-    IdentifyView is the one that decides what's usable (blur, edge-cutoff)
-    using settings-configurable thresholds. Returns a list of
-    (embedding: list[float], box: (x1, y1, x2, y2) as ints, detection_score:
-    float, blur_variance: float) tuples, one per detected face - uses the
-    smaller/faster scan-dedicated detector (see _get_scan_app), not the
-    full-size enrollment one."""
+    IdentifyView is the one that decides what's usable (blur, edge-cutoff,
+    turned away, occluded) using settings-configurable thresholds. Returns a
+    list of (embedding: list[float], box: (x1, y1, x2, y2) as ints,
+    detection_score: float, blur_variance: float, yaw_ratio: float | None,
+    mouth_ratio: float | None, texture_ratio: float | None) tuples, one per
+    detected face - uses the smaller/faster scan-dedicated detector (see
+    _get_scan_app), not the full-size enrollment one."""
     faces = _get_scan_app().get(bgr_image)
     results = []
     for face in faces:
         x1, y1, x2, y2 = (int(round(v)) for v in face.bbox)
         box = (x1, y1, x2, y2)
         blur_variance = _blur_variance(bgr_image, box)
-        results.append((face.normed_embedding.tolist(), box, float(face.det_score), blur_variance))
+        kps = getattr(face, "kps", None)
+        yaw_ratio = head_yaw_ratio(kps)
+        mouth_ratio = mouth_visibility_ratio(kps)
+        texture_ratio = lower_face_texture_ratio(bgr_image, box)
+        results.append((
+            face.normed_embedding.tolist(), box, float(face.det_score), blur_variance,
+            yaw_ratio, mouth_ratio, texture_ratio,
+        ))
     return results
 
 
@@ -179,6 +353,55 @@ def crop_face(bgr_image, box, padding_ratio=0.4):
     buffer = io.BytesIO()
     Image.fromarray(rgb_crop).save(buffer, format="JPEG", quality=85)
     return buffer.getvalue()
+
+
+# Photo uploads are restricted to these formats. Pillow can decode plenty more
+# (WEBP, BMP, TIFF, GIF, and AVIF via the same plugin that provides HEIF), but
+# "whatever Pillow happens to open" isn't a contract anyone can rely on, and
+# these cover every phone camera, screenshot and scanner a registrar will
+# actually hand us.
+#
+# "HEIF" is the format name Pillow reports for a .heic file - HEIC is a
+# specific packaging of HEIF, and pillow-heif maps .heic/.heif/.hif all onto
+# the one format string (see users/apps.py, which registers the opener).
+# .avif reports as "AVIF" and is deliberately NOT on this list.
+ALLOWED_UPLOAD_FORMATS = ("JPEG", "PNG", "HEIF")
+
+# What to call them in user-facing errors: nobody with an iPhone calls their
+# photos HEIF. Derived from one place so the message can't drift from the list.
+ALLOWED_UPLOAD_LABEL = "JPEG, PNG and HEIC"
+
+
+def ensure_supported_image_format(image_file):
+    """Raises ValueError unless image_file really is a JPEG, PNG or HEIC.
+
+    Decides on the file's actual decoded format, not its filename extension
+    or the browser-supplied Content-Type - both are trivially wrong (a
+    renamed .webp, a phone that mislabels HEIC) and neither is something a
+    server should trust for a policy decision. Pillow only reads the header
+    to answer this, so it costs nothing next to the face detection that
+    follows. Leaves the file rewound either way, since every caller goes on
+    to read it.
+
+    Returns the detected format name, so callers can log or echo it.
+    """
+    image_file.seek(0)
+    try:
+        image_format = Image.open(image_file).format
+    except Exception:
+        image_format = None
+    finally:
+        image_file.seek(0)
+
+    if image_format is None:
+        raise ValueError(
+            f"That file isn't a readable image. Only {ALLOWED_UPLOAD_LABEL} photos are accepted."
+        )
+    if image_format not in ALLOWED_UPLOAD_FORMATS:
+        raise ValueError(
+            f"Only {ALLOWED_UPLOAD_LABEL} photos are accepted - this file is {image_format}."
+        )
+    return image_format
 
 
 def normalize_to_jpeg(image_file):

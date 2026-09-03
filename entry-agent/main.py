@@ -7,7 +7,7 @@ from api_client import ApiClient
 from camera import Camera
 from config import load_config
 from offline_queue import OfflineQueue
-from ui import CardTapWindow, FeedbackWindow, MenuWindow
+from ui import GateMonitorWindow, set_app_user_model_id
 
 # The request itself now takes the bulk of the time (image capture is
 # instant off the continuous stream, and detection is ~0.4-0.9s depending on
@@ -69,28 +69,64 @@ def _build_recognition(direction, result, api_client, photo_cache):
         confidence = max(0, round(similarity * 100))
 
     tiebreak = bool(result.get("tiebreak_required"))
+    # A tiebreak forced by a known confusable pair (see ConfusablePair on the
+    # backend) - the face match itself was fine, it was overridden anyway
+    # because the matched person is on record as easily confused with
+    # someone similar. Distinct from an ordinary ambiguous-match tiebreak so
+    # the box label can say so, not just "please tap your card" generically.
+    confusable_pair = bool(result.get("confusable_pair"))
+    # A manual backstop for a confusable pair (a visible mole/scar/glasses) -
+    # never used by matching itself, just something for the guard to check
+    # by eye while waiting for the tap.
+    distinguishing_notes = result.get("distinguishing_notes") or []
     # A frame skipped for being too blurry/edge-cropped, or an unmatched
     # face that hasn't yet accumulated enough agreement to count as a real
     # "Unknown" - see IdentifyView._skip_reason/_confirm_or_vote_unmatched.
     # Neither is a decided outcome, so the UI shows "Checking..." instead of
     # flashing red on a single bad frame.
     retry = bool(result.get("retry"))
+    # A short, actionable label for the box while a face is being skipped
+    # ("Face the camera", "Move into view", "Hold steady"). Only the quality
+    # skips set it; the voting paths don't, and fall back to "Checking...".
+    hint = result.get("hint")
     # A face that failed the liveness (anti-spoofing) check - see
     # IdentifyView._confirm_or_vote_spoof. Checked before matching, so this
     # is never also `success`; kept as its own flag rather than folded into
     # "Unknown" since it's a security event, not a recognition miss.
     spoof_suspected = bool(result.get("spoof_suspected"))
+    # occlusion_suspected: THIS frame's own outcome is occlusion - same role
+    # spoof_suspected plays for a suspected spoof. occlusion_detected is a
+    # separate, broader note that can also be True on an otherwise matched/
+    # unmatched/spoof result (see EntryLog.occlusion_detected) - a moment of
+    # occlusion seen earlier in the same encounter that ISN'T this frame's
+    # own outcome. Kept as two flags rather than one so "is this the outcome"
+    # and "did this happen at some point" can never be confused with each
+    # other the way a single shared flag would risk.
+    occlusion_suspected = bool(result.get("occlusion_suspected"))
+    occlusion_seen = bool(result.get("occlusion_detected"))
     photo_url = result.get("person_photo") if success else result.get("captured_photo")
     return {
         "box": box,
         "matched": success,
         "tiebreak": tiebreak,
+        "confusable_pair": confusable_pair,
+        "distinguishing_notes": distinguishing_notes,
         "retry": retry,
+        "hint": hint,
         "spoof_suspected": spoof_suspected,
-        "name": result.get("person_name") if success else ("Possible spoof" if spoof_suspected else "Unknown"),
+        "occlusion_suspected": occlusion_suspected,
+        "occlusion_seen": occlusion_seen,
+        "name": (
+            result.get("person_name")
+            if success
+            else "Please uncover your face" if occlusion_suspected
+            else "Possible spoof" if spoof_suspected
+            else "Unknown"
+        ),
         "candidate_names": result.get("candidate_names") or [],
         "student_id": result.get("student_or_employee_id"),
         "department": result.get("department_or_course"),
+        "distinguishing_note": result.get("distinguishing_note"),
         "confidence": confidence,
         "log_id": result.get("log_id"),
         "deduped": bool(result.get("deduped")),
@@ -99,9 +135,11 @@ def _build_recognition(direction, result, api_client, photo_cache):
     }
 
 
-def _build_profile(api_client, result, card_id):
-    """Turns one /verify result into the profile dict CardTapWindow expects,
-    fetching the actual photo bytes from the URL the backend returned."""
+def _build_profile(api_client, result, card_id, direction):
+    """Turns one /verify result into the profile dict the gate monitor's card
+    panel expects, fetching the actual photo bytes from the URL the backend
+    returned. `direction` rides along so the tap's live-log badge can say
+    which way through the gate it was, the same as a face event's."""
     photo_bytes = None
     photo_url = result.get("person_photo")
     if photo_url:
@@ -116,6 +154,11 @@ def _build_profile(api_client, result, card_id):
         "student_id": result.get("student_or_employee_id"),
         "department": result.get("department_or_course"),
         "card_id": card_id,
+        "direction": direction,
+        # A manual backstop for a confusable pair - present whenever this tap
+        # confirmed someone flagged that way, whether or not it happened to
+        # be resolving a forced tiebreak (see person_payload on the backend).
+        "distinguishing_note": result.get("distinguishing_note"),
     }
 
 
@@ -157,47 +200,29 @@ def scan_loop(config, api_client, camera, ui, stop_event):
         stop_event.wait(SCAN_INTERVAL_SECONDS)
 
 
-def handle_tap(config, api_client, offline_queue, tap_ui, nfc_id):
+def handle_tap(config, api_client, offline_queue, ui, nfc_id):
     """Runs off the Tk main thread. A card tap is a lookup that shows the
-    guard the person's full result card for a manual cross-check - the
-    actual entry decision comes from the continuous scan, not this."""
-    tap_ui.show_status("Checking card...")
+    guard the person's details for a cross-check - the actual entry decision
+    comes from the continuous scan, not this. Either way the outcome lands
+    in the monitor's live log, so a tap is as visible as a face event."""
+    ui.show_card_status("Checking card...")
     try:
         result = api_client.verify(config.gate_location, config.direction, nfc_id=nfc_id)
     except requests.exceptions.HTTPError as exc:
-        tap_ui.show_failure(_describe_http_error(exc.response))
+        ui.show_card_failure(_describe_http_error(exc.response))
         return
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         offline_queue.enqueue(nfc_id, config.gate_location, config.direction)
-        tap_ui.show_failure("Offline - tap queued, will sync automatically.", "offline")
+        ui.show_card_failure("Offline - tap queued, will sync automatically.", "offline")
         return
 
     if not result.get("success"):
-        tap_ui.show_failure(result.get("reason") or "Not enrolled.", result.get("reason_code"))
+        ui.show_card_failure(result.get("reason") or "Not enrolled.", result.get("reason_code"))
         return
 
-    tap_ui.show_match(_build_profile(api_client, result, card_id=nfc_id))
-
-
-def handle_manual(config, api_client, tap_ui, student_id):
-    """The manual ID-entry fallback, for when the reader itself fails. Not
-    offline-queued the way a tap is - this is an ad hoc guard action typed
-    in the moment, not something worth replaying automatically later."""
-    tap_ui.show_status("Checking ID...")
-    try:
-        result = api_client.verify(config.gate_location, config.direction, student_or_employee_id=student_id)
-    except requests.exceptions.HTTPError as exc:
-        tap_ui.show_failure(_describe_http_error(exc.response))
-        return
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        tap_ui.show_failure("Offline - could not verify. Try again once connected.", "offline")
-        return
-
-    if not result.get("success"):
-        tap_ui.show_failure(result.get("reason") or "Not enrolled.", result.get("reason_code"))
-        return
-
-    tap_ui.show_match(_build_profile(api_client, result, card_id="Manual entry"))
+    ui.show_card_match(
+        _build_profile(api_client, result, card_id=nfc_id, direction=config.direction)
+    )
 
 
 def _describe_http_error(response):
@@ -213,6 +238,10 @@ def _describe_http_error(response):
 
 
 def main():
+    # Distinct from the launcher's own id (see launcher.py) - each process
+    # needs its own so Windows' taskbar treats them as separate apps with
+    # separate icons, rather than grouping both under plain python.exe's.
+    set_app_user_model_id("EVSU.SecureTap.EntryAgent")
     config = load_config()
     if not config.service_token:
         print(
@@ -222,106 +251,90 @@ def main():
 
     api_client = ApiClient(config.api_base_url, config.service_token)
     camera = Camera(config.camera_index, exposure=config.camera_exposure)
-    camera.start()  # opens the webcam once, independent of whether the
-    # camera scanner window is currently open, so the feed is already warm
-    # whenever it's launched from the menu.
+    # Starts a background thread that opens the webcam (retrying on its own
+    # timer for as long as the app runs if none is connected yet, or it's
+    # unplugged mid-session - see Camera._run_loop) - never blocks here and
+    # never raises even if no camera ever connects. This broad except is
+    # just a second line of defense against something unexpected in
+    # starting that thread itself, so a surprise can't take the whole
+    # entry-agent down with it. Either way the gate monitor still opens;
+    # its video panel shows "No camera connected" and NFC taps/manual
+    # overrides keep working.
+    try:
+        camera.start()
+    except Exception as exc:
+        print(f"WARNING: camera unavailable, continuing without one ({exc})", file=sys.stderr)
 
     offline_queue = OfflineQueue(config.offline_db_path, api_client)
     offline_queue.start_background_sync()
 
-    scan_state = {"ui": None, "stop_event": None}
-    tap_state = {"ui": None}
-
-    def open_camera_scanner():
-        if scan_state["ui"] is not None:
-            scan_state["ui"].window.deiconify()
-            scan_state["ui"].window.lift()
-            return
-        stop_event = threading.Event()
-        scan_ui = FeedbackWindow(
-            menu.root, config.gate_location, config.direction,
-            get_preview_frame=camera.get_preview_frame,
-            on_close=close_camera_scanner,
-        )
-        scan_state["ui"] = scan_ui
-        scan_state["stop_event"] = stop_event
-
-        try:
-            summary = api_client.gate_summary(config.gate_location)
-            scan_ui.seed_stats(
-                summary.get("entries_today", 0), summary.get("exits_today", 0),
-                summary.get("unknown_today", 0), summary.get("spoof_today", 0),
-            )
-        except requests.RequestException:
-            pass  # stats just start at zero for this session if unreachable
-
-        threading.Thread(
-            target=scan_loop, args=(config, api_client, camera, scan_ui, stop_event), daemon=True
-        ).start()
-
-    def close_camera_scanner():
-        if scan_state["stop_event"] is not None:
-            scan_state["stop_event"].set()
-        scan_state["ui"] = None
-        scan_state["stop_event"] = None
-
-    def open_card_scanner():
-        if tap_state["ui"] is not None:
-            tap_state["ui"].window.deiconify()
-            tap_state["ui"].window.lift()
-            return
-        tap_state["ui"] = CardTapWindow(
-            menu.root, config.gate_location, config.direction,
-            on_tap=on_tap, on_manual_submit=on_manual_submit, on_close=close_card_scanner,
-        )
-
-    def close_card_scanner():
-        tap_state["ui"] = None
+    # No menu in front of this. Choosing "Entry Agent" in the system launcher
+    # is already the decision; opening a second screen to ask again would just
+    # be a click everyone makes every time. The monitor is the app.
+    stop_event = threading.Event()
 
     def on_tap(nfc_id):
         threading.Thread(
-            target=handle_tap, args=(config, api_client, offline_queue, tap_state["ui"], nfc_id), daemon=True
+            target=handle_tap, args=(config, api_client, offline_queue, monitor, nfc_id), daemon=True
         ).start()
 
-    def on_manual_submit(student_id):
-        threading.Thread(
-            target=handle_manual, args=(config, api_client, tap_state["ui"], student_id), daemon=True
-        ).start()
-
-    def on_exit():
-        if scan_state["stop_event"] is not None:
-            scan_state["stop_event"].set()
+    def on_close():
+        # The monitor owns the root window, so closing it ends the process -
+        # stop the scan thread and release the camera on the way out.
+        stop_event.set()
         camera.stop()
-        menu.root.destroy()
 
-    menu = MenuWindow(
-        config.gate_location, config.officer_name, config.app_version,
-        on_open_camera=open_camera_scanner, on_open_card=open_card_scanner, on_exit=on_exit,
+    monitor = GateMonitorWindow(
+        config.gate_location, config.direction,
+        get_preview_frame=camera.get_preview_frame,
+        on_tap=on_tap,
+        officer_name=config.officer_name,
+        version=config.app_version,
+        on_close=on_close,
     )
 
+    try:
+        summary = api_client.gate_summary(config.gate_location)
+        monitor.seed_stats(
+            summary.get("entries_today", 0), summary.get("exits_today", 0),
+            summary.get("unknown_today", 0), summary.get("spoof_today", 0),
+            summary.get("occlusion_today", 0),
+        )
+    except requests.RequestException:
+        pass  # stats just start at zero for this session if unreachable
+
+    threading.Thread(
+        target=scan_loop, args=(config, api_client, camera, monitor, stop_event), daemon=True
+    ).start()
+
     def check_status():
-        if not menu.root.winfo_exists():
+        if monitor.is_closed():
             return
-        menu.set_status("camera", camera.is_open())
-        # The NFC reader is a generic HID-keyboard-emulation device - Windows
-        # sees it as just another keyboard, with no reliable, portable way
-        # to query "is this specific reader plugged in" from Python. Shown
-        # as ready rather than building an unreliable pseudo-check that
-        # would just be guessing.
-        menu.set_status("reader", True)
+        monitor.set_camera_ok(camera.is_open())
         try:
             api_client.health()
             server_ok = True
         except requests.RequestException:
             server_ok = False
-        menu.set_status("server", server_ok)
-        if tap_state["ui"] is not None:
-            tap_state["ui"].set_backend_ok(server_ok)
-            tap_state["ui"].set_queue_count(offline_queue.pending_count())
-        menu.root.after(STATUS_CHECK_INTERVAL_SECONDS * 1000, check_status)
+        monitor.set_backend_ok(server_ok)
+        monitor.set_queue_count(offline_queue.pending_count())
+        # The NFC reader is a generic HID-keyboard-emulation device - Windows
+        # sees it as just another keyboard, with no reliable, portable way to
+        # query "is this specific reader plugged in" from Python, so it's shown
+        # as ready rather than guessed at with an unreliable pseudo-check.
+        monitor.window.after(STATUS_CHECK_INTERVAL_SECONDS * 1000, check_status)
 
-    menu.root.after(500, check_status)
-    menu.run_forever()
+    monitor.window.after(500, check_status)
+
+    # Tells the system launcher (launcher.py at the repo root) it can stop its
+    # loading animation. Everything slow is behind us at this point - the cv2
+    # import, opening the webcam, building the window - so the monitor appears
+    # within a frame of this line. The launcher matches on the marker rather
+    # than timing a guess, so the spinner ends when the window is genuinely up.
+    # Harmless noise when main.py is run directly. Keep in sync with
+    # launcher.ENTRY_AGENT_READY_MARKER.
+    print("SECURETAP_ENTRY_AGENT_READY - gate monitor open", flush=True)
+    monitor.run()
 
 
 if __name__ == "__main__":

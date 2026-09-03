@@ -9,7 +9,17 @@ function decodeUser(accessToken) {
   try {
     const claims = jwtDecode(accessToken);
     if (claims.exp * 1000 < Date.now()) return null;
-    return { username: claims.username, role: claims.role, fullName: claims.full_name };
+    return {
+      username: claims.username,
+      role: claims.role,
+      fullName: claims.full_name,
+      // Only meaningful for a security_officer - null for every other role,
+      // and null for an unconfigured officer account too (see accounts.
+      // permissions.get_assigned_gate on the backend - the same "fail
+      // closed, not open" rule applies here: no gate claim means the pages
+      // that scope by it should show nothing, not everything).
+      gateLocation: claims.gate_location ?? null,
+    };
   } catch {
     return null;
   }

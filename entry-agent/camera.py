@@ -14,6 +14,16 @@ MAX_UPLOAD_DIMENSION = 960  # face_recognition's HOG detector roughly doubles in
 # middle ground that keeps distance recognition working without paying the
 # full cost of uploading a full 1280x720 frame every scan.
 
+# How often to retry opening the camera while it isn't connected - covers
+# both "never was" (nothing plugged in at startup) and "used to be, isn't
+# right now" (unplugged mid-session) with the same retry loop, since from
+# here they look identical: cv2.VideoCapture just won't open.
+RECONNECT_INTERVAL_SECONDS = 3.0
+# Consecutive failed reads (at ~0.1s apart - see _run_loop) before treating
+# the device as genuinely gone rather than one dropped frame. ~2s of nothing
+# but failures is well past what a real, still-connected webcam ever does.
+MAX_CONSECUTIVE_READ_FAILURES = 20
+
 
 class Camera:
     """Keeps the webcam open continuously (instead of opening/closing per
@@ -41,16 +51,36 @@ class Camera:
         self._thread = None
 
     def start(self):
-        self._cap = cv2.VideoCapture(self.index, cv2.CAP_DSHOW)
-        if not self._cap.isOpened():
-            raise RuntimeError(f"Could not open webcam at index {self.index}.")
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_WIDTH)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
+        """No camera plugged in (or the wrong index configured) is a real,
+        expected deployment state - a gate can still run on NFC taps and
+        manual overrides alone - so this never raises, and never blocks on
+        the actual webcam open either (that now happens inside _run_loop,
+        off this calling thread). is_open() reports False until it actually
+        connects (self._cap stays None until then), and get_preview_frame()
+        correctly returns None the whole time - which is what
+        GateMonitorWindow._update_video keys off to show its "No camera
+        connected" placeholder instead of a frozen/blank feed. The same
+        background loop keeps retrying for as long as the app runs, so a
+        camera plugged in after startup - or unplugged and back again mid-
+        session - is picked up without a restart."""
+        self._running = True
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+
+    def _try_open(self):
+        """One attempt to (re)connect. Cheap enough to call on a timer
+        indefinitely - a failed cv2.VideoCapture().isOpened() check returns
+        near-instantly, it doesn't hang waiting for a device that isn't
+        there."""
+        cap = cv2.VideoCapture(self.index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap.release()
+            return
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
+        self._cap = cap
         if self.exposure is not None:
             self._apply_exposure(self.exposure)
-        self._running = True
-        self._thread = threading.Thread(target=self._read_loop, daemon=True)
-        self._thread.start()
 
     def _apply_exposure(self, exposure):
         """Best-effort, experimental: a shorter exposure time (faster
@@ -78,13 +108,52 @@ class Camera:
             self._thread.join(timeout=2)
         if self._cap:
             self._cap.release()
+            self._cap = None
 
-    def _read_loop(self):
+    def _close_after_failure(self):
+        """The device stopped responding entirely (unplugged mid-session, a
+        driver crash) - as opposed to one bad frame, which the read loop
+        below already absorbs on its own. Releases the stale handle and
+        clears the latest frame so get_preview_frame() genuinely goes back
+        to returning None (a frozen last frame would otherwise sit on screen
+        forever, looking like a live feed that simply stopped updating).
+        _run_loop's next iteration then falls into the same reconnect
+        attempt as if this had never been connected at all."""
+        if self._cap:
+            self._cap.release()
+        self._cap = None
+        with self._lock:
+            self._latest_frame = None
+
+    def _run_loop(self):
+        """One persistent loop for the whole time the app runs, covering
+        both states a plain read-loop used to assume never changes: reading
+        frames while connected, and periodically retrying the connection
+        while not. Runs on its own thread so a slow/hanging open attempt
+        can never freeze the Tk UI or the scan loop."""
+        consecutive_failures = 0
+        next_open_attempt = 0.0
         while self._running:
+            if self._cap is None:
+                now = time.monotonic()
+                if now >= next_open_attempt:
+                    self._try_open()
+                    next_open_attempt = now + RECONNECT_INTERVAL_SECONDS
+                else:
+                    time.sleep(0.1)
+                continue
+
             success, frame = self._cap.read()
             if not success:
-                time.sleep(0.1)
+                consecutive_failures += 1
+                if consecutive_failures >= MAX_CONSECUTIVE_READ_FAILURES:
+                    self._close_after_failure()
+                    consecutive_failures = 0
+                else:
+                    time.sleep(0.1)
                 continue
+
+            consecutive_failures = 0
             with self._lock:
                 self._latest_frame = frame
 

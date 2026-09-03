@@ -9,13 +9,34 @@ from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import HasServiceToken, IsSecurityOrAbove
+from accounts.models import AdminProfile
+from accounts.permissions import (
+    HasServiceToken,
+    IsAnyDashboardRole,
+    IsSecurityOfficer,
+    get_assigned_gate,
+    get_role,
+)
+from audit.utils import log_action
 from users import insightface_utils, liveness_utils
+from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
 from .filters import EntryLogFilter
-from .models import EntryLog, PendingTiebreak, RecognitionAttempt, SpoofAttempt, UnmatchedAttempt
-from .serializers import EntryLogSerializer, IdentifyRequestSerializer, VerifyRequestSerializer
+from .models import (
+    EntryLog,
+    OcclusionAttempt,
+    PendingTiebreak,
+    RecognitionAttempt,
+    SpoofAttempt,
+    UnmatchedAttempt,
+)
+from .serializers import (
+    EntryLogSerializer,
+    IdentifyRequestSerializer,
+    ManualOverrideRequestSerializer,
+    VerifyRequestSerializer,
+)
 
 
 def _box_to_dict(box):
@@ -38,6 +59,7 @@ def person_payload(person, request):
             "role": None,
             "student_or_employee_id": None,
             "department_or_course": None,
+            "distinguishing_note": None,
         }
     photo_url = None
     if person.photo_reference:
@@ -48,6 +70,12 @@ def person_payload(person, request):
         "role": person.role,
         "student_or_employee_id": person.student_or_employee_id,
         "department_or_course": person.department_or_course,
+        # A manual backstop for a confusable pair (see users.models.
+        # ConfusablePair) - never used by matching itself, just handed
+        # through to whatever's displaying this result (dashboard, entry-
+        # agent kiosk) so a guard can visually double-check it. Blank for
+        # everyone else.
+        "distinguishing_note": person.distinguishing_note or None,
     }
 
 
@@ -90,6 +118,7 @@ class GateSummaryView(APIView):
         ).count()
         unknown_today = logs.filter(status=EntryLog.Status.FAILED).count()
         spoof_today = logs.filter(status=EntryLog.Status.SPOOF_SUSPECTED).count()
+        occlusion_today = logs.filter(status=EntryLog.Status.OCCLUSION_DETECTED).count()
 
         return Response(
             {
@@ -97,20 +126,46 @@ class GateSummaryView(APIView):
                 "exits_today": exits_today,
                 "unknown_today": unknown_today,
                 "spoof_today": spoof_today,
+                "occlusion_today": occlusion_today,
             }
         )
 
 
 class EntryLogViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = EntryLog.objects.select_related("person").all()
+    """Full history/all-gates for Admin and SASO. A Security Officer gets
+    neither - see get_queryset(): forced to their own assigned_gate_location
+    (not whatever gate_location they might pass as a query param - the point
+    of server-side scoping is that the client's request can't override it),
+    and forced to today only, no arbitrary date range. There's no separate
+    "no export" enforcement needed beyond that: the CSV export the dashboard
+    builds is generated client-side from whatever rows this endpoint
+    returned (see Logs.jsx), so an officer who can only ever fetch today's
+    own-gate rows can only ever export that - the data scoping IS the export
+    restriction, not a separate check. The Export button is still hidden for
+    this role in the UI so it doesn't look like data is missing rather than
+    deliberately withheld, but that's a UI clarity choice, not the actual
+    enforcement point.
+
+    A Security Officer with no assigned_gate_location at all (an
+    unconfigured account) sees nothing rather than everything - failing
+    closed, not open, on missing configuration."""
+
     serializer_class = EntryLogSerializer
-    permission_classes = [IsSecurityOrAbove]
+    permission_classes = [IsAnyDashboardRole]
     filter_backends = [DjangoFilterBackend]
     filterset_class = EntryLogFilter
 
+    def get_queryset(self):
+        queryset = EntryLog.objects.select_related("person", "performed_by").all()
+        if get_role(self.request.user) == AdminProfile.Role.SECURITY_OFFICER:
+            gate = get_assigned_gate(self.request.user)
+            today_start = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
+            queryset = queryset.filter(gate_location=gate or "__none__", timestamp__gte=today_start)
+        return queryset
+
 
 class LiveLogsView(APIView):
-    permission_classes = [IsSecurityOrAbove]
+    permission_classes = [IsAnyDashboardRole]
 
     def get(self, request):
         since_param = request.query_params.get("since")
@@ -118,19 +173,80 @@ class LiveLogsView(APIView):
         if since is None:
             since = timezone.now() - timezone.timedelta(minutes=1)
 
+        logs = EntryLog.objects.select_related("person", "performed_by").filter(timestamp__gt=since)
+        if get_role(request.user) == AdminProfile.Role.SECURITY_OFFICER:
+            # Same server-side gate-scoping as EntryLogViewSet above - a
+            # missing assigned gate fails closed (matches nothing) rather
+            # than showing every gate's live feed.
+            gate = get_assigned_gate(request.user)
+            logs = logs.filter(gate_location=gate or "__none__")
         logs = (
-            EntryLog.objects.select_related("person")
-            .filter(timestamp__gt=since)
+            logs
             .order_by("-timestamp")[:500]
         )
         serializer = EntryLogSerializer(logs, many=True, context={"request": request})
         return Response({"results": serializer.data})
 
 
+class ManualOverrideView(APIView):
+    """A Security Officer's manual override: the scanner failed, they
+    visually checked a physical ID, and they're logging the entry by hand.
+    Distinct from VerifyView below in every way that matters for keeping
+    this auditable: VerifyView authenticates the entry-agent kiosk with a
+    shared service token on behalf of no particular staff member (a card tap
+    isn't "someone's" decision, it's a lookup); this endpoint requires a
+    real logged-in dashboard account (JWT, IsSecurityOfficer) and stamps
+    EntryLog.performed_by with that specific account - so a manual override
+    is never just labeled as one, it's traceably tied to who made the call.
+
+    Always creates a fresh EntryLog row - no cooldown/dedupe merge with a
+    recent automatic success the way VerifyView's NFC taps or a face match
+    get, because a manual override is never "the same event" as an
+    automatic one; conflating the two would hide the fact that the scanner
+    needed a human to step in at all.
+    """
+
+    permission_classes = [IsSecurityOfficer]
+
+    def post(self, request):
+        serializer = ManualOverrideRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        person = Person.objects.filter(student_or_employee_id=data["student_or_employee_id"]).first()
+        if person is None:
+            return Response(
+                {"detail": "No student/staff record matches that ID."},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+        if not person.is_active:
+            return Response(
+                {"detail": "This ID has been deactivated."}, status=http_status.HTTP_400_BAD_REQUEST,
+            )
+
+        gate = get_assigned_gate(request.user) or ""
+        log = EntryLog.objects.create(
+            person=person,
+            direction=data["direction"],
+            verification_method=EntryLog.VerificationMethod.MANUAL_OVERRIDE,
+            status=EntryLog.Status.SUCCESS,
+            gate_location=gate,
+            failure_reason=data["reason"],  # doubles as "what was checked", shown in Logs
+            performed_by=request.user,
+        )
+        log_action(
+            request.user, "manual_override",
+            target_description=f"{person.full_name} ({person.student_or_employee_id}) - {data['direction']}",
+            detail={"reason": data["reason"], "gate_location": gate, "entry_log_id": log.id},
+        )
+        return Response(EntryLogSerializer(log, context={"request": request}).data, status=http_status.HTTP_201_CREATED)
+
+
 class VerifyView(APIView):
-    """Called when a card is tapped, or when the guard uses the manual
-    ID-entry fallback (same endpoint, either nfc_id or student_or_employee_id
-    is provided). A successful tap is a real gate-entry decision in its own
+    """Called when a card is tapped (the entry-agent's shared-secret-
+    authenticated kiosk lookup - see ManualOverrideView above for the
+    dashboard-side, per-account alternative when the scanner itself fails).
+    A successful tap is a real gate-entry decision in its own
     right - not just a lookup - and gets logged the same way a confirmed
     face match does, appearing in Live Monitoring/Logs like any other entry.
     A rejected card (not registered / deactivated) is logged too, same as an
@@ -190,7 +306,11 @@ class VerifyView(APIView):
             tiebreak.delete()
             if still_active:
                 direction = tiebreak_direction
-                verification_method = EntryLog.VerificationMethod.FACE_AND_CARD_TIEBREAK
+                verification_method = (
+                    EntryLog.VerificationMethod.CONFUSABLE_PAIR_TIEBREAK
+                    if tiebreak.reason == PendingTiebreak.Reason.CONFUSABLE_PAIR
+                    else EntryLog.VerificationMethod.FACE_AND_CARD_TIEBREAK
+                )
             # Expired - IdentifyView's own sweep already logs the unresolved
             # attempt on its next call; this tap is treated as a plain
             # successful NFC entry below, not a tiebreak resolution.
@@ -290,11 +410,23 @@ class IdentifyView(APIView):
     tallied as an UnmatchedAttempt (grouped by embedding similarity, since
     there's no Person to key on) and only confirmed FAILED once enough
     recent attempts agree (see _confirm_or_vote_unmatched). Before either
-    voting path even runs, a face too close to the frame edge (likely
-    partially cut off) or too motion-blurred (below GATE_SCAN_MIN_BLUR_VARIANCE)
-    is skipped outright - not counted as an attempt in either direction, just
-    a "still checking" retry signal back to the entry-agent - so a single bad
-    frame while someone's mid-stride can't flag them as Unknown.
+    voting path even runs - and before the liveness check - a face too close
+    to the frame edge (likely partially cut off), turned too far away from
+    the camera (above FACE_MAX_YAW_RATIO), or too motion-blurred (below
+    GATE_SCAN_MIN_BLUR_VARIANCE) is skipped outright - not counted as an
+    attempt in either direction, just a "still checking" retry signal back to
+    the entry-agent - so a single bad frame while someone's mid-stride can't
+    flag them as Unknown or as a spoof attempt.
+
+    A face whose mouth/nose read as covered (three independent signals - see
+    _occlusion_reason) is intercepted the same place, right after the
+    yaw/blur checks - but unlike those, it isn't a silent
+    skip: it gets its own vote-then-confirm path (_confirm_or_vote_occlusion)
+    into a distinct EntryLog(status=OCCLUSION_DETECTED), the same grace-period
+    treatment a match or spoof suspicion gets, so it's never matched (ArcFace
+    was never given a fair look at the face), and never silently folded into
+    "Unknown" either - occlusion is a specific, logged event in its own
+    right, not noise.
 
     Matching is one vectorized cosine-similarity computation over every
     enrolled embedding - fast (numpy/BLAS) for hundreds of embeddings, but
@@ -349,10 +481,22 @@ class IdentifyView(APIView):
 
         known_matrix, owners = self._build_candidate_matrix(candidates)
         results = []
-        for embedding, box, det_score, blur_variance in detections:
-            skip_result = self._skip_reason(box, blur_variance, image_width, image_height)
+        for embedding, box, det_score, blur_variance, yaw_ratio, mouth_ratio, texture_ratio in detections:
+            skip_result = self._skip_reason(box, blur_variance, yaw_ratio, image_width, image_height)
             if skip_result is not None:
                 results.append(skip_result)
+                continue
+            # Checked before liveness and before matching, same position as
+            # the skip checks above - an occluded face is never given a fair
+            # ArcFace comparison (it would just produce a distorted, unusable
+            # embedding) or a fair liveness read. Unlike those checks, this
+            # doesn't return a plain non-logged skip - it's routed to its own
+            # vote-then-confirm path so a real occlusion event still ends up
+            # logged, just correctly labeled instead of as "Unknown".
+            if self._occlusion_reason(mouth_ratio, texture_ratio, det_score):
+                results.append(
+                    self._confirm_or_vote_occlusion(bgr_image, box, direction, gate_location, request)
+                )
                 continue
             # Liveness (anti-spoofing) runs after quality checks but before
             # this face is ever compared against enrolled embeddings - a
@@ -403,18 +547,42 @@ class IdentifyView(APIView):
         return np.array(rows, dtype=np.float32), owners
 
     @staticmethod
-    def _skip_reason(box, blur_variance, image_width, image_height):
-        """Neither of these counts as a real attempt at all - a face this
-        close to the frame edge or this blurry produces an unreliable
-        embedding, so it's skipped rather than matched (and definitely
-        rather than logged as "no match"). Returns a transient, non-logged
-        payload with retry=True for the entry-agent to show as "still
-        checking" instead of "Unknown", or None if the face is usable."""
+    def _skip_reason(box, blur_variance, yaw_ratio, image_width, image_height):
+        """None of these counts as a real attempt at all - a face partially
+        out of frame, turned away from the camera, or too blurry produces an
+        unreliable embedding, so it's skipped rather than matched (and
+        definitely rather than logged as "no match"). Returns a transient,
+        non-logged payload with retry=True for the entry-agent to show as
+        "still checking" instead of "Unknown", or None if the face is usable.
+
+        Ordered as "is the whole face here, is it facing me, is it sharp" -
+        the checks a person could actually act on come first, so the hint
+        shown over their box is the most useful one when several apply.
+        """
         if insightface_utils.box_touches_edge(box, image_width, image_height, settings.FACE_EDGE_MARGIN_RATIO):
             return {
                 "success": False,
                 "retry": True,
                 "reason": "Face partially out of frame - move fully into view.",
+                "hint": "Move into view",
+                "log_id": None,
+                "box": _box_to_dict(box),
+            }
+        # Runs before BOTH the liveness check and any matching, which is the
+        # whole point: a turned face is the one input that can fail in either
+        # direction. ArcFace embeddings are trained on roughly frontal faces,
+        # so a profile view of an enrolled person matches nobody and is voted
+        # through as Unknown; the same angle can also drag the liveness score
+        # under its threshold and log them as a spoof attempt. Skipping means
+        # the scan just waits for the frame where they look at the camera.
+        # yaw_ratio is None when the detector gave no usable keypoints - fall
+        # through rather than reject on a measurement that never happened.
+        if yaw_ratio is not None and yaw_ratio > settings.FACE_MAX_YAW_RATIO:
+            return {
+                "success": False,
+                "retry": True,
+                "reason": "Face turned away - look toward the camera.",
+                "hint": "Face the camera",
                 "log_id": None,
                 "box": _box_to_dict(box),
             }
@@ -423,10 +591,47 @@ class IdentifyView(APIView):
                 "success": False,
                 "retry": True,
                 "reason": "Image too blurry - hold steady for a clearer frame.",
+                "hint": "Hold steady",
                 "log_id": None,
                 "box": _box_to_dict(box),
             }
         return None
+
+    @staticmethod
+    def _occlusion_reason(mouth_ratio, texture_ratio, det_score):
+        """Whether this frame's mouth reads as covered - checks THREE
+        independent signals and flags occlusion if ANY fires, because each
+        one misses different real cases (verified per-signal on the same
+        test set, not assumed - see each signal's own docstring/setting
+        comment for the numbers):
+
+        - mouth_ratio (insightface_utils.mouth_visibility_ratio): mouth width
+          over inter-eye distance, from the detector's 5 keypoints. Real but
+          thin separation; badly under-detects partial coverage on its own.
+        - texture_ratio (insightface_utils.lower_face_texture_ratio): how
+          texture-rich the lower face looks vs. the upper face, from the
+          bounding box - doesn't trust the keypoints at all, so it catches
+          partial-coverage cases mouth_ratio misses.
+        - det_score: the detector's own per-face detection confidence ("how
+          face-like is this", not a match score) - fails independently of
+          both ratios above, since a covered face can still regress a
+          plausible-looking keypoint arrangement (see mouth_visibility_
+          ratio's docstring for why keypoint *plausibility* specifically was
+          tested and does NOT discriminate occlusion for this detector) while
+          still looking less face-like to the detector overall.
+
+        A plain bool, not a skip-style payload, because unlike
+        _skip_reason's checks this doesn't fall through silently - a True
+        here routes to _confirm_or_vote_occlusion instead, which decides the
+        actual response. Any signal being unusable (ratios None from missing
+        keypoints/box, or the frame never got this far because it already
+        failed an earlier check) just drops that signal - never flag on a
+        measurement that never happened. det_score always exists once a face
+        is detected at all, so it has no None case."""
+        mouth_flagged = mouth_ratio is not None and mouth_ratio < settings.FACE_MIN_MOUTH_VISIBILITY_RATIO
+        texture_flagged = texture_ratio is not None and texture_ratio < settings.FACE_MAX_MOUTH_TEXTURE_RATIO
+        det_score_flagged = det_score < settings.FACE_MIN_DET_SCORE_UNOCCLUDED
+        return mouth_flagged or texture_flagged or det_score_flagged
 
     def _match_one_face(
         self, embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image, liveness_score,
@@ -440,6 +645,24 @@ class IdentifyView(APIView):
         if best_similarity < settings.FACE_MATCH_SIMILARITY_THRESHOLD:
             return self._confirm_or_vote_unmatched(
                 embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score
+            )
+
+        # Checked before the normal ambiguity-gap logic below, and overrides
+        # it outright: a confusable pair (see users.models.ConfusablePair) is
+        # a known, standing fact about this specific person, not a property
+        # of this one score gap - it forces a card tap regardless of how
+        # clean best_similarity looks, which is exactly the case identical
+        # twins can slip past a borderline/close_second check (each twin can
+        # score confidently as themselves without the gap ever looking
+        # small). No 2D face system can be expected to tell them apart
+        # visually, so this doesn't try to - it routes to the one check that
+        # doesn't share that weakness.
+        confusable_partner_ids = get_confusable_partner_ids(best_person.id)
+        if confusable_partner_ids:
+            candidate_ids = [best_person.id] + confusable_partner_ids
+            return self._start_tiebreak(
+                gate_location, direction, candidate_ids, box, best_similarity,
+                reason=PendingTiebreak.Reason.CONFUSABLE_PAIR,
             )
 
         other_best = None
@@ -511,6 +734,12 @@ class IdentifyView(APIView):
                 **person_payload(person, request),
             }
 
+        # A fresh log row (not a cooldown-reuse) is the one point worth
+        # checking whether this encounter involved an occluded frame a
+        # moment ago - "matched fine, but their face was briefly covered
+        # just before this" is worth keeping on the record even though the
+        # scan ultimately succeeded (see EntryLog.occlusion_detected).
+        occlusion_seen = self._recent_occlusion_seen(gate_location)
         log = EntryLog.objects.create(
             person=person,
             direction=direction,
@@ -519,6 +748,7 @@ class IdentifyView(APIView):
             gate_location=gate_location,
             match_confidence=similarity,
             liveness_score=liveness_score,
+            occlusion_detected=occlusion_seen,
         )
         return {
             "success": True,
@@ -527,26 +757,45 @@ class IdentifyView(APIView):
             "log_id": log.id,
             "similarity": similarity,
             "liveness_score": liveness_score,
+            "occlusion_detected": occlusion_seen,
             "box": _box_to_dict(box),
             **person_payload(person, request),
         }
 
     @staticmethod
-    def _start_tiebreak(gate_location, direction, candidate_ids, box, best_similarity):
+    def _start_tiebreak(
+        gate_location, direction, candidate_ids, box, best_similarity,
+        reason=PendingTiebreak.Reason.AMBIGUOUS_MATCH,
+    ):
         PendingTiebreak.objects.update_or_create(
             gate_location=gate_location,
-            defaults={"candidate_person_ids": candidate_ids, "direction": direction},
+            defaults={"candidate_person_ids": candidate_ids, "direction": direction, "reason": reason},
         )
-        candidate_names = list(Person.objects.filter(id__in=candidate_ids).values_list("full_name", flat=True))
+        candidates = list(Person.objects.filter(id__in=candidate_ids))
+        candidate_names = [candidate.full_name for candidate in candidates]
+        is_confusable = reason == PendingTiebreak.Reason.CONFUSABLE_PAIR
+        # Handed through so the entry-agent can show the guard a visual
+        # backstop to check by eye while waiting for the tap - never used to
+        # decide the match itself (see users.models.Person.distinguishing_note).
+        distinguishing_notes = [
+            candidate.distinguishing_note for candidate in candidates if candidate.distinguishing_note
+        ]
         return {
             "success": False,
             "retry": False,
             "tiebreak_required": True,
-            "reason": "Ambiguous match - please tap your card to confirm.",
+            "confusable_pair": is_confusable,
+            "reason": (
+                "This match is confirmed but flagged as easily confused with someone similar - "
+                "please tap your card to confirm."
+                if is_confusable
+                else "Ambiguous match - please tap your card to confirm."
+            ),
             "log_id": None,
             "similarity": best_similarity,
             "box": _box_to_dict(box),
             "candidate_names": candidate_names,
+            "distinguishing_notes": distinguishing_notes,
         }
 
     @staticmethod
@@ -558,13 +807,35 @@ class IdentifyView(APIView):
         stale = PendingTiebreak.objects.filter(gate_location=gate_location, created_at__lt=cutoff).first()
         if stale is None:
             return
+        is_confusable = stale.reason == PendingTiebreak.Reason.CONFUSABLE_PAIR
+        if is_confusable:
+            # No card tap arrived in time, and this was never an ambiguous
+            # score to begin with - the match itself looked fine. Still not
+            # auto-accepted: person stays None (attributing it to whichever
+            # candidate scored highest would be exactly the false confidence
+            # this feature exists to prevent), and the candidate names go
+            # into failure_reason so whoever reviews this FAILED row has
+            # something to act on, rather than a bare "unresolved".
+            candidate_names = list(
+                Person.objects.filter(id__in=stale.candidate_person_ids).values_list("full_name", flat=True)
+            )
+            failure_reason = (
+                "Confusable-pair match not confirmed by card tap in time - possibly one of: "
+                f"{', '.join(candidate_names)}. Needs manual guard/staff review."
+            )
+        else:
+            failure_reason = "Ambiguous match, not resolved by card tap in time."
         EntryLog.objects.create(
             person=None,
             direction=stale.direction,
-            verification_method=EntryLog.VerificationMethod.FACE_ONLY,
+            verification_method=(
+                EntryLog.VerificationMethod.CONFUSABLE_PAIR_TIEBREAK
+                if is_confusable
+                else EntryLog.VerificationMethod.FACE_ONLY
+            ),
             status=EntryLog.Status.FAILED,
             gate_location=gate_location,
-            failure_reason="Ambiguous match, not resolved by card tap in time.",
+            failure_reason=failure_reason,
         )
         stale.delete()
 
@@ -581,7 +852,55 @@ class IdentifyView(APIView):
         uses) does this hand off to _handle_unmatched_face to actually write
         the FAILED log - previously that happened on the very first
         unmatched frame, which is what let a single blurry frame flag
-        someone as Unknown."""
+        someone as Unknown.
+
+        Checked against real production data (not assumed): a continuous
+        hand-over-face covering gesture produces a MIX of frames - some
+        cross the occlusion thresholds (see _occlusion_reason), some don't,
+        because a hand shifts slightly frame to frame. Before this check,
+        those two outcomes voted in two fully independent, unrelated
+        buckets (UnmatchedAttempt here, OcclusionAttempt over in
+        _confirm_or_vote_occlusion) - both accumulating from the SAME
+        physical event, racing each other, and "Unknown" won the race just
+        as often as occlusion did. The result, seen directly in real
+        EntryLog rows: occlusion_detected and failed/Unknown alternating
+        every few seconds for what was clearly one uninterrupted attempt to
+        cover a face.
+
+        So: if occlusion was seen at this gate moments ago (_recent_
+        occlusion_seen, the same helper that notes occlusion on a
+        following success), this frame's non-match doesn't get to compete
+        in the Unknown vote at all - it's far more likely a continuation of
+        that same event than a newly-arrived, genuinely unenrolled
+        stranger. Not counting it (rather than, say, loosening the
+        occlusion thresholds further) means occlusion gets the room to
+        actually confirm instead of "Unknown" winning on a technicality,
+        without touching the carefully-calibrated per-frame thresholds
+        themselves. The tradeoff is bounded and deliberate: a genuine
+        stranger who happens to walk up within VOTE_WINDOW_SECONDS of
+        someone else's occlusion attempt has their own "Unknown"
+        confirmation delayed by at most that window, not blocked - the same
+        few-seconds-to-get-it-right philosophy this whole voting system
+        already runs on."""
+        if self._recent_occlusion_seen(gate_location):
+            # occlusion_suspected (not just retry+hint) so the entry-agent's
+            # box stays a consistent teal "please uncover your face" for the
+            # whole gesture, rather than flickering between this and the
+            # neutral gray "Checking..." a plain retry would otherwise show -
+            # a guard watching the screen should see one stable signal for
+            # one continuous event, not a flicker between two.
+            return {
+                "success": False,
+                "retry": True,
+                "occlusion_suspected": True,
+                "reason": "Checking - possible occlusion.",
+                "hint": "Please uncover your face",
+                "log_id": None,
+                "similarity": best_similarity,
+                "liveness_score": liveness_score,
+                "box": _box_to_dict(box),
+            }
+
         UnmatchedAttempt.objects.create(gate_location=gate_location, embedding=embedding)
 
         query = np.array(embedding, dtype=np.float32)
@@ -651,15 +970,20 @@ class IdentifyView(APIView):
                 return payload
 
         captured_photo_bytes = insightface_utils.crop_face(bgr_image, box)
+        # Same reasoning as _confirm_or_vote's success path: a face that
+        # ultimately failed to match anyone might still have been briefly
+        # covered a moment earlier in this encounter, and that's worth
+        # keeping on the record too, not just when the outcome is a success.
+        occlusion_seen = self._recent_occlusion_seen(gate_location)
         return self._failure_payload(
             direction, gate_location, reason, best_similarity, captured_photo_bytes, request, embedding, box,
-            liveness_score,
+            liveness_score, occlusion_seen,
         )
 
     @staticmethod
     def _failure_payload(
         direction, gate_location, reason, similarity=None, captured_photo_bytes=None, request=None,
-        embedding=None, box=None, liveness_score=None,
+        embedding=None, box=None, liveness_score=None, occlusion_seen=False,
     ):
         log = EntryLog(
             person=None,
@@ -669,6 +993,7 @@ class IdentifyView(APIView):
             gate_location=gate_location,
             failure_reason=reason,
             liveness_score=liveness_score,
+            occlusion_detected=occlusion_seen,
         )
         if embedding is not None:
             log.unmatched_encoding = list(embedding)
@@ -676,7 +1001,10 @@ class IdentifyView(APIView):
             log.captured_photo.save("unenrolled_capture.jpg", ContentFile(captured_photo_bytes), save=False)
         log.save()
 
-        payload = {"success": False, "retry": False, "reason": reason, "person_name": None, "log_id": log.id}
+        payload = {
+            "success": False, "retry": False, "reason": reason, "person_name": None, "log_id": log.id,
+            "occlusion_detected": occlusion_seen,
+        }
         if similarity is not None:
             payload["similarity"] = similarity
         if liveness_score is not None:
@@ -684,6 +1012,134 @@ class IdentifyView(APIView):
         if box is not None:
             payload["box"] = _box_to_dict(box)
         if log.captured_photo and request is not None:
+            payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
+        return payload
+
+    @staticmethod
+    def _recent_occlusion_seen(gate_location):
+        """Whether an occluded frame was seen at this gate recently enough
+        to still count as "the same encounter" - used two ways: to decide
+        occlusion vote agreement in _confirm_or_vote_occlusion, and to decide
+        whether a face match or non-match that follows should carry the
+        occlusion_detected note (see EntryLog.occlusion_detected). Reuses
+        VOTE_WINDOW_SECONDS rather than inventing a separate "recent"
+        setting - that's already this system's definition of one continuous
+        interaction at a gate."""
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
+        return OcclusionAttempt.objects.filter(
+            gate_location=gate_location, timestamp__gte=window_cutoff
+        ).exists()
+
+    def _confirm_or_vote_occlusion(self, bgr_image, box, direction, gate_location, request):
+        """An occluded frame is never confirmed from a single read either -
+        same grace-period reasoning as a face match, an unmatched face, and a
+        suspected spoof (see class docstring): a single anomalous frame (an
+        odd angle, a genuinely narrow mouth) shouldn't be enough to log
+        someone as having covered their face. Recent OcclusionAttempt rows
+        for this gate are just counted directly (no embedding-similarity
+        grouping - see OcclusionAttempt's docstring for why), reusing the
+        same VOTE_REQUIRED_AGREEMENT/VOTE_WINDOW_SIZE/VOTE_WINDOW_SECONDS
+        settings a match/non-match/spoof already votes with."""
+        OcclusionAttempt.objects.create(gate_location=gate_location)
+
+        # Every row here already "is" an occlusion occurrence (there's no
+        # per-attempt identity to disagree about, unlike RecognitionAttempt),
+        # so agreement is just how many of the last VOTE_WINDOW_SIZE attempts
+        # at this gate landed inside VOTE_WINDOW_SECONDS - same bounded
+        # recent-attempts shape _confirm_or_vote/_confirm_or_vote_unmatched/
+        # _confirm_or_vote_spoof all use, just without a grouping step.
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
+        recent_attempts = list(
+            OcclusionAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
+            .order_by("-timestamp")[: settings.VOTE_WINDOW_SIZE]
+        )
+        agreement = len(recent_attempts)
+
+        if agreement < settings.VOTE_REQUIRED_AGREEMENT:
+            # Shown immediately, not held back until confirmed - unlike an
+            # unmatched face (which stays neutral "Checking..." so a real
+            # person can't be flagged Unknown off one bad frame), telling
+            # someone to uncover their face is a low-stakes thing to say even
+            # if this frame's read turns out wrong, so the entry-agent can
+            # show the prompt right away. retry=True still keeps it out of
+            # the log/stats until the vote actually confirms it.
+            return {
+                "success": False,
+                "retry": True,
+                # occlusion_suspected: this frame's own outcome is occlusion -
+                # same role spoof_suspected plays for a suspected spoof, and
+                # what the entry-agent checks to show its own box label/status
+                # (distinct from occlusion_detected, which any outcome can
+                # carry as a note - see EntryLog.occlusion_detected).
+                "occlusion_suspected": True,
+                "occlusion_detected": True,
+                "reason": "Face partially covered - please uncover your mouth/nose and rescan.",
+                "hint": "Please uncover your face",
+                "log_id": None,
+                "box": _box_to_dict(box),
+            }
+
+        return self._handle_occlusion(bgr_image, box, direction, gate_location, request)
+
+    def _handle_occlusion(self, bgr_image, box, direction, gate_location, request):
+        """Only reached once _confirm_or_vote_occlusion has enough recent
+        agreement to trust this as a real, ongoing occlusion, not a one-off
+        misread. Deduped by time alone (see OCCLUSION_CAPTURE_COOLDOWN_
+        SECONDS's comment) rather than by embedding similarity the way
+        _handle_unmatched_face/_handle_spoof_face dedupe - an occluded
+        frame's embedding is exactly what this feature doesn't trust, so it
+        isn't asked to do double duty as a same-person check too."""
+        reason = "Face partially covered - please uncover your mouth/nose and rescan."
+        cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=settings.OCCLUSION_CAPTURE_COOLDOWN_SECONDS)
+        recent_log = (
+            EntryLog.objects.filter(
+                gate_location=gate_location,
+                status=EntryLog.Status.OCCLUSION_DETECTED,
+                timestamp__gte=cooldown_cutoff,
+            )
+            .order_by("-timestamp")
+            .first()
+        )
+        if recent_log:
+            payload = {
+                "success": False,
+                "retry": False,
+                "occlusion_suspected": True,
+                "occlusion_detected": True,
+                "reason": reason,
+                "person_name": None,
+                "log_id": recent_log.id,
+                "deduped": True,
+                "box": _box_to_dict(box),
+            }
+            if recent_log.captured_photo:
+                payload["captured_photo"] = request.build_absolute_uri(recent_log.captured_photo.url)
+            return payload
+
+        captured_photo_bytes = insightface_utils.crop_face(bgr_image, box)
+        log = EntryLog(
+            person=None,
+            direction=direction,
+            verification_method=EntryLog.VerificationMethod.FACE_ONLY,
+            status=EntryLog.Status.OCCLUSION_DETECTED,
+            gate_location=gate_location,
+            failure_reason=reason,
+            occlusion_detected=True,
+        )
+        log.captured_photo.save("occlusion_capture.jpg", ContentFile(captured_photo_bytes), save=False)
+        log.save()
+
+        payload = {
+            "success": False,
+            "retry": False,
+            "occlusion_suspected": True,
+            "occlusion_detected": True,
+            "reason": reason,
+            "person_name": None,
+            "log_id": log.id,
+            "box": _box_to_dict(box),
+        }
+        if log.captured_photo:
             payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
         return payload
 
@@ -773,6 +1229,11 @@ class IdentifyView(APIView):
                 return payload
 
         captured_photo_bytes = insightface_utils.crop_face(bgr_image, box)
+        # Same reasoning as the success/failed paths - occlusion moments
+        # before this spoof suspicion was confirmed is still worth a note
+        # (e.g. a hand came down holding up the photo/screen that then
+        # failed liveness).
+        occlusion_seen = self._recent_occlusion_seen(gate_location)
         log = EntryLog(
             person=None,
             direction=direction,
@@ -782,6 +1243,7 @@ class IdentifyView(APIView):
             failure_reason=reason,
             liveness_score=liveness_score,
             unmatched_encoding=list(embedding),
+            occlusion_detected=occlusion_seen,
         )
         log.captured_photo.save("spoof_capture.jpg", ContentFile(captured_photo_bytes), save=False)
         log.save()
@@ -794,6 +1256,7 @@ class IdentifyView(APIView):
             "person_name": None,
             "log_id": log.id,
             "liveness_score": liveness_score,
+            "occlusion_detected": occlusion_seen,
             "box": _box_to_dict(box),
         }
         if log.captured_photo:

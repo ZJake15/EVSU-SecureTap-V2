@@ -1,10 +1,10 @@
-from datetime import timedelta
+﻿from datetime import timedelta
 
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import IsSecurityOrAbove
+from accounts.permissions import IsAdminOrSaso
 from logs.models import EntryLog
 from users.threshold_eval import far_frr_table, leave_one_out_similarities
 
@@ -34,7 +34,7 @@ class SummaryView(APIView):
     fetch had no .catch(), so the failure was silently swallowed). Doing the
     grouping in Python sidesteps the DB-side timezone conversion entirely."""
 
-    permission_classes = [IsSecurityOrAbove]
+    permission_classes = [IsAdminOrSaso]
 
     def get(self, request):
         now = timezone.localtime()
@@ -96,14 +96,20 @@ class SummaryView(APIView):
 
     @staticmethod
     def _entries_by_method(range_logs):
-        """Per-day counts split into the three states shown on Live
-        Monitoring's method badges: a clean face match, a face match
-        resolved by an NFC tiebreak tap, or a failed/unrecognized attempt."""
+        """Per-day counts split into the states shown on Live Monitoring's
+        method badges: a clean face match, a face match resolved by an NFC
+        tiebreak tap, a failed/unrecognized attempt, or an occluded attempt.
+        occlusion_detected gets its own bucket rather than folding into
+        "failed" - silently doing that would mean this chart quietly
+        disagreed with the dashboard's own status filter/badge, which treats
+        it as a distinct outcome (see EntryLog.Status.OCCLUSION_DETECTED)."""
         by_date = {}
         for ts, method, status in range_logs.values_list("timestamp", "verification_method", "status"):
             date_key = timezone.localtime(ts).strftime("%Y-%m-%d")
-            bucket = by_date.setdefault(date_key, {"face": 0, "face_nfc": 0, "failed": 0})
-            if status == EntryLog.Status.FAILED:
+            bucket = by_date.setdefault(date_key, {"face": 0, "face_nfc": 0, "failed": 0, "occluded": 0})
+            if status == EntryLog.Status.OCCLUSION_DETECTED:
+                bucket["occluded"] += 1
+            elif status == EntryLog.Status.FAILED:
                 bucket["failed"] += 1
             elif status == EntryLog.Status.SUCCESS and method == EntryLog.VerificationMethod.FACE_ONLY:
                 bucket["face"] += 1
@@ -147,7 +153,7 @@ class FarFrrView(APIView):
     yet. Labeled as such in the response so the dashboard can show the
     caveat rather than presenting it as a rigorous accuracy figure."""
 
-    permission_classes = [IsSecurityOrAbove]
+    permission_classes = [IsAdminOrSaso]
 
     def get(self, request):
         same_person, cross_person = leave_one_out_similarities()

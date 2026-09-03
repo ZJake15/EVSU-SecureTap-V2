@@ -7,6 +7,9 @@ import LiveMonitoring from "./pages/LiveMonitoring";
 import Logs from "./pages/Logs";
 import Users from "./pages/Users";
 import Reports from "./pages/Reports";
+import SystemSettings from "./pages/SystemSettings";
+import AccountManagement from "./pages/AccountManagement";
+import AuditLog from "./pages/AuditLog";
 
 export default function App() {
   const { user } = useAuth();
@@ -26,7 +29,7 @@ export default function App() {
         <Route
           path="users"
           element={
-            <ProtectedRoute roles={["admin", "it"]}>
+            <ProtectedRoute roles={["admin", "saso"]}>
               <Users />
             </ProtectedRoute>
           }
@@ -34,8 +37,32 @@ export default function App() {
         <Route
           path="reports"
           element={
-            <ProtectedRoute roles={["admin", "it"]}>
+            <ProtectedRoute roles={["admin", "saso"]}>
               <Reports />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="audit-log"
+          element={
+            <ProtectedRoute roles={["admin", "saso"]}>
+              <AuditLog />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="accounts"
+          element={
+            <ProtectedRoute roles={["admin"]}>
+              <AccountManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="settings"
+          element={
+            <ProtectedRoute roles={["admin"]}>
+              <SystemSettings />
             </ProtectedRoute>
           }
         />

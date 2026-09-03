@@ -1,12 +1,25 @@
 from rest_framework import serializers
 
-from .insightface_utils import compute_face_embedding, normalize_to_jpeg
-from .models import FaceEmbedding, Person
+from .confusable_utils import (
+    MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON,
+    find_confusable_candidates,
+    get_confusable_partner_ids,
+    has_confusable_flag,
+    record_confusable_pairs,
+)
+from .insightface_utils import compute_face_embedding, ensure_supported_image_format, normalize_to_jpeg
+from .models import ConfusablePair, DeactivationRequest, FaceEmbedding, Person
 
 # A guided multi-photo enrollment captures 3-5 near-frontal shots with slight
 # variation - matching gets no better past that, and each embedding is a
 # comparison the gate-scan has to do for every enrolled person, every frame.
+# A person flagged in a confusable pair gets a higher ceiling instead - see
+# MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON in confusable_utils.py.
 MAX_EMBEDDINGS_PER_PERSON = 5
+
+
+def max_embeddings_for(person):
+    return MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON if has_confusable_flag(person.id) else MAX_EMBEDDINGS_PER_PERSON
 
 
 class FaceEmbeddingSerializer(serializers.ModelSerializer):
@@ -48,6 +61,23 @@ class PersonSerializer(serializers.ModelSerializer):
     # resulting embedding as lower-confidence, same as a bulk-imported one,
     # since both share the same underlying weakness: one uncorroborated photo.
     fallback_enrollment = serializers.BooleanField(write_only=True, required=False, default=False)
+    # True while a SASO-submitted deactivation request on this person is still
+    # awaiting an Admin's approve/reject - lets the Users page show a "Pending
+    # deactivation" badge instead of the record just silently staying active
+    # with no visible explanation of why a SASO's delete attempt didn't stick.
+    pending_deactivation = serializers.SerializerMethodField()
+    # Every other Person this one is currently flagged confusable with -
+    # always live, not just a one-time "just detected this" toast, since the
+    # risk doesn't go away after enrollment (see ConfusablePair's docstring).
+    # An enrollment endpoint that just created/added a photo for this person
+    # can show the exact same field's contents as a "please confirm this is
+    # expected" prompt - no separate one-time-warning field needed.
+    confusable_partners = serializers.SerializerMethodField()
+    # How many enrollment photos this specific person can have - higher than
+    # the standard cap once they're in a confusable pair (see
+    # confusable_utils.MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON). Exposed so the
+    # dashboard never has to duplicate/guess the two numbers itself.
+    max_embeddings = serializers.SerializerMethodField()
 
     class Meta:
         model = Person
@@ -65,8 +95,50 @@ class PersonSerializer(serializers.ModelSerializer):
             "created_at",
             "face_embeddings",
             "fallback_enrollment",
+            "pending_deactivation",
+            "distinguishing_note",
+            "confusable_partners",
+            "max_embeddings",
         ]
         read_only_fields = ["id", "photo_reference", "created_at"]
+
+    def get_pending_deactivation(self, obj):
+        return obj.deactivation_requests.filter(status=DeactivationRequest.Status.PENDING).exists()
+
+    def get_confusable_partners(self, obj):
+        partner_ids = get_confusable_partner_ids(obj.id)
+        if not partner_ids:
+            return []
+        partners = Person.objects.filter(id__in=partner_ids)
+        return [
+            {"id": partner.id, "full_name": partner.full_name, "student_or_employee_id": partner.student_or_employee_id}
+            for partner in partners
+        ]
+
+    def get_max_embeddings(self, obj):
+        return max_embeddings_for(obj)
+
+    # Format is checked per-field rather than inside create()/update() so DRF
+    # returns it as a normal {"photo": [...]} field error the dashboard already
+    # knows how to surface, and so it's rejected before anything is written or
+    # any face detection runs. ImageField alone isn't enough - it only asks
+    # Pillow "is this an image at all", which a WEBP or BMP passes happily.
+    @staticmethod
+    def _validate_image_format(value):
+        try:
+            ensure_supported_image_format(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
+        return value
+
+    def validate_photo(self, value):
+        return self._validate_image_format(value)
+
+    def validate_profile_picture(self, value):
+        # Applies to the display photo too: it never goes through face
+        # detection, so this is the only thing standing between an unsupported
+        # upload and a stored file the dashboard then can't render.
+        return self._validate_image_format(value)
 
     def create(self, validated_data):
         photo = validated_data.pop("photo", None)
@@ -90,6 +162,14 @@ class PersonSerializer(serializers.ModelSerializer):
             person=person, embedding=embedding, source_image=photo, detection_score=det_score,
             is_low_confidence=is_low_confidence,
         )
+        # Checked on every new embedding, not just this first one - the
+        # guided capture flow adds 4 more photos right after this via
+        # add_photo(), each of which runs this same check (see PersonViewSet.
+        # add_photo), so a confusable match revealed only by a later photo
+        # still gets caught, not just one revealed by the very first shot.
+        matches = find_confusable_candidates(embedding, exclude_person_id=person.id)
+        if matches:
+            record_confusable_pairs(person, matches)
         return person
 
     def update(self, instance, validated_data):
@@ -97,9 +177,10 @@ class PersonSerializer(serializers.ModelSerializer):
         profile_picture = validated_data.pop("profile_picture", None)
         validated_data.pop("fallback_enrollment", None)  # only meaningful at creation time
         if photo is not None:
-            if instance.face_embeddings.count() >= MAX_EMBEDDINGS_PER_PERSON:
+            cap = max_embeddings_for(instance)
+            if instance.face_embeddings.count() >= cap:
                 raise serializers.ValidationError(
-                    {"photo": f"Already has the maximum of {MAX_EMBEDDINGS_PER_PERSON} enrollment photos."}
+                    {"photo": f"Already has the maximum of {cap} enrollment photos."}
                 )
             try:
                 embedding, det_score = compute_face_embedding(photo)
@@ -110,6 +191,9 @@ class PersonSerializer(serializers.ModelSerializer):
             FaceEmbedding.objects.create(
                 person=instance, embedding=embedding, source_image=photo, detection_score=det_score,
             )
+            matches = find_confusable_candidates(embedding, exclude_person_id=instance.id)
+            if matches:
+                record_confusable_pairs(instance, matches)
 
         if profile_picture is not None:
             # Explicit upload always wins, even over the `photo` branch above.
@@ -119,3 +203,91 @@ class PersonSerializer(serializers.ModelSerializer):
             setattr(instance, field, value)
         instance.save()
         return instance
+
+
+class DeactivationRequestSerializer(serializers.ModelSerializer):
+    """Read-only view of the maker-checker state - creation happens through
+    PersonViewSet.destroy() (a SASO's DELETE becomes a request instead of an
+    immediate change) and resolution through DeactivationRequestViewSet's
+    approve/reject actions, not through this serializer directly."""
+
+    person_name = serializers.CharField(source="person.full_name", read_only=True)
+    student_or_employee_id = serializers.CharField(source="person.student_or_employee_id", read_only=True)
+    requested_by_username = serializers.SerializerMethodField()
+    resolved_by_username = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DeactivationRequest
+        fields = [
+            "id",
+            "person",
+            "person_name",
+            "student_or_employee_id",
+            "requested_by_username",
+            "requested_at",
+            "reason",
+            "status",
+            "resolved_by_username",
+            "resolved_at",
+            "resolution_note",
+        ]
+        read_only_fields = fields
+
+    def get_requested_by_username(self, obj):
+        return obj.requested_by.username if obj.requested_by else None
+
+    def get_resolved_by_username(self, obj):
+        return obj.resolved_by.username if obj.resolved_by else None
+
+
+class ConfusablePairSerializer(serializers.ModelSerializer):
+    """Covers both how a pair got flagged: auto-detected ones are created by
+    confusable_utils.record_confusable_pairs (read-only from here - person_a/
+    person_b/source/detected_similarity are never client-writable for those),
+    and a manually-flagged one is created directly through this serializer's
+    create() (see ConfusablePairViewSet), which always stamps source=MANUAL
+    and flagged_by=the requesting user - a client can never claim a pair is
+    auto-detected or attribute it to somebody else."""
+
+    person_a_name = serializers.CharField(source="person_a.full_name", read_only=True)
+    person_b_name = serializers.CharField(source="person_b.full_name", read_only=True)
+    flagged_by_username = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ConfusablePair
+        fields = [
+            "id",
+            "person_a",
+            "person_a_name",
+            "person_b",
+            "person_b_name",
+            "source",
+            "detected_similarity",
+            "flagged_by_username",
+            "created_at",
+        ]
+        read_only_fields = ["id", "source", "detected_similarity", "flagged_by_username", "created_at"]
+
+    def get_flagged_by_username(self, obj):
+        return obj.flagged_by.username if obj.flagged_by else None
+
+    def validate(self, data):
+        person_a = data.get("person_a") or getattr(self.instance, "person_a", None)
+        person_b = data.get("person_b") or getattr(self.instance, "person_b", None)
+        if person_a and person_b and person_a.id == person_b.id:
+            raise serializers.ValidationError("A person can't be flagged as confusable with themselves.")
+        return data
+
+    def create(self, validated_data):
+        request = self.context.get("request")
+        pair, created = ConfusablePair.objects.get_or_create_pair(
+            validated_data["person_a"], validated_data["person_b"],
+            source=ConfusablePair.Source.MANUAL,
+            flagged_by=request.user if request else None,
+        )
+        # Transient, not a model field - lets the view's perform_create tell
+        # a genuine new flag apart from a duplicate POST that just found the
+        # pair already on record, so the audit log doesn't claim an action
+        # happened when nothing actually changed.
+        pair.was_newly_created = created
+        return pair

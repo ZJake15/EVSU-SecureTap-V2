@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     "users",
     "logs",
     "reports",
+    "audit",
 ]
 
 MIDDLEWARE = [
@@ -145,6 +146,17 @@ ENTRY_AGENT_SERVICE_TOKEN = env("ENTRY_AGENT_SERVICE_TOKEN")
 # enough real people are enrolled and use whatever it recommends instead.
 FACE_MATCH_SIMILARITY_THRESHOLD = env.float("FACE_MATCH_SIMILARITY_THRESHOLD", default=0.45)
 
+# Confusable-pair detection (identical twins, or any two people a 2D face
+# system genuinely cannot be expected to tell apart) - deliberately a
+# SEPARATE, higher threshold from FACE_MATCH_SIMILARITY_THRESHOLD above, not
+# a reuse of it: the match threshold answers "is this good enough to accept
+# as a match", this one answers "is this so high that two DIFFERENT people
+# scoring it means their faces are fundamentally too alike for this system to
+# safely tell apart, no matter how the match itself turns out". See
+# users/confusable_utils.py. 0.60 is a starting point, not a validated value -
+# same tune-later caveat as every other threshold on this page.
+CONFUSABLE_SIMILARITY_THRESHOLD = env.float("CONFUSABLE_SIMILARITY_THRESHOLD", default=0.60)
+
 # Passive liveness (anti-spoofing) check - see users/liveness_utils.py. Runs
 # on a standard 2D webcam frame (no depth/IR hardware available at the gate),
 # so this is classical texture/frequency/reflectance analysis, not a depth
@@ -196,6 +208,119 @@ GATE_SCAN_MIN_BLUR_VARIANCE = env.float("GATE_SCAN_MIN_BLUR_VARIANCE", default=2
 # since a partial face produces unreliable embeddings.
 FACE_EDGE_MARGIN_RATIO = env.float("FACE_EDGE_MARGIN_RATIO", default=0.02)
 
+# How far a face may be turned away from the camera before the gate scan
+# skips it instead of matching it - the nose tip's offset from the midpoint
+# between the eyes, as a fraction of the inter-eye distance (see
+# insightface_utils.head_yaw_ratio). ~0.0 is dead-on frontal; ~0.35 is
+# roughly a 30 degree turn.
+#
+# This exists because a turned face is the one input that fails *both* ways
+# at once: ArcFace embeddings are trained on roughly frontal faces, so a
+# profile view of an enrolled person matches nobody and gets voted through
+# as Unknown, while the same odd angle can drag the liveness score under its
+# threshold and log them as a spoof attempt instead. Skipping the face
+# outright (not counting it as an attempt in either direction) means the
+# scan simply waits for the frame where they look at the camera - which,
+# walking through a gate, is usually a fraction of a second later.
+#
+# 0.35 is roughly a 30 degree turn, which is about where ArcFace embeddings
+# (trained on near-frontal faces) start degrading badly - so the threshold is
+# set where matching actually stops working, not at an arbitrary angle.
+# Measured over this project's own stored captures for a baseline: posed
+# reference photos ran 0.012-0.147 (none would be skipped), while real
+# walk-by frames that failed to match ran a median of 0.130 with a long tail
+# past 10.0 - the ratio blows up near profile, because the two eyes converge
+# on the same point and collapse the denominator.
+#
+# Raise it to be more permissive (matches more angles, risks more false
+# Unknowns), lower it to demand a squarer look at the camera. Being strict is
+# cheap here: the scan runs every ~0.2s, so a skipped frame just means the
+# person is matched a fraction of a second later, not that they're turned
+# away. The real risk of going too low is a camera mounted off to one side of
+# the walkway, where nobody ever reads as frontal.
+FACE_MAX_YAW_RATIO = env.float("FACE_MAX_YAW_RATIO", default=0.35)
+
+# Below this, a face is treated as possibly occluded (mouth/nose covered by a
+# hand, mask, or high collar) rather than matched or voted through as
+# Unknown - see insightface_utils.mouth_visibility_ratio for exactly what's
+# measured and why. Only evaluated on frames that already passed the yaw
+# check above, since a turned face naturally foreshortens mouth width too and
+# would otherwise be misread as occluded.
+#
+# Unlike FACE_MAX_YAW_RATIO, this one does NOT have a comfortable margin.
+# Painting a skin-toned patch over the mouth/nose of 10 real enrolled photos
+# and re-running this exact detector: clean mouth-width ratio ran
+# 0.776-1.018 (mean 0.847), the same photos with the patch ran 0.663-0.771
+# (mean 0.709) - a real, measurable drop, but the two ranges sit right next
+# to each other with only a hairline gap on this small sample, nothing like
+# yaw's >10x separation. 0.73 sits closer to the clean-photo floor than the
+# midpoint, deliberately: it will likely MISS lighter/partial occlusion
+# (a hand covering just the chin, say) - the safe failure mode, since a
+# missed occlusion just falls through to normal matching/Unknown handling,
+# same as before this existed. A single frame reading below this threshold
+# also isn't enough on its own - see IdentifyView._confirm_or_vote_occlusion,
+# which requires the same VOTE_REQUIRED_AGREEMENT/VOTE_WINDOW_SIZE agreement
+# a face match or spoof suspicion already needs, so one anomalous frame
+# (a genuinely narrow-mouthed person, a bad angle) can't misclassify someone
+# on its own either.
+#
+# Treat this exactly like FACE_MATCH_SIMILARITY_THRESHOLD: a starting point
+# for a specific detector and a small test set, not a validated value - watch
+# real occlusion_detected rows once they exist and retune.
+#
+# UPDATE after real-world testing: on its own, this threshold badly
+# under-detects partial coverage - a hand covering just the mouth/chin
+# (without reaching the nose) very often doesn't shrink mouth width enough
+# to trip it, and it can't be loosened further without misreading visible
+# faces as covered (the clean-photo floor sits right against it - see the
+# numbers above). FACE_MAX_MOUTH_TEXTURE_RATIO below is a second, independent
+# signal added specifically to catch what this one misses.
+FACE_MIN_MOUTH_VISIBILITY_RATIO = env.float("FACE_MIN_MOUTH_VISIBILITY_RATIO", default=0.73)
+
+# The second occlusion signal (see insightface_utils.lower_face_texture_ratio)
+# - how texture-rich the lower third of the face (mouth/chin) is relative to
+# the upper-middle (forehead/eyes, always visible). A real mouth has lips,
+# teeth edges, and a shadow under the nose; a hand or flat cloth over it is
+# comparatively smooth, so this ratio drops. Below this, occlusion is flagged
+# even if mouth_visibility_ratio didn't catch it - occlusion is confirmed if
+# EITHER signal fires, since empirically they miss different cases (mouth
+# width degrades geometrically; texture degrades regardless of exactly where
+# SCRFD regresses the mouth-corner keypoints under occlusion).
+#
+# Measured alongside FACE_MIN_MOUTH_VISIBILITY_RATIO's own test: clean ran
+# 0.463-1.103; several partial-occlusion cases that ratio missed entirely
+# (mouth-only coverage, not reaching the nose) ran 0.000-0.328 here - a much
+# cleaner gap. 0.40 sits comfortably below the clean floor. Same caveat as
+# every other threshold here: a starting point for one small test set, not a
+# validated value - a beard, heavy uneven lighting, or a very smooth-skinned
+# mouth could plausibly read low without anything actually covering it.
+FACE_MAX_MOUTH_TEXTURE_RATIO = env.float("FACE_MAX_MOUTH_TEXTURE_RATIO", default=0.40)
+
+# The third occlusion signal: the detector's own per-face detection
+# confidence (det_score - "how face-like is this region", not a match
+# score). Unlike the two ratios above, this doesn't derive from the 5
+# keypoints at all, so it fails independently of them - a face partly
+# covered genuinely looks less face-like to the detector even when its
+# regressed keypoints still land in a plausible-looking arrangement (see
+# insightface_utils.mouth_visibility_ratio's docstring for why keypoint
+# *plausibility* specifically was tested and does NOT work as a signal -
+# every plausibility measure tried came back statistically indistinguishable
+# between clean and occluded faces on this project's test set; SCRFD's
+# regression head produces a wrong-but-self-consistent guess, not a
+# distorted one). det_score is the more direct thing the user actually
+# wanted checked: it doesn't need geometry to be off at all.
+#
+# Measured on the same test as the two ratios above: clean det_score ran
+# 0.71-0.84; occluded frames ran as low as 0.50-0.65, though with real
+# overlap into the clean range too - not clean separation on its own, which
+# is why this is a THIRD OR-condition alongside the other two rather than a
+# replacement for either. 0.65 sits below the observed clean floor (0.71)
+# with some margin. Same caveat as every threshold on this page: a starting
+# point for one detector and one small test set, not validated - and
+# because det_score already factors into nothing else in this codebase,
+# there's no other existing behavior this could disturb by being wrong.
+FACE_MIN_DET_SCORE_UNOCCLUDED = env.float("FACE_MIN_DET_SCORE_UNOCCLUDED", default=0.65)
+
 # The continuous camera scan re-checks the gate every couple of seconds, so a
 # person lingering nearby would otherwise create a new log row on every pass.
 # Recognitions of the same person within this window are deduped server-side.
@@ -214,3 +339,13 @@ UNENROLLED_CAPTURE_COOLDOWN_SECONDS = env.int("UNENROLLED_CAPTURE_COOLDOWN_SECON
 # spoof-suspected faces so it can be tuned independently once real
 # spoof-attempt data exists.
 SPOOF_CAPTURE_COOLDOWN_SECONDS = env.int("SPOOF_CAPTURE_COOLDOWN_SECONDS", default=30)
+
+# Same "same situation still there" dedup idea again, for a confirmed
+# occlusion_detected row - but time-based only, not embedding-similarity
+# based like the two above. Comparing embeddings would lean on the exact
+# thing an occluded frame's embedding is unreliable for (see
+# insightface_utils.mouth_visibility_ratio) - "is this still the same
+# covered face" isn't a question this system can honestly answer from a
+# distorted embedding, so it just asks "was there an occlusion_detected row
+# at this gate recently" instead.
+OCCLUSION_CAPTURE_COOLDOWN_SECONDS = env.int("OCCLUSION_CAPTURE_COOLDOWN_SECONDS", default=30)

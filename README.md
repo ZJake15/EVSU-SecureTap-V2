@@ -2,7 +2,9 @@
 
 Campus entry monitoring system for Eastern Visayas State University, with a real-time admin dashboard.
 
-**How the gate check works:** the webcam continuously scans everyone passing the gate (like a CCTV feed) and checks each face against every enrolled student/staff photo (a 1:N identification search, via InsightFace/ArcFace) - no card tap required. A match isn't trusted from a single frame: the same person has to be the top match across several recent frames before it's logged as a real entry, and a blurry or partially-out-of-frame frame is skipped rather than risked. The NFC card reader is a secondary, optional channel - normally it's just a lookup for the guard to visually cross-check, but if the camera sees a borderline/ambiguous match it will ask for a confirming card tap to break the tie. Recognized people are logged automatically; an unrecognized face is flagged as not enrolled.
+**How the gate check works:** the webcam continuously scans everyone passing the gate (like a CCTV feed) and checks each face against every enrolled student/staff photo (a 1:N identification search, via InsightFace/ArcFace) - no card tap required. A match isn't trusted from a single frame: the same person has to be the top match across several recent frames before it's logged as a real entry, and a blurry or partially-out-of-frame frame is skipped rather than risked. The NFC card reader is a secondary, optional channel - normally it's just a lookup for the guard to visually cross-check, but if the camera sees a borderline/ambiguous match (or a match against someone flagged as a **confusable pair** - identical twins, or any other genuine lookalike the camera can't be expected to tell apart) it will ask for a confirming card tap to break the tie. Recognized people are logged automatically; an unrecognized face is flagged as not enrolled.
+
+**For the full architecture, role/permission model, and design rationale behind every decision above, see [`documentation.md`](documentation.md).**
 
 ## Project layout
 
@@ -84,11 +86,11 @@ Backend runs at `http://localhost:8000`. Django admin at `http://localhost:8000/
 
 Seeded demo dashboard logins (from `seed_dummy_data`) - **change these passwords before any real deployment**:
 
-| Username | Password | Role |
-|---|---|---|
-| `admin_demo` | `ChangeMe123!` | admin |
-| `security_demo` | `ChangeMe123!` | security |
-| `it_demo` | `ChangeMe123!` | it |
+| Username | Password | Role | Notes |
+|---|---|---|---|
+| `admin_demo` | `ChangeMe123!` | Admin | Full access - see `documentation.md` §13 for the full permission matrix |
+| `saso_demo` | `ChangeMe123!` | SASO (Security Manager) | Full enroll/edit; deactivating a record needs Admin approval (maker-checker) |
+| `guard_demo` | `ChangeMe123!` | Security Officer | Assigned to "Main Gate" - Live Monitoring/Logs are scoped to that gate only, no User Management/Reports access at all |
 
 The seeded dummy *people* (students/staff) have **random, fake face embeddings** - they're only useful for exercising the logs/reports/listing UI, not real face matching. Register at least one real person with real photos via the dashboard's Users page (guided 5-photo capture, or the single-photo fallback) so the continuous scan has someone real to recognize.
 
@@ -117,7 +119,7 @@ Both land in the same live log on the right of the monitor - face events badged 
 - If you have a genuine PC/SC reader instead (e.g. an actual ACR122U), this approach won't see it; that would need reintroducing `pyscard` and reading via APDU commands instead.
 
 Requirements:
-- A webcam (used continuously - keep it unobstructed and aimed at the gate)
+- A webcam, used continuously - keep it unobstructed and aimed at the gate. **Not strictly required to start the app**: with none connected (or one that's unplugged mid-session), the gate monitor still opens and shows "No camera connected" in the video panel instead of freezing - NFC taps and a Security Officer's manual override still work normally. It reconnects automatically on its own timer, whether the camera shows up for the first time or was unplugged and plugged back in - no restart needed.
 - The USB NFC/RFID reader plugged in, optional (no driver install needed - Windows sees it as a generic keyboard)
 - Optional/experimental: `CAMERA_EXPOSURE` in `entry-agent/.env` can force a shorter exposure to reduce motion blur, but manual-exposure support varies a lot by webcam/driver - leave it unset unless you've confirmed it works on your specific camera (see the comment in `entry-agent/camera.py`).
 

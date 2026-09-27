@@ -89,7 +89,12 @@ PASSWORD_HASHERS = [
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
+    # Raised from 8 - Admin and SASO accounts hold real system power (full
+    # user management, deactivation approval), so 8 was on the short end for
+    # accounts worth targeting in an offline crack attempt if a password hash
+    # ever leaked. This only changes what a NEW/CHANGED password must meet -
+    # existing accounts' already-hashed passwords keep working unchanged.
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 10}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]

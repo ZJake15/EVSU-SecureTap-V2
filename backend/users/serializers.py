@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from securetap_project.media_auth import build_signed_media_url
+
 from .confusable_utils import (
     MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON,
     find_confusable_candidates,
@@ -36,8 +38,7 @@ class FaceEmbeddingSerializer(serializers.ModelSerializer):
         if not obj.source_image:
             return None
         request = self.context.get("request")
-        url = obj.source_image.url
-        return request.build_absolute_uri(url) if request else url
+        return build_signed_media_url(request, obj.source_image.url)
 
 
 class PersonSerializer(serializers.ModelSerializer):
@@ -78,6 +79,13 @@ class PersonSerializer(serializers.ModelSerializer):
     # confusable_utils.MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON). Exposed so the
     # dashboard never has to duplicate/guess the two numbers itself.
     max_embeddings = serializers.SerializerMethodField()
+    # Was a plain model ImageField, which DRF auto-serializes by calling
+    # request.build_absolute_uri() internally - the exact same unsigned-URL
+    # problem as source_image/person_photo/captured_photo elsewhere in this
+    # file, just happening inside DRF's own field code instead of an
+    # explicit call site. Declared explicitly as a method field so it goes
+    # through the same signed-URL helper as everything else.
+    photo_reference = serializers.SerializerMethodField()
 
     class Meta:
         model = Person
@@ -100,7 +108,15 @@ class PersonSerializer(serializers.ModelSerializer):
             "confusable_partners",
             "max_embeddings",
         ]
-        read_only_fields = ["id", "photo_reference", "created_at"]
+        # photo_reference isn't listed here anymore - it's a SerializerMethodField
+        # now (see above), which is inherently read-only on its own.
+        read_only_fields = ["id", "created_at"]
+
+    def get_photo_reference(self, obj):
+        if not obj.photo_reference:
+            return None
+        request = self.context.get("request")
+        return build_signed_media_url(request, obj.photo_reference.url)
 
     def get_pending_deactivation(self, obj):
         return obj.deactivation_requests.filter(status=DeactivationRequest.Status.PENDING).exists()

@@ -1,10 +1,13 @@
+import json
 import sys
 import threading
+from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 
 from api_client import ApiClient
-from camera import Camera
+from camera import Camera, list_available_cameras
 from config import load_config
 from offline_queue import OfflineQueue
 from ui import GateMonitorWindow, set_app_user_model_id
@@ -16,6 +19,38 @@ from ui import GateMonitorWindow, set_app_user_model_id
 # speed could cross the frame between samples entirely.
 SCAN_INTERVAL_SECONDS = 0.2
 STATUS_CHECK_INTERVAL_SECONDS = 5
+
+# Read by the root launcher (launcher.py's _read_last_session_summary) to show
+# a "last session" line before the entry-agent is even started again -
+# __file__-relative so it lands in the same place regardless of whether this
+# is run directly (cwd=entry-agent) or spawned by the launcher (cwd is set
+# explicitly to entry-agent there too, but this is one less thing to keep
+# in sync between the two).
+LAST_SESSION_PATH = Path(__file__).resolve().parent / "last_session.json"
+
+
+def _write_last_session_summary(config, monitor):
+    """Best-effort - a guard closing the gate monitor should never see an
+    error dialog because a convenience file on disk couldn't be written."""
+    try:
+        LAST_SESSION_PATH.write_text(
+            json.dumps(
+                {
+                    "ended_at": datetime.now(timezone.utc).isoformat(),
+                    "gate_location": config.gate_location,
+                    "direction": config.direction,
+                    "entries": monitor.stats.get("entries", 0),
+                    "exits": monitor.stats.get("exits", 0),
+                    "unknown": monitor.stats.get("unknown", 0),
+                    "spoof": monitor.stats.get("spoof", 0),
+                    "occlusion": monitor.stats.get("occlusion", 0),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
 
 
 def _extract_image_size(response, fallback):
@@ -283,6 +318,16 @@ def main():
         # stop the scan thread and release the camera on the way out.
         stop_event.set()
         camera.stop()
+        _write_last_session_summary(config, monitor)
+
+    # Best-effort - a machine with zero cameras (or a pygrabber hiccup) just
+    # means an empty list, which the dropdown already renders as "No camera
+    # found" rather than crashing startup over a nicety.
+    try:
+        camera_options = list_available_cameras()
+    except Exception as exc:
+        print(f"WARNING: could not enumerate cameras ({exc})", file=sys.stderr)
+        camera_options = []
 
     monitor = GateMonitorWindow(
         config.gate_location, config.direction,
@@ -291,6 +336,9 @@ def main():
         officer_name=config.officer_name,
         version=config.app_version,
         on_close=on_close,
+        camera_options=camera_options,
+        on_camera_change=camera.set_index,
+        initial_camera_index=config.camera_index,
     )
 
     try:

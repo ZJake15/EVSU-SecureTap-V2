@@ -49,6 +49,11 @@ class Camera:
         self._latest_frame = None
         self._running = False
         self._thread = None
+        # An instance attribute (not a local in _run_loop) specifically so
+        # set_index() can reset it from the Tk thread and make the very next
+        # loop tick retry immediately, instead of waiting out whatever's left
+        # of the current RECONNECT_INTERVAL_SECONDS window.
+        self._next_open_attempt = 0.0
 
     def start(self):
         """No camera plugged in (or the wrong index configured) is a real,
@@ -102,6 +107,20 @@ class Camera:
     def is_open(self):
         return bool(self._cap and self._cap.isOpened())
 
+    def set_index(self, new_index):
+        """Switches to a different camera device - e.g. the user picked a
+        different one from the entry-agent's camera dropdown. Reuses the
+        exact same close-then-reconnect path a genuine disconnect already
+        goes through (_close_after_failure): from _run_loop's perspective
+        this looks identical to "the camera changed", because that's
+        exactly what happened. Takes effect within the next loop tick
+        (~100ms) rather than waiting out the normal reconnect interval."""
+        if new_index == self.index:
+            return
+        self.index = new_index
+        self._close_after_failure()
+        self._next_open_attempt = 0.0
+
     def stop(self):
         self._running = False
         if self._thread:
@@ -111,14 +130,16 @@ class Camera:
             self._cap = None
 
     def _close_after_failure(self):
-        """The device stopped responding entirely (unplugged mid-session, a
-        driver crash) - as opposed to one bad frame, which the read loop
-        below already absorbs on its own. Releases the stale handle and
-        clears the latest frame so get_preview_frame() genuinely goes back
-        to returning None (a frozen last frame would otherwise sit on screen
-        forever, looking like a live feed that simply stopped updating).
-        _run_loop's next iteration then falls into the same reconnect
-        attempt as if this had never been connected at all."""
+        """Two callers, same cleanup either way: the device stopped
+        responding entirely (unplugged mid-session, a driver crash - as
+        opposed to one bad frame, which the read loop below already absorbs
+        on its own), or set_index() was called to deliberately switch to a
+        different device. Releases the stale handle and clears the latest
+        frame so get_preview_frame() genuinely goes back to returning None
+        (a frozen last frame would otherwise sit on screen forever, looking
+        like a live feed that simply stopped updating). _run_loop's next
+        iteration then falls into the same reconnect attempt as if this had
+        never been connected at all - at whatever self.index is by then."""
         if self._cap:
             self._cap.release()
         self._cap = None
@@ -132,13 +153,12 @@ class Camera:
         while not. Runs on its own thread so a slow/hanging open attempt
         can never freeze the Tk UI or the scan loop."""
         consecutive_failures = 0
-        next_open_attempt = 0.0
         while self._running:
             if self._cap is None:
                 now = time.monotonic()
-                if now >= next_open_attempt:
+                if now >= self._next_open_attempt:
                     self._try_open()
-                    next_open_attempt = now + RECONNECT_INTERVAL_SECONDS
+                    self._next_open_attempt = now + RECONNECT_INTERVAL_SECONDS
                 else:
                     time.sleep(0.1)
                 continue
@@ -179,6 +199,38 @@ class Camera:
             raise RuntimeError("Failed to encode the captured frame as JPEG.")
         height, width = frame.shape[:2]
         return buffer.tobytes(), (width, height)
+
+
+def list_available_cameras(max_probe=10):
+    """Every camera device Windows can currently see, as (index, label)
+    pairs - index is what Camera(index=...) / Camera.set_index(...) expect,
+    label is what a human should see in the entry-agent's camera dropdown.
+
+    Prefers real device names via pygrabber's DirectShow enumeration (e.g.
+    "Logitech BRIO", "Integrated Webcam") - a guard choosing between two
+    unlabeled "Camera 0"/"Camera 1" entries has no way to know which is
+    which, which defeats the point of a picker on a laptop with more than
+    one camera. Falls back to generic index-based labels if pygrabber isn't
+    installed or can't enumerate anything for any reason - this is a
+    best-effort nicety, never something the picker should crash over."""
+    try:
+        from pygrabber.dshow_graph import FilterGraph
+        names = FilterGraph().get_input_devices()
+        if names:
+            return list(enumerate(names))
+    except Exception:
+        pass
+
+    # Fallback: probe indices directly - no real names, and each failed
+    # probe still costs a DirectShow open/close, but works with zero extra
+    # dependencies if pygrabber isn't installed or fails to enumerate.
+    available = []
+    for index in range(max_probe):
+        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        if cap.isOpened():
+            available.append((index, f"Camera {index}"))
+        cap.release()
+    return available
 
 
 def _cap_dimension(frame, max_dimension):

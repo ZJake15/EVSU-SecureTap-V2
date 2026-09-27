@@ -18,6 +18,7 @@ from accounts.permissions import (
     get_role,
 )
 from audit.utils import log_action
+from securetap_project.media_auth import build_signed_media_url
 from users import insightface_utils, liveness_utils
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
@@ -63,7 +64,7 @@ def person_payload(person, request):
         }
     photo_url = None
     if person.photo_reference:
-        photo_url = request.build_absolute_uri(person.photo_reference.url)
+        photo_url = build_signed_media_url(request, person.photo_reference.url)
     return {
         "person_name": person.full_name,
         "person_photo": photo_url,
@@ -966,7 +967,7 @@ class IdentifyView(APIView):
                     "box": _box_to_dict(box),
                 }
                 if log.captured_photo:
-                    payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
+                    payload["captured_photo"] = build_signed_media_url(request, log.captured_photo.url)
                 return payload
 
         captured_photo_bytes = insightface_utils.crop_face(bgr_image, box)
@@ -1012,7 +1013,7 @@ class IdentifyView(APIView):
         if box is not None:
             payload["box"] = _box_to_dict(box)
         if log.captured_photo and request is not None:
-            payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
+            payload["captured_photo"] = build_signed_media_url(request, log.captured_photo.url)
         return payload
 
     @staticmethod
@@ -1113,7 +1114,7 @@ class IdentifyView(APIView):
                 "box": _box_to_dict(box),
             }
             if recent_log.captured_photo:
-                payload["captured_photo"] = request.build_absolute_uri(recent_log.captured_photo.url)
+                payload["captured_photo"] = build_signed_media_url(request, recent_log.captured_photo.url)
             return payload
 
         captured_photo_bytes = insightface_utils.crop_face(bgr_image, box)
@@ -1140,7 +1141,7 @@ class IdentifyView(APIView):
             "box": _box_to_dict(box),
         }
         if log.captured_photo:
-            payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
+            payload["captured_photo"] = build_signed_media_url(request, log.captured_photo.url)
         return payload
 
     def _confirm_or_vote_spoof(self, embedding, bgr_image, box, direction, gate_location, request, liveness_score):
@@ -1225,7 +1226,7 @@ class IdentifyView(APIView):
                     "box": _box_to_dict(box),
                 }
                 if log.captured_photo:
-                    payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
+                    payload["captured_photo"] = build_signed_media_url(request, log.captured_photo.url)
                 return payload
 
         captured_photo_bytes = insightface_utils.crop_face(bgr_image, box)
@@ -1260,7 +1261,7 @@ class IdentifyView(APIView):
             "box": _box_to_dict(box),
         }
         if log.captured_photo:
-            payload["captured_photo"] = request.build_absolute_uri(log.captured_photo.url)
+            payload["captured_photo"] = build_signed_media_url(request, log.captured_photo.url)
         return payload
 
     @staticmethod

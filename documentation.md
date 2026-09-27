@@ -367,6 +367,11 @@ No Node.js backend, no separate microservices, no message queue/Celery, no
 WebSocket server — the dashboard and entry-agent both use plain HTTP polling
 against the same Django REST API.
 
+> **Offline tooling, not part of the live pipeline:** `scikit-learn` and
+> `joblib` are also installed on the backend, used only by the occlusion-
+> classifier data-collection/training management commands described in §10 —
+> not loaded or imported anywhere the running gate scan touches.
+
 ---
 
 ## 5. Does it use machine learning?
@@ -926,12 +931,19 @@ owns the Tk root, so closing it ends the process.
   - **Stats strip** (top) — Today / Entries / Unknown / Spoof / Occluded / In
     frame. Driven by camera events and seeded from `/api/gate-summary`; card taps
     show in the live log but don't move these counters.
-  - **Status bar** (bottom) — recognition threshold, **Camera ✓/✗**, the officer
-    name and app version on the left; Backend ✓/✗, offline-queue depth and sync
-    state on the right. The camera chip and the officer/version line moved here
-    from the entry-agent's old launcher screen when that screen was removed — a
-    camera that has stopped responding is exactly what a guard needs to see, and
-    a frozen feed doesn't always look different from an empty gate.
+  - **Status bar** (bottom) — recognition threshold, **Camera ✓/✗** next to a
+    **camera-picker dropdown**, the officer name and app version on the left;
+    Backend ✓/✗, offline-queue depth and sync state on the right. The camera chip
+    and the officer/version line moved here from the entry-agent's old launcher
+    screen when that screen was removed — a camera that has stopped responding is
+    exactly what a guard needs to see, and a frozen feed doesn't always look
+    different from an empty gate. The dropdown lists every camera Windows
+    currently sees (by its real device name, via DirectShow enumeration — falling
+    back to plain index-probing if that's unavailable) and switches the active
+    feed within about 100ms of a selection — added because a laptop with a
+    built-in webcam plus a USB camera plugged in for the gate otherwise showed
+    "No camera connected" if `CAMERA_INDEX` in `.env` happened to point at the
+    wrong one, with no way to fix it short of editing that file and restarting.
 
 **Offline resilience**: NFC tap lookups that fail due to a network error are
 queued in a local SQLite database (`offline_queue.db`) and automatically retried
@@ -939,11 +951,17 @@ every 15 seconds once connectivity returns. Camera-scan frames are **not** queue
 offline — a stale frame from minutes ago isn't considered worth logging once back
 online, so continuous scanning simply pauses/resumes with connectivity.
 
-**Configuration** (`.env`): API URL, gate location, direction (entry/exit — fixed
-per deployed instance), service token, camera index, officer name, optional manual
-camera exposure. Each entry-agent instance is hard-configured to exactly one
-camera and one fixed direction; a gate serving both directions currently needs two
-separate instances.
+**Configuration** (`.env`): API URL, gate location, direction (entry/exit),
+service token, camera index, officer name, optional manual camera exposure. These
+are the instance's persistent defaults — gate location, direction, and officer
+name can also be set per-launch from the system launcher's settings panel (§9.1)
+without editing this file, which then passes them to this process as environment
+variables (`GATE_LOCATION`/`DIRECTION`/`OFFICER_NAME`) that override the `.env`
+values for that one run only. Camera is still chosen independently, via the
+status-bar dropdown above, once the window is already open. Direction is still
+fixed for the life of one running instance — a gate serving both directions
+currently needs two separate entry-agent processes (one per direction) running at
+once, not a way to flip a single running instance mid-shift.
 
 ### 9.1 System launcher (`launcher.py` / `SecureTap.bat`)
 
@@ -962,6 +980,43 @@ an option would just be a step everyone has to perform every time.
   **straight onto the gate monitor**: the feed, the card scanner and the live log,
   with no intermediate menu. Kept a separate process rather than imported, since
   it owns a camera, worker threads and its own Tk main loop.
+
+Before opening the gate monitor, the launcher now also handles a few things a
+guard would otherwise only discover once already standing at the gate:
+
+- **Gate, direction, and guard name** are editable in a collapsed-by-default
+  "Entry Agent settings" panel and remembered locally between launches
+  (`launcher_settings.json`, a per-machine file, not something checked into the
+  repo) — see the entry-agent's own **Configuration** paragraph above for exactly
+  how these three values reach that process without editing `.env`.
+- **Pre-flight checks** run right before the Entry Agent button actually spawns
+  the process: whether the backend currently responds, and a best-effort check
+  for an ACS ACR122U NFC reader specifically (the reader model this deployment
+  uses) via Windows' own Plug-and-Play device list, matched against that reader's
+  USB vendor/product ID. This is the only practical way to check for *that
+  specific* reader — Windows sees any HID-emulation NFC reader as a generic
+  keyboard, with no NFC-specific identity to query in general (see §10's note on
+  why the gate monitor's own live "ready" indicator can't do this). Neither check
+  blocks opening the gate monitor — a negative result shows as a one-time
+  warning dialog, not a stop sign, since a live demo or a real shift can't afford
+  to be blocked by a pre-flight check that's wrong.
+- **Startup notices.** If the offline queue (see "Offline resilience" above) has
+  any NFC taps still waiting to sync, or a record exists of the previous gate
+  monitor session (written to `last_session.json` when that window closes, with
+  its final entries/exits/unknown/spoof/occlusion counts, gate, direction, and
+  when it ended), both show as a line on the launcher's main screen before
+  anything is opened at all.
+- **Auto-launch.** An optional setting in the same panel opens the gate monitor
+  automatically a moment after the launcher itself starts, for a kiosk-style
+  deployment where nobody should need to click anything.
+
+The window is also responsive rather than fixed-size: its content is capped at a
+comfortable reading width and centered instead of stretching edge-to-edge on a
+large monitor, the two choice cards sit side-by-side above a width breakpoint and
+stack below it, and the gate monitor's own stat-tile strip wraps to two rows
+rather than squashing six tiles into one if its window is narrower than usual.
+The current app version (the same value the gate monitor's status bar shows)
+appears in the launcher's own footer too, so both windows always agree on it.
 
 **Loading animation.** Both choices take several seconds before anything visible
 happens — the entry-agent measured ~3.6–4.2s (importing `cv2`, opening the webcam
@@ -1054,23 +1109,48 @@ knowing before extending the system:
   failure mode: it just falls through to normal matching) and retuning against
   real occlusion data once any exists. None of the three attempts to detect
   occlusion of the *eyes* specifically (sunglasses) — only the mouth/nose region
-  and overall face-likeness; a dedicated occlusion-classifier model would be the
-  natural upgrade path if these proxies prove insufficient in practice.
+  and overall face-likeness. **A trained classifier is the flagged upgrade path,
+  and tooling for it now exists but isn't wired into live matching yet:**
+  `manage.py collect_occlusion_training_data` captures labeled clean/degraded
+  photo sets (straight-on, angled, and smiling for "clean"; hand over
+  mouth/nose/eyes for "degraded") either live from a webcam or by harvesting
+  existing enrollment photos, and `manage.py train_occlusion_classifier` fits a
+  scikit-learn `RandomForestClassifier` on the same three measurable signals
+  above (mouth-visibility ratio, lower-face texture ratio, detection score) —
+  deliberately not on raw landmark geometry, since that's the exact
+  plausible-but-wrong approach already found not to work, described above. Hand-
+  over-eye photos are collected but excluded from training by default: none of
+  the three current signals can detect eye coverage at all, so including them
+  would just teach the classifier to guess. The command prints a side-by-side
+  comparison against the current three-threshold rule on the same held-out
+  photos and saves the trained model to a file — evaluation only, for now;
+  nothing in the live gate scan reads that saved file yet.
 - The FAR/FRR evaluation (§5.7) covers identity matching only — there is no
   equivalent held-out accuracy benchmark for the liveness threshold yet.
 - Face matching is a brute-force vectorized NumPy scan — fine at hundreds of
   embeddings, not built to scale to a very large student body without a proper
   vector index.
-- `backend/media/` (reference/enrollment photos) is not access-controlled beyond
-  Django's default file serving — flagged in the README's own privacy section.
+- **Resolved** — `backend/media/` (reference/enrollment photos) used to be served
+  with no access control at all whenever `DEBUG=True` (the previous default).
+  Every media URL the API hands out is now a signed, time-limited link (see §11)
+  instead of a bare, guessable path — closed as a security-hardening fix rather
+  than left as an open item.
 - No rate limiting/throttling is configured on the API.
 - No admin-action audit log (who edited/deleted a Person record) — only gate
   events are logged, not dashboard admin activity.
 - No Celery/cron/task scheduler anywhere — periodic cleanup (e.g. expiring a
   stale tiebreak) piggybacks opportunistically on the next relevant request
   rather than running on a real schedule.
-- NFC reader "ready" status in the entry-agent UI is hardcoded true — there's no
-  reliable way to detect a HID-emulation reader's presence versus its absence.
+- NFC reader "ready" status **inside the running gate monitor** is still
+  hardcoded true — there's no reliable, general way to detect a HID-emulation
+  reader's presence versus its absence while it's already running as a virtual
+  keyboard. The system launcher now does a narrower, one-time version of this
+  check *before* opening the gate monitor: a best-effort, model-specific search
+  for an ACS ACR122U (this deployment's actual reader) in Windows' own connected-
+  device list, by USB vendor/product ID (§9.1) — real for that one specific
+  reader, but not a general "is any NFC reader plugged in" answer, and it only
+  ever produces a one-time warning, never a live indicator that updates if the
+  reader is unplugged mid-shift.
 - Only HID-keyboard-emulation NFC readers are supported; genuine PC/SC smart-card
   readers would need reintroducing the `pyscard` library.
 - One entry-agent instance = one camera = one fixed direction; no multi-camera
@@ -1081,7 +1161,11 @@ knowing before extending the system:
 ## 11. Security & privacy notes
 
 - Passwords are hashed with **bcrypt** (`BCryptSHA256PasswordHasher`, listed
-  first in `PASSWORD_HASHERS`).
+  first in `PASSWORD_HASHERS`), with a **10-character minimum length** (raised
+  from an earlier default of 8 — Admin and SASO accounts hold real system power,
+  so a short minimum was worth tightening for them specifically). This only
+  affects passwords set or changed after the update; it doesn't invalidate an
+  existing account's already-hashed password.
 - Dashboard sessions use **JWT** access/refresh tokens (60-minute access token,
   12-hour refresh token, rotated and blacklisted on use).
 - The entry-agent authenticates via a **shared secret header**
@@ -1089,7 +1173,18 @@ knowing before extending the system:
   human session.
 - Biometric data is stored as **512-d embedding vectors**, not raw face images,
   specifically to reduce biometric exposure — though reference/enrollment photos
-  are still kept separately in `backend/media/`.
+  are still kept separately in `backend/media/`, now served only through
+  **signed, time-limited URLs** rather than being openly downloadable. Every API
+  response that includes a photo (enrollment photos, gate-capture photos, log
+  thumbnails) signs that specific file's URL at the moment it's generated
+  (`django.core.signing.TimestampSigner`, one-hour expiry) instead of returning a
+  bare, guessable `/media/...` path — closing what the security review found to
+  be the most serious issue in the whole system: with the previous open serving,
+  anyone who could reach the server at all could download any enrolled person's
+  photo by URL, no login required, whenever `DEBUG=True` (the default setting).
+  The dashboard's `<img>` tags and the entry-agent's photo fetches both needed no
+  code changes for this — a signed link is still just a link, it only carries an
+  expiry and a check that nobody can forge without the server's own signing key.
 - The MiniFASNetV2 model is a **from-source ONNX export with a verified chain of
   custody** (official Apache-2.0 weights, hash-checked, numerically verified
   against the original PyTorch model, end-to-end tested against labeled samples)

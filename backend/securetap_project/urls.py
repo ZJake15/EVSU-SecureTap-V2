@@ -1,7 +1,5 @@
-from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -17,6 +15,7 @@ from logs.views import (
     VerifyView,
 )
 from reports.views import FarFrrView, SummaryView
+from securetap_project.media_views import protected_media_serve
 from users.views import (
     BulkImportView,
     ConfusablePairViewSet,
@@ -49,7 +48,14 @@ urlpatterns = [
     path("api/reports/far-frr", FarFrrView.as_view(), name="reports-far-frr"),
     path("api/settings", SystemSettingsView.as_view(), name="system-settings"),
     path("api/", include(router.urls)),
+    # Was `if settings.DEBUG: urlpatterns += static(...)` - that served every
+    # file under MEDIA_ROOT (enrollment photos, gate-capture photos) to
+    # anyone who could reach the server, no login required, whenever DEBUG
+    # was True (the currently active setting). Replaced with a view that
+    # requires a signed, short-lived token for the exact file requested -
+    # see securetap_project/media_auth.py for the full explanation and
+    # securetap_project/media_views.py for the view itself. Unconditional
+    # (not behind `if settings.DEBUG`) so this keeps working the same way
+    # regardless of DEBUG's value.
+    re_path(r"^media/(?P<path>.*)$", protected_media_serve),
 ]
-
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

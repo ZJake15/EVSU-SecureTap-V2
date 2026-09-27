@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from securetap_project.media_auth import build_signed_media_url
+
 from .models import EntryLog
 
 
@@ -39,8 +41,7 @@ class EntryLogSerializer(serializers.ModelSerializer):
     def get_person_photo(self, obj):
         if obj.person and obj.person.photo_reference:
             request = self.context.get("request")
-            url = obj.person.photo_reference.url
-            return request.build_absolute_uri(url) if request else url
+            return build_signed_media_url(request, obj.person.photo_reference.url)
         return None
 
     def get_student_or_employee_id(self, obj):
@@ -49,8 +50,7 @@ class EntryLogSerializer(serializers.ModelSerializer):
     def get_captured_photo(self, obj):
         if obj.captured_photo:
             request = self.context.get("request")
-            url = obj.captured_photo.url
-            return request.build_absolute_uri(url) if request else url
+            return build_signed_media_url(request, obj.captured_photo.url)
         return None
 
     def get_performed_by_username(self, obj):

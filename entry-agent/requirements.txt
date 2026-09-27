@@ -7,3 +7,8 @@ requests>=2.32
 python-dotenv>=1.0
 Pillow>=10.4
 customtkinter>=5.2
+# Gives the camera picker dropdown real device names ("Logitech BRIO") via
+# DirectShow enumeration - camera.list_available_cameras() falls back to
+# generic "Camera N" labels if this isn't installed, so it's a nicety, not a
+# hard requirement.
+pygrabber>=0.2

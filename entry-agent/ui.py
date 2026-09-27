@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 import winsound
 from datetime import datetime
 
@@ -438,9 +439,16 @@ class GateMonitorWindow:
         ("occlusion", "Occluded", OCCLUSION),
         ("in_frame", "In frame", ACCENT),
     )
+    # Window width below which the 6 stat tiles wrap to 3-per-row instead of
+    # squashing into one row - the window opens maximized by default, so
+    # this mostly matters if a guard un-maximizes/resizes it narrower.
+    STATS_WRAP_BREAKPOINT = 900
+    STATS_COLUMNS_WIDE = len(STAT_SPECS)
+    STATS_COLUMNS_NARROW = 3
 
     def __init__(self, gate_location, direction, get_preview_frame, on_tap,
-                 officer_name="", version="", on_close=None):
+                 officer_name="", version="", on_close=None,
+                 camera_options=None, on_camera_change=None, initial_camera_index=None):
         self._get_preview_frame = get_preview_frame
         self.gate_location = gate_location
         self.direction = direction
@@ -449,6 +457,16 @@ class GateMonitorWindow:
         self.version = version
         self._on_close = on_close
         self._closed = False
+        # camera_options: [(index, label), ...] from camera.list_available_
+        # cameras() - a laptop with more than one camera (or a webcam that
+        # isn't at index 0) otherwise has no way to tell the entry-agent
+        # which one to actually use; see _build_status_bar/_handle_camera_
+        # picked. on_camera_change(index) is main.py's Camera.set_index,
+        # called when the dropdown selection changes.
+        self._camera_options = camera_options or []
+        self._on_camera_change = on_camera_change
+        self._initial_camera_index = initial_camera_index
+        self._camera_choices = {}  # display string -> index, filled in below
 
         self._video_image = None
         self._latest_recognitions = []
@@ -483,9 +501,14 @@ class GateMonitorWindow:
         # display 1200x720 is already 1500x900 real pixels. The window opens
         # maximized anyway (see below); this is just the restore size.
         self.window.geometry("1200x720")
-        self.window.minsize(1100, 680)
+        # Width floor lowered from 1100 to 820: at 1100 a guard could never
+        # actually resize this window narrow enough to reach
+        # STATS_WRAP_BREAKPOINT (900), which would make the stat-tile wrap
+        # logic below unreachable through normal manual resizing.
+        self.window.minsize(820, 680)
         self.window.protocol("WM_DELETE_WINDOW", self._handle_close)
         self.window.bind("<Escape>", lambda _e: self._handle_close())
+        self.window.bind("<Configure>", self._on_window_configure)
         _apply_icon(self.window)
 
         self.window.grid_rowconfigure(2, weight=1)
@@ -546,15 +569,15 @@ class GateMonitorWindow:
         )
 
     def _build_stats_strip(self):
-        strip = ctk.CTkFrame(self.window, fg_color="transparent")
-        strip.grid(row=1, column=0, sticky="ew", padx=18, pady=(14, 8))
+        self.stats_strip = ctk.CTkFrame(self.window, fg_color="transparent")
+        self.stats_strip.grid(row=1, column=0, sticky="ew", padx=18, pady=(14, 8))
 
         self.stat_tiles = {}
-        for i, (key, label, color) in enumerate(self.STAT_SPECS):
-            strip.grid_columnconfigure(i, weight=1, uniform="stat")
-            tile = ctk.CTkFrame(strip, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER)
-            tile.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 10, 0))
-
+        self._stat_tile_frames = []
+        for key, label, color in self.STAT_SPECS:
+            tile = ctk.CTkFrame(
+                self.stats_strip, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER
+            )
             head = ctk.CTkFrame(tile, fg_color="transparent")
             head.pack(fill="x", padx=16, pady=(12, 0))
             ctk.CTkLabel(head, text="●", font=(FONT, 9), text_color=color).pack(side="left", padx=(0, 6))
@@ -563,6 +586,40 @@ class GateMonitorWindow:
             value_label = ctk.CTkLabel(tile, text="0", font=(FONT, 26, "bold"), text_color=TEXT_PRIMARY)
             value_label.pack(padx=16, pady=(0, 12), anchor="w")
             self.stat_tiles[key] = value_label
+            self._stat_tile_frames.append(tile)
+
+        self._stats_columns = None  # forces the first _relayout_stats call to actually apply
+        self._relayout_stats(self.STATS_COLUMNS_WIDE)
+
+    def _relayout_stats(self, columns):
+        if columns == self._stats_columns:
+            return
+        self._stats_columns = columns
+        for tile in self._stat_tile_frames:
+            tile.grid_forget()
+        for column in range(max(self.STATS_COLUMNS_WIDE, self.STATS_COLUMNS_NARROW)):
+            # Reset every column this strip has ever used, not just the ones
+            # about to be reused - otherwise a column dropped when going from
+            # 6-wide to 3-narrow keeps its old weight/uniform tag and quietly
+            # reserves dead space nothing sits in anymore.
+            self.stats_strip.grid_columnconfigure(column, weight=0, uniform="")
+        for index, tile in enumerate(self._stat_tile_frames):
+            row, column = divmod(index, columns)
+            tile.grid(
+                row=row, column=column, sticky="ew",
+                padx=(0 if column == 0 else 10, 0), pady=(0 if row == 0 else 10, 0),
+            )
+        for column in range(columns):
+            self.stats_strip.grid_columnconfigure(column, weight=1, uniform="stat")
+
+    def _on_window_configure(self, event):
+        # Tkinter fires <Configure> for every child widget resize too, not
+        # just the toplevel - without this guard, every stat tile's own
+        # grid() call above would re-enter this handler.
+        if event.widget is not self.window:
+            return
+        wrapped = event.width < self.STATS_WRAP_BREAKPOINT
+        self._relayout_stats(self.STATS_COLUMNS_NARROW if wrapped else self.STATS_COLUMNS_WIDE)
 
     def _build_main_area(self):
         area = ctk.CTkFrame(self.window, fg_color="transparent")
@@ -622,10 +679,15 @@ class GateMonitorWindow:
         # state that replaces caption_label's old .configure(text=...) calls.
         self._caption_text = "Starting camera..."
 
-        self.alert_banner = ctk.CTkLabel(
-            video_frame, text="", font=(FONT, 13, "bold"), text_color="white",
-            fg_color=DANGER, bg_color=VIDEO_BG, corner_radius=10, height=36,
-        )
+        # The spoof/occlusion/unknown-person alert banner had the exact same
+        # CTkLabel-over-live-video problem described above (fg_color=DANGER
+        # pill, bg_color=VIDEO_BG filling the rounded corners' cutout with a
+        # flat near-black fill instead of the live frame behind it - VIDEO_BG
+        # is "#0B1220", near-black, which is why the corners specifically
+        # looked solid black rather than some other obviously-wrong color).
+        # Fixed the same way: no widget, just state read by _draw_overlays.
+        # None means "not currently shown".
+        self._alert_text = None
 
     def _build_card_panel(self, parent):
         """The compact card-scanner strip under the feed. Swaps between a
@@ -730,6 +792,7 @@ class GateMonitorWindow:
         # doesn't always look different from an empty gate.
         self.camera_label = self._chip(bar, "Camera ✓", SUCCESS)
         self.camera_label.pack(side="left", padx=(8, 0))
+        self._build_camera_picker(bar)
 
         # Same for the officer/version footer the launcher used to carry.
         identity = " · ".join(part for part in (self.officer_name, self.version) if part)
@@ -744,6 +807,46 @@ class GateMonitorWindow:
         self.queue_label.pack(side="right", padx=(0, 8))
         self.backend_label = self._chip(bar, "Backend ✓", SUCCESS)
         self.backend_label.pack(side="right", padx=(0, 8))
+
+    def _build_camera_picker(self, bar):
+        """A laptop with more than one camera (or a desktop where the
+        webcam just isn't at index 0) has no other way to tell the
+        entry-agent which one to actually use - without this, the video
+        panel can show "No camera connected" even though a perfectly good
+        camera IS plugged in, just not the one Camera happened to try first.
+        Values are "index: label" strings (e.g. "0: Logitech BRIO") so the
+        index survives round-tripping through CTkOptionMenu's plain-string
+        API - self._camera_choices maps each value back to its index."""
+        display_values = [f"{index}: {label}" for index, label in self._camera_options]
+        if not display_values:
+            display_values = ["No camera found"]
+        self._camera_choices = {
+            value: index for value, (index, _label) in zip(display_values, self._camera_options)
+        }
+
+        default_value = next(
+            (value for value, (index, _label) in zip(display_values, self._camera_options)
+             if index == self._initial_camera_index),
+            display_values[0],
+        )
+
+        self.camera_picker = ctk.CTkOptionMenu(
+            bar, values=display_values, command=self._handle_camera_picked,
+            width=190, height=24, font=(FONT, 10), dropdown_font=(FONT, 10),
+            fg_color=CARD_BG, text_color=TEXT_PRIMARY,
+            button_color=MAROON, button_hover_color=MAROON_DARK,
+        )
+        self.camera_picker.set(default_value)
+        self.camera_picker.pack(side="left", padx=(8, 0))
+        if not self._camera_options:
+            # Nothing to switch to - still shown (so it's obvious the app
+            # looked and found none), just not interactive.
+            self.camera_picker.configure(state="disabled")
+
+    def _handle_camera_picked(self, selected_value):
+        index = self._camera_choices.get(selected_value)
+        if index is not None and self._on_camera_change:
+            self._on_camera_change(index)
 
     # ---- public API: camera side ------------------------------------------
 
@@ -995,20 +1098,20 @@ class GateMonitorWindow:
         (the same dedup the stats/log already rely on upstream in this
         method, keyed off log_id), not on every ~0.2s poll while the
         person/attempt is still in frame, so this can't turn into a
-        continuous blare."""
-        self.alert_banner.configure(text=self._pad(text))
-        # Sits below the LIVE pill's row rather than level with it, so a long
-        # banner can't slide under the pill on a narrow window.
-        self.alert_banner.place(relx=0.5, rely=0.10, anchor="n")
+        continuous blare. Just sets state here - _draw_overlays (called every
+        video refresh tick from _update_video, several times a second) is
+        what actually draws it, the same as the "LIVE MONITOR" badge."""
+        self._alert_text = text
         if self._alert_hide_job:
             self.window.after_cancel(self._alert_hide_job)
         self._alert_hide_job = self.window.after(self.ALERT_DISPLAY_MS, self._hide_alert_banner)
 
     def _hide_alert_banner(self):
         self._alert_hide_job = None
-        if self._closed:
-            return
-        self.alert_banner.place_forget()
+        self._alert_text = None
+        # No explicit redraw needed - _update_video's own timer (running
+        # continuously at VIDEO_REFRESH_MS regardless of camera state) picks
+        # this up and simply stops drawing the banner on its next tick.
 
     def _refresh_stat_labels(self):
         self.stat_tiles["entries"].configure(text=str(self.stats["entries"]))
@@ -1159,30 +1262,57 @@ class GateMonitorWindow:
             self.video_canvas.winfo_height() or self.MIN_VIDEO_SIZE[1],
         )
 
-    def _draw_overlays(self, canvas_w, canvas_h):
-        """The "LIVE MONITOR" badge and the status caption - drawn straight
-        onto the canvas, on top of whatever was just drawn there (a live
-        frame, the "no camera" placeholder, and any recognition boxes), so
-        the badge's red pill and the caption's text are the only things
-        visible - no separate widget, no surrounding rectangle behind
-        either. See _build_video_panel's comment for why this replaced two
-        CTkLabel widgets. Called last from both _draw_frame and
-        _draw_no_camera_placeholder."""
-        badge_x, badge_y = canvas_w * 0.015, canvas_h * 0.022
-        badge_w, badge_h = 118, 24
+    def _draw_rounded_label(self, x0, y0, x1, y1, text, *, fill, text_color="white", font_size=10, bold=True):
+        """One shared "rounded, alpha-composited pill with centered text"
+        drawer for every canvas overlay that needs one - the "LIVE MONITOR"
+        badge and the alert banner both go through this now, specifically so
+        this class of bug (a rounded shape whose corner cutouts get painted
+        some flat color instead of showing the live video through them -
+        see _draw_overlays and _show_alert_banner's comments for the two
+        real instances of it found here) has exactly one correct
+        implementation to share, rather than each overlay growing its own
+        copy that could independently regress. Draws straight onto
+        self.video_canvas - true transparency, not an image composited in
+        afterwards, so there's no separate mask/alpha step to get wrong: the
+        canvas polygon simply doesn't cover the corner pixels at all, and
+        whatever was drawn there already (the live frame) just shows
+        through, with the arcs themselves genuinely anti-aliased by Tk's own
+        polygon rendering (see _rounded_rect_points for why these are true
+        trigonometric arcs, not a spline-smoothed approximation)."""
+        weight = "bold" if bold else "normal"
         self.video_canvas.create_polygon(
-            # radius=badge_h/2 - as round as a rectangle this short can go,
-            # so the ends read as a full pill rather than just softened
-            # corners.
-            _rounded_rect_points(badge_x, badge_y, badge_x + badge_w, badge_y + badge_h, radius=badge_h / 2),
+            # radius = half the box height, same as the badge always used -
+            # the shortest side of a pill sets how round it can go before
+            # the two end-caps would overlap.
+            _rounded_rect_points(x0, y0, x1, y1, radius=(y1 - y0) / 2),
             # smooth=False - the points already trace true quarter-circle
             # arcs (see _rounded_rect_points), so Tk's spline smoothing
             # would only soften the genuinely round shape back down again.
-            fill=DANGER, outline="", smooth=False,
+            fill=fill, outline="", smooth=False,
         )
         self.video_canvas.create_text(
-            badge_x + badge_w / 2, badge_y + badge_h / 2, text="● LIVE MONITOR",
-            font=(FONT, 10, "bold"), fill="white",
+            (x0 + x1) / 2, (y0 + y1) / 2, text=text, font=(FONT, font_size, weight), fill=text_color,
+        )
+
+    def _draw_overlays(self, canvas_w, canvas_h):
+        """The "LIVE MONITOR" badge, the status caption, and the alert
+        banner (if one is currently showing) - drawn straight onto the
+        canvas, on top of whatever was just drawn there (a live frame, the
+        "no camera" placeholder, and any recognition boxes), so each is the
+        only thing visible where it sits - no separate widget, no
+        surrounding rectangle beyond the rounded pill itself. See
+        _build_video_panel's comment for why this replaced CTkLabel widgets.
+        Called last from both _draw_frame and _draw_no_camera_placeholder,
+        which between them run continuously at VIDEO_REFRESH_MS regardless
+        of camera state - that's what makes the alert banner's appear/
+        disappear timing (driven by _show_alert_banner/_hide_alert_banner
+        just flipping self._alert_text) actually visible without a redraw
+        call of its own."""
+        badge_x, badge_y = canvas_w * 0.015, canvas_h * 0.022
+        badge_w, badge_h = 118, 24
+        self._draw_rounded_label(
+            badge_x, badge_y, badge_x + badge_w, badge_y + badge_h,
+            "● LIVE MONITOR", fill=DANGER,
         )
 
         # No backing rectangle at all here - a plain text draw, so there is
@@ -1191,6 +1321,26 @@ class GateMonitorWindow:
             canvas_w * 0.015, canvas_h * 0.975, text=self._caption_text,
             font=(FONT, 10), fill="#9CA3AF", anchor="sw",
         )
+
+        if self._alert_text:
+            # Width comes from actual font metrics, not a guessed character
+            # count - this draws at most a few times a second (once per
+            # video refresh tick, never per recognition item), so measuring
+            # properly costs nothing worth avoiding and gets the pill's
+            # edges right around the real text instead of over/under-sized.
+            banner_height = 36
+            banner_font = tkfont.Font(family=FONT, size=13, weight="bold")
+            banner_width = banner_font.measure(self._alert_text) + 2 * 18
+            banner_cx = canvas_w * 0.5
+            # Sits below the LIVE pill's row rather than level with it, so a
+            # long banner can't slide under the pill on a narrow window -
+            # same 10%-down position the old CTkLabel used (rely=0.10).
+            banner_top = canvas_h * 0.10
+            self._draw_rounded_label(
+                banner_cx - banner_width / 2, banner_top,
+                banner_cx + banner_width / 2, banner_top + banner_height,
+                self._alert_text, fill=DANGER, font_size=13,
+            )
 
     def _draw_no_camera_placeholder(self):
         canvas_w, canvas_h = self._panel_size()

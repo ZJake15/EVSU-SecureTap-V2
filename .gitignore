@@ -24,6 +24,19 @@ dashboard/.vite/
 # Entry agent local state
 entry-agent/offline_queue.db
 entry-agent/*.log
+entry-agent/last_session.json
+
+# Launcher local state (remembered gate/direction/guard name - per-machine,
+# not something to check in)
+launcher_settings.json
+
+# Occlusion-classifier experiment output - real face photos (collected via
+# collect_occlusion_training_data) and the model trained from them
+# (train_occlusion_classifier). Neither belongs in git: the photos are
+# biometric data of whoever posed for them, and the model is a regenerable
+# binary artifact that changes every training run, not source code.
+backend/occlusion_training_data/
+backend/users/occlusion_classifier.joblib
 
 # Editors / OS
 .vscode/

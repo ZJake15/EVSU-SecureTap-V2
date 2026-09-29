@@ -15,7 +15,7 @@ evsu-securetap/
 ├── backend/       # Django + DRF API (accounts, users, logs, reports apps) + MySQL
 ├── entry-agent/   # Windows app: webcam capture + NFC card read -> calls the API
 ├── dashboard/     # React + Tailwind admin dashboard
-├── docs/          # SQL snippets, supplementary docs
+├── docs/          # SQL snippets, supplementary docs, UI redesign mockups + design brief
 └── README.md
 ```
 
@@ -105,11 +105,11 @@ copy entry-agent\.env.example entry-agent\.env
 
 Open it from `SecureTap.bat` (see "Running everything together"). To run it manually anyway: `cd entry-agent`, `python main.py`.
 
-Picking **Entry Agent** in the launcher opens the **gate monitor** directly - no second menu to click through. It's a single window handling both credentials at once: a live log on the right (the widest panel), the camera feed filling the left column above a compact card-scanner strip, and a status bar carrying camera/backend/queue state. Closing it exits the entry-agent. Two things happen while it's running:
-- **Continuous scan** (primary): every ~0.2s it grabs a webcam frame and posts it to `/api/identify`. A match needs to agree across several recent frames before it's confirmed (not a single frame); a blurry or partially-out-of-frame face is skipped and shown as "Checking..." rather than risked as a false "Unknown". A recognized person shows a green box + name + confidence; a confirmed unrecognized face shows an amber "Unknown" box; a borderline/ambiguous match shows a blue "Tap card to confirm" prompt.
+Picking **Entry Agent** in the launcher opens the **gate monitor** directly - no second menu to click through. It's a single, maximized window handling both credentials at once: on the left, a stats row (Today / Entries / Unknown / Spoof / In frame) above the camera feed and a compact card-scanner strip; on the right, the live log running the full height of the window; and a status bar along the bottom carrying camera/backend/queue state. It's sized to fit your screen, so it keeps the same layout whatever Windows' display-scaling setting is. Closing it exits the entry-agent. Two things happen while it's running:
+- **Continuous scan** (primary): every ~0.2s it grabs a webcam frame and posts it to `/api/identify`. A match needs to agree across several recent frames before it's confirmed (not a single frame); a blurry or partially-out-of-frame face is skipped and shown as "Checking..." rather than risked as a false "Unknown". A recognized person shows a green box + name + confidence; a confirmed unrecognized face shows an amber "Unknown" box plus an alarm and an UNKNOWN PERSON banner across the top of the feed (a spoof gets a red one); a covered face shows a blue "Please uncover your face" label (no banner, no alarm); a borderline/ambiguous match shows a blue "Tap card to confirm" prompt.
 - **Card tap** (secondary): posts to `/api/verify` - normally just a lookup that shows the guard the tapped person's on-file photo for a visual cross-check, but if the camera currently has a pending tiebreak for this gate, the tap resolves that instead. Either way, a successful tap is logged as a real gate entry (deduped if the same card is tapped again within the cooldown window) and appears in Live Monitoring/Logs like a face-scan entry does.
 
-Both land in the same live log on the right of the monitor - face events badged `ENTRY`/`EXIT`/`UNKNOWN`/`SPOOF`, card taps badged `CARD · ENTRY` or `CARD ✗` - so the log is one chronological record of the gate no matter which credential was used.
+Both land in the same live log on the right of the monitor - the newest event as a large card, earlier ones listed below it - with face events marked `ENTRY`/`EXIT`/`UNKNOWN`/`SPOOF`/`COVERED` and card taps `CARD · ENTRY` or `CARD REJECTED`, so the log is one chronological record of the gate no matter which credential was used.
 
 **About the NFC reader:** cheap "13.56MHz IC / 125KHz ID" combo readers (and many similar low-cost USB RFID modules) are **not** PC/SC smart-card devices - they're USB HID-keyboard-emulation devices. Tapping a card literally "types" the card's ID followed by Enter into whatever window currently has keyboard focus, exactly like a very fast typist. Because of this:
 
@@ -133,6 +133,8 @@ npm run dev
 ```
 
 Dashboard runs at `http://localhost:5173` (Vite picks the next free port, e.g. `5174`, if that one's busy - check the terminal output).
+
+The dashboard loads its fonts (Archivo, Atkinson Hyperlegible Next, IBM Plex Mono) from Google Fonts, so it needs internet access to look as designed; offline it still works, just in the browser's default fonts. Its icons come from the `@phosphor-icons/web` npm package and work offline. The entry-agent and launcher don't need internet for this - their fonts are bundled in `entry-agent/assets/fonts/`. See `documentation.md` §8.1 for the design system.
 
 ## Getting your secrets
 
@@ -164,7 +166,7 @@ Paste the **same value** into both `backend/.env`'s `ENTRY_AGENT_SERVICE_TOKEN` 
 
 **Double-click `SecureTap.bat`.** That's it - no terminal commands.
 
-It opens one window that starts the Django backend for you and then asks the only question that's genuinely a choice:
+It opens one window that starts the Django backend for you (its status bar at the top shows Backend / Dashboard / Entry Agent as Ready, Running, Starting…, Not running or Failed) and then asks the only question that's genuinely a choice:
 
 - **Dashboard** - starts the Vite dev server if it isn't already up, then opens your browser at whatever port it actually bound to.
 - **Entry Agent** - opens the gate monitor (camera + NFC) in its own window.
@@ -176,6 +178,7 @@ Worth knowing:
 - **MySQL still has to be running.** It's a Windows service, outside the launcher's control - if it's down, the backend starts but every page that touches data will error.
 - **Already have things running?** If `runserver` or `npm run dev` is already up in a terminal, the launcher detects that and uses those instead of starting duplicates that would die on "port already in use" - and it won't kill them when it quits.
 - **Show log** reveals the merged output of everything it started. That's where a backend that failed to start explains itself (MySQL down, bad `.env`, port taken).
+- **Entry Agent settings** (gate, direction, guard name, auto-open) are remembered between launches. Before opening the gate monitor it also checks that the backend answers and that the NFC reader is plugged in; if either looks wrong you get a warning with **Open gate monitor** or **Cancel** - it never blocks you on its own.
 - **Quitting stops everything it started**, and asks first. Anything it merely adopted is left alone.
 - `npm install` in `dashboard/` is still a one-time manual step; the launcher says so plainly if it hasn't been done.
 

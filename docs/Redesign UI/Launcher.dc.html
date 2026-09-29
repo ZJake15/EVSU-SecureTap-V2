@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Atkinson+Hyperlegible+Next:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css">
+<style>body{margin:0}a{color:#7B1113}a:hover{color:#4A0A0C}</style>
+</helmet>
+<div style="width:100%;height:100%;position:relative;font-family:'Atkinson Hyperlegible Next',sans-serif;color:#121416;background:#EEF0F2;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;border:1px solid #8A9097">
+  <div style="flex:none;height:32px;background:#FFFFFF;display:flex;align-items:center;gap:10px;padding-left:10px;border-bottom:1px solid #D9DCDF">
+    <img src="assets/evsu-seal.png" alt="" style="width:16px;height:16px"></img>
+    <span style="flex:1;font-size:12px">EVSU SecureTap</span>
+    <span style="width:46px;height:32px;display:flex;align-items:center;justify-content:center"><i class="ph ph-minus" style="font-size:14px"></i></span>
+    <span style="width:46px;height:32px;display:flex;align-items:center;justify-content:center"><i class="ph ph-{{ maxIcon }}" style="font-size:12px"></i></span>
+    <span style="width:46px;height:32px;display:flex;align-items:center;justify-content:center"><i class="ph ph-x" style="font-size:14px"></i></span>
+  </div>
+
+  <div style="flex:none;background:#4A0A0C;color:#FFFFFF;border-bottom:3px solid #C89B3C;padding:0 26px">
+    <div style="max-width:960px;margin:0 auto;display:flex;align-items:center;gap:20px;height:{{ headH }}px">
+      <img src="assets/evsu-seal.png" alt="EVSU seal" style="width:{{ sealSz }}px;height:{{ sealSz }}px;flex:none"></img>
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+        <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'Archivo';font-stretch:125%;font-weight:900;font-size:14px;letter-spacing:0.14em;line-height:1">EVSU</span><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:28px;line-height:1;letter-spacing:-0.01em">SecureTap</span></div>
+        <span style="font-size:16px">Choose what to open</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:1;min-height:0;overflow:hidden;padding:16px 26px 0;position:relative">
+    <sc-if value="{{ scrolled }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;right:4px;top:4px;bottom:4px;width:6px;background:#D9DCDF;border-radius:3px"><div style="position:absolute;left:0;right:0;top:16%;height:84%;background:#8A9097;border-radius:3px"></div></div></sc-if>
+    <div style="max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:{{ gap }}px;transform:translateY(-{{ scrollY }}px)">
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px">
+          <sc-for list="{{ services }}" as="s" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;height:40px;padding:0 12px;border-left:1px solid {{ s.divider }}">
+              <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">{{ s.name }}</span>
+              <span style="display:flex;align-items:center;gap:4px;font-weight:700;font-size:13px;white-space:nowrap;color:{{ s.fg }}"><i class="ph-bold ph-{{ s.icon }}" style="font-size:16px"></i>{{ s.word }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <sc-if value="{{ statusMsg }}" hint-placeholder-val="{{ false }}">
+          <span style="font-size:14px;color:#4B5157;padding-left:2px">{{ statusMsg }}</span>
+        </sc-if>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px">
+        <sc-for list="{{ cards }}" as="c" hint-placeholder-count="2">
+          <div style="background:#FFFFFF;border:{{ c.border }};border-radius:8px;display:flex;flex-direction:column;overflow:hidden">
+            <div style="display:flex;align-items:flex-start;gap:16px;padding:12px 16px">
+              <div style="flex:none;width:44px;height:44px;border-radius:8px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;justify-content:center"><i class="ph ph-{{ c.icon }}" style="font-size:24px"></i></div>
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:20px;line-height:1.1">{{ c.title }}</span>
+                <span style="font-size:14px;color:#4B5157;line-height:1.4">{{ c.desc }}</span>
+              </div>
+              <i class="ph-bold ph-caret-right" style="flex:none;font-size:20px;color:#7B1113;margin-top:12px"></i>
+            </div>
+            <sc-if value="{{ c.hasState }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:6px;padding:8px 16px;border-top:1px solid #D9DCDF;background:{{ c.stateBg }}">
+                <span style="display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700;color:{{ c.stateFg }}"><i class="ph-bold ph-{{ c.stateIcon }}" style="font-size:16px"></i>{{ c.state }}</span>
+                <sc-if value="{{ c.progress }}" hint-placeholder-val="{{ false }}">
+                  <div style="height:4px;background:#D9DCDF;border-radius:2px;overflow:hidden"><div style="width:{{ c.progress }}%;height:100%;background:#1D5FA8"></div></div>
+                </sc-if>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ showNotices }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14px;line-height:1.45;padding:0 2px">
+            <i class="ph ph-clock-counter-clockwise" style="font-size:18px;color:#4B5157;margin-top:1px"></i>
+            <span><b>Last session</b> — Main Gate (entry): <span style="font-family:'IBM Plex Mono';font-weight:500">42</span> entries, <span style="font-family:'IBM Plex Mono';font-weight:500">5</span> exits, <span style="font-family:'IBM Plex Mono';font-weight:500">2</span> unknown — ended Sep 20, 04:15 PM</span>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;background:#FBEFD9;border-radius:3px;padding:10px 16px;font-size:14px;line-height:1.45">
+            <i class="ph-bold ph-cloud-slash" style="font-size:18px;color:#9A5B00;margin-top:1px"></i>
+            <span><b>3 NFC taps haven't synced to the server yet</b> — they'll retry automatically once the entry agent is running and online.</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <div style="display:flex;flex-direction:column;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px">
+        <div style="display:flex;align-items:center;gap:10px;height:44px;padding:0 16px">
+          <i class="ph-bold ph-caret-{{ setCaret }}" style="font-size:14px"></i>
+          <span style="font-weight:700;font-size:14px;flex:1">Entry Agent settings</span>
+          <span style="font-family:'IBM Plex Mono';font-size:12px;color:#4B5157">Main Gate · Entry</span>
+        </div>
+        <sc-if value="{{ settingsOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:16px;padding:16px;border-top:1px solid #D9DCDF">
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:16px">
+              <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Gate</span><span style="height:44px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-size:14px">Main Gate</span></label>
+              <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Direction</span>
+                <div style="display:grid;grid-template-columns:1fr 1fr;height:44px;border:1px solid #D9DCDF;border-radius:3px;overflow:hidden;font-size:14px;font-weight:700;box-sizing:border-box">
+                  <span style="display:flex;align-items:center;justify-content:center;gap:6px;background:#121416;color:#FFFFFF"><i class="ph-bold ph-sign-in" style="font-size:16px"></i>Entry</span>
+                  <span style="display:flex;align-items:center;justify-content:center;gap:6px;color:#4B5157;border-left:1px solid #D9DCDF"><i class="ph ph-sign-out" style="font-size:16px"></i>Exit</span>
+                </div>
+              </div>
+            </div>
+            <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Guard name <span style="font-weight:400;color:#4B5157">(optional)</span></span><span style="height:44px;box-sizing:border-box;border:2px solid #1D5FA8;border-radius:3px;padding:0 9px;display:flex;align-items:center;font-size:14px">Noel B. Cortez</span></label>
+            <span style="display:flex;align-items:center;gap:10px;font-size:14px"><span style="flex:none;width:20px;height:20px;border-radius:3px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;justify-content:center"><i class="ph-bold ph-check" style="font-size:12px"></i></span>Automatically open the gate monitor when this launcher starts</span>
+          </div>
+        </sc-if>
+        <div style="display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;border-top:1px solid #D9DCDF">
+          <i class="ph-bold ph-caret-right" style="font-size:14px"></i>
+          <span style="font-weight:700;font-size:14px;flex:1">Show log</span>
+          <span style="font-family:'IBM Plex Mono';font-size:12px;color:#4B5157">{{ logHint }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:none;border-top:1px solid #D9DCDF;background:#FFFFFF;padding:10px 26px">
+    <div style="max-width:960px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px">
+      <span style="font-size:12px;color:#4B5157">Quitting stops everything this window started. · v1.0</span>
+      <span style="height:44px;padding:0 20px;border-radius:8px;border:1px solid #C62828;color:#C62828;display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700;box-sizing:border-box;white-space:nowrap"><i class="ph-bold ph-power" style="font-size:16px"></i>Quit</span>
+    </div>
+  </div>
+
+  <sc-if value="{{ dialog }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;left:50%;top:190px;transform:translateX(-50%);width:460px;background:#FFFFFF;border:1px solid #4B5157;outline:1px solid #8A9097;outline-offset:1px;display:flex;flex-direction:column">
+      <div style="height:32px;display:flex;align-items:center;gap:10px;padding-left:10px;border-bottom:1px solid #D9DCDF">
+        <img src="assets/evsu-seal.png" alt="" style="width:16px;height:16px"></img>
+        <span style="flex:1;font-size:12px">EVSU SecureTap</span>
+        <span style="width:46px;height:32px;display:flex;align-items:center;justify-content:center"><i class="ph ph-x" style="font-size:14px"></i></span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;padding:26px 26px 20px">
+        <div style="display:flex;align-items:center;gap:10px"><i class="ph-bold ph-warning" style="font-size:26px;color:#9A5B00"></i><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:20px;line-height:1.15">Before you open the gate monitor</span></div>
+        <div style="display:flex;flex-direction:column;border-top:1px solid #D9DCDF">
+          <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #D9DCDF;font-size:14px;line-height:1.45"><i class="ph-bold ph-plugs" style="font-size:18px;color:#9A5B00;flex:none;margin-top:1px"></i><span>The backend isn't responding yet — entry/exit logging won't work until it is.</span></div>
+          <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #D9DCDF;font-size:14px;line-height:1.45"><i class="ph-bold ph-identification-card" style="font-size:18px;color:#9A5B00;flex:none;margin-top:1px"></i><span>No ACR122U NFC reader was detected (best-effort check).</span></div>
+        </div>
+        <span style="font-size:14px;font-weight:700">The gate monitor will still open.</span>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding-top:6px">
+          <span style="height:44px;padding:0 16px;display:flex;align-items:center;font-size:14px;font-weight:700;color:#7B1113;white-space:nowrap">Cancel</span>
+          <span style="height:44px;padding:0 20px;border-radius:8px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700;white-space:nowrap">Open gate monitor<i class="ph-bold ph-arrow-right" style="font-size:16px"></i></span>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:560,&quot;height&quot;:760},&quot;scenario&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;starting&quot;,&quot;ready&quot;,&quot;settings&quot;,&quot;maximized&quot;,&quot;preflight&quot;],&quot;default&quot;:&quot;ready&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const C={i6:'#4B5157',line:'#D9DCDF',sf:'#FFFFFF',v:'#1E7B45',vt:'#E3F2E9',d:'#C62828',dt:'#FBE4E4',p:'#1D5FA8',pt:'#E2ECF7'};
+const SV={ready:['Ready',C.v,'check-circle'],running:['Running',C.v,'check-circle'],starting:['Starting…',C.p,'circle-notch'],off:['Not running',C.i6,'circle'],failed:['Failed',C.d,'x-circle']};
+const DESC={dash:'Web app — register users, live monitoring, logs, reports',agent:'Gate monitor — camera face recognition + NFC card reader'};
+class Component extends DCLogic {
+  renderVals(){
+    const sc=this.props.scenario??'ready';
+    const starting=sc==='starting'||sc==='preflight';
+    const st=starting?{b:'starting',d:sc==='starting'?'starting':'off',a:'off'}:{b:'ready',d:'running',a:'running'};
+    const services=[['BACKEND',st.b],['DASHBOARD',st.d],['ENTRY AGENT',st.a]].map(([name,k],i)=>({name,word:SV[k][0],fg:SV[k][1],icon:SV[k][2],divider:i?C.line:C.sf}));
+    const card=(id,title,icon,state)=>{
+      const m={
+        starting:{state:id==='dash'?'Starting the dashboard…':'Starting the camera and opening the gate monitor…',stateFg:C.p,stateIcon:'circle-notch',stateBg:C.sf,progress:40},
+        running:{state:id==='dash'?'Running at localhost:5173 — click to open':'Gate monitor is open',stateFg:C.v,stateIcon:'check-circle',stateBg:C.sf},
+        failed:{state:'Failed to start — open the log below to see why',stateFg:C.d,stateIcon:'x-circle',stateBg:C.dt}
+      }[state];
+      return {title,icon,desc:DESC[id],hasState:!!m,progress:null,border:'1px solid #D9DCDF',...(m||{})};
+    };
+    const cards=[card('dash','Dashboard','squares-four',st.d==='off'?null:st.d),card('agent','Entry Agent','video-camera',st.a==='off'?null:st.a)];
+    const max=sc==='maximized';
+    return {
+      services,cards,
+      statusMsg:sc==='maximized'?'Using a backend that was already running.':null,
+      showNotices:sc==='ready'||sc==='maximized',
+      settingsOpen:sc==='settings',setCaret:sc==='settings'?'down':'right',
+      logHint:starting?'backend: loading face models…':'12 lines',
+      dialog:sc==='preflight',maxIcon:max?'copy':'square',
+      headH:max?120:76,sealSz:max?64:48,gap:max?26:12,scrolled:sc==='settings',scrollY:sc==='settings'?72:0
+    };
+  }
+}
+</script>
+</body>
+</html>

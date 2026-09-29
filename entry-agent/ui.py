@@ -13,32 +13,48 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageTk
 
 # ---------------------------------------------------------------------------
-# Design system (colors/fonts match the EVSU SecureTap UI redesign spec)
+# Design tokens - the redesign's whole palette is these 17 colors (see
+# docs/design-brief.md). Status colors always travel with an icon and a word,
+# never color alone.
 # ---------------------------------------------------------------------------
 
+INK = "#121416"
+INK_600 = "#4B5157"
+INK_400 = "#8A9097"
+LINE = "#D9DCDF"
+CANVAS = "#EEF0F2"
+SURFACE = "#FFFFFF"
 MAROON = "#7B1113"
-MAROON_DARK = "#5A0C0E"
-MAROON_LIGHT = "#F0C9CA"
-BG = "#F5F5F7"
-CARD_BG = "#FFFFFF"
-BORDER = "#E2E2E6"
-TEXT_PRIMARY = "#1A1A1A"
-TEXT_SECONDARY = "#6B6B70"
-TEXT_MUTED = "#9A9AA0"
-SUCCESS = "#34C759"
-DANGER = "#FF3B30"
-WARNING = "#FF9F0A"
-ACCENT = "#0A84FF"
-# A face whose mouth/nose read as covered - its own color, not reused from
-# WARNING (Unknown) or DANGER (spoof), since the whole point is that this
-# reads as its own distinct status rather than folding into either of those.
-OCCLUSION = "#30B0C7"
-PLACEHOLDER_AVATAR = "#D1D5DB"
-SURFACE_ALT = "#F7F7F9"  # tinted inner surface - waiting states, chips, count badges
-VIDEO_BG = "#0B1220"  # near-black panel behind the camera feed
+MAROON_DEEP = "#4A0A0C"
+BRASS = "#C89B3C"  # structural accent only (rules, active marks) - never text on white
+VERIFIED = "#1E7B45"
+VERIFIED_TINT = "#E3F2E9"
+CAUTION = "#9A5B00"
+CAUTION_TINT = "#FBEFD9"
+DANGER = "#C62828"
+DANGER_TINT = "#FBE4E4"
+PROMPT = "#1D5FA8"
+PROMPT_TINT = "#E2ECF7"
 
-FONT = "Segoe UI"
-FONT_MONO = "Consolas"
+# Older names from before the redesign, kept as aliases onto the tokens
+# above so any code still written against them gets the new palette.
+MAROON_DARK = MAROON_DEEP
+MAROON_LIGHT = LINE  # secondary text on maroon
+BG = CANVAS
+CARD_BG = SURFACE
+BORDER = LINE
+TEXT_PRIMARY = INK
+TEXT_SECONDARY = INK_600
+TEXT_MUTED = INK_400
+SUCCESS = VERIFIED
+WARNING = CAUTION
+ACCENT = PROMPT
+# A covered face is an instruction to the person ("uncover your face"), not
+# an alarm - prompt blue, distinct from Unknown (caution) and spoof (danger).
+OCCLUSION = PROMPT
+PLACEHOLDER_AVATAR = CANVAS
+SURFACE_ALT = CANVAS
+VIDEO_BG = INK
 
 FOCUS_CHECK_MS = 300
 RESET_DELAY_MS = 8000
@@ -49,9 +65,111 @@ ICON_PATH = os.path.join(ASSETS_DIR, "icon.png")
 # A proper multi-resolution .ico, generated from icon.png (same EVSU seal) -
 # see _apply_icon's docstring for why this exists alongside the PNG.
 ICON_ICO_PATH = os.path.join(ASSETS_DIR, "icon.ico")
+FONTS_DIR = os.path.join(ASSETS_DIR, "fonts")
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
+
+
+# ---------------------------------------------------------------------------
+# Fonts - bundled, loaded privately for this process only (nothing gets
+# installed system-wide). Tk on Windows can't pick a width or weight out of a
+# variable font, so each Archivo width/weight the design uses is its own
+# static single-face family (see assets/fonts/README.md). Every family falls
+# back to a stock Windows font if its file is missing, so a broken asset
+# folder degrades the look, never the app.
+# ---------------------------------------------------------------------------
+
+
+def _load_bundled_fonts():
+    loaded = set()
+    if not os.path.isdir(FONTS_DIR):
+        return loaded
+    for filename in sorted(os.listdir(FONTS_DIR)):
+        if not filename.lower().endswith(".ttf"):
+            continue
+        try:
+            if ctk.FontManager.load_font(os.path.join(FONTS_DIR, filename)):
+                loaded.add(filename)
+        except Exception:
+            pass
+    return loaded
+
+
+_LOADED_FONTS = _load_bundled_fonts()
+
+
+def _family(filename, family, fallback):
+    return family if filename in _LOADED_FONTS else fallback
+
+
+# Body text - Atkinson Hyperlegible Next (regular + a real bold face).
+FONT = _family("SecureTap-Text-Regular.ttf", "SecureTap Text", "Segoe UI")
+# Data - IBM Plex Mono.
+FONT_MONO = _family("IBMPlexMono-Regular.ttf", "IBM Plex Mono", "Consolas")
+FONT_MONO_MEDIUM = _family("IBMPlexMono-Medium.ttf", "IBM Plex Mono Medium", "Consolas")
+FONT_MONO_SEMIBOLD = _family("IBMPlexMono-SemiBold.ttf", "IBM Plex Mono SemiBold", "Consolas")
+# Display - Archivo at three widths: condensed (75%) for eyebrow labels and
+# status words, semi-expanded (112.5%) for titles, expanded (125%) for the
+# big numbers. Always used with weight "normal" - the weight is in the face.
+COND_BOLD = _family("SecureTap-Cond-Bold.ttf", "SecureTap Cond Bold", "Segoe UI Semibold")
+COND_HEAVY = _family("SecureTap-Cond-Heavy.ttf", "SecureTap Cond Heavy", "Segoe UI Black")
+SEMI_BOLD = _family("SecureTap-Semi-Bold.ttf", "SecureTap Semi Bold", "Segoe UI Semibold")
+SEMI_HEAVY = _family("SecureTap-Semi-Heavy.ttf", "SecureTap Semi Heavy", "Segoe UI Black")
+WIDE_BOLD = _family("SecureTap-Wide-Bold.ttf", "SecureTap Wide Bold", "Segoe UI Semibold")
+WIDE_HEAVY = _family("SecureTap-Wide-Heavy.ttf", "SecureTap Wide Heavy", "Segoe UI Black")
+WIDE_BLACK = _family("SecureTap-Wide-Black.ttf", "SecureTap Wide Black", "Segoe UI Black")
+# Icons - Phosphor's icon font; codepoints from its style.css.
+ICON_FONT = _family("Phosphor.ttf", "Phosphor", None)
+ICON_FONT_BOLD = _family("Phosphor-Bold.ttf", "Phosphor-Bold", None)
+
+ICONS = {
+    "sign-in": "\ue428",
+    "sign-out": "\ue42a",
+    "user-circle-dashed": "\uec36",
+    "warning-octagon": "\ue4e4",
+    "warning": "\ue4e0",
+    "users": "\ue4d6",
+    "users-three": "\ue68e",
+    "identification-card": "\ue2c8",
+    "hand-palm": "\ue57e",
+    "circle-notch": "\ueb44",
+    "check-circle": "\ue184",
+    "x-circle": "\ue4f8",
+    "x": "\ue4f6",
+    "cloud-slash": "\ue1b6",
+    "video-camera-slash": "\ue4dc",
+    "speaker-high": "\ue44a",
+    "clock-counter-clockwise": "\ue1a0",
+    "user-focus": "\ue6fc",
+    # Launcher (launcher.py)
+    "squares-four": "\ue464",
+    "video-camera": "\ue4da",
+    "caret-right": "\ue13a",
+    "caret-down": "\ue136",
+    "circle": "\ue18a",
+    "power": "\ue3da",
+    "plugs": "\ueb56",
+    "check": "\ue182",
+    "arrow-right": "\ue06c",
+}
+
+
+def _icon(name, bold=True):
+    """The glyph for one Phosphor icon, or "" when the icon font didn't load
+    (so a label just shows its words instead of a missing-glyph box)."""
+    family = ICON_FONT_BOLD if bold else ICON_FONT
+    return ICONS.get(name, "") if family else ""
+
+
+def _pil_font(filename, size, fallback="segoeuib.ttf"):
+    try:
+        return ImageFont.truetype(os.path.join(FONTS_DIR, filename), size=size)
+    except Exception:
+        try:
+            return ImageFont.truetype(os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", fallback), size=size)
+        except Exception:
+            return ImageFont.load_default()
 
 
 # ---------------------------------------------------------------------------
@@ -99,9 +217,7 @@ def _apply_icon(window):
 
 def _avatar_image(raw_bytes, size):
     """Crops/resizes raw_bytes to a plain size x size square photo, or None
-    if there's no photo to show. Deliberately always a plain rectangle, not
-    a circular crop - a real person's photo stays square; only the no-photo
-    placeholder badge (see _initials_avatar) is ever circular."""
+    if there's no photo to show."""
     if not raw_bytes:
         return None
     try:
@@ -111,30 +227,31 @@ def _avatar_image(raw_bytes, size):
         return None
 
 
-def _initials_avatar(name, size, bg=MAROON):
-    """A circular initials badge - used only as a placeholder when there's
-    no real photo, so it reads clearly as "no photo on file" rather than as
-    a distorted picture of someone."""
+def _initials_avatar(name, size, bg=CANVAS, fg=INK_600):
+    """A square initials tile - the placeholder when there's no photo on
+    file. Square like a real photo (3px corners), so the log reads as one
+    column of pictures either way."""
     initials = "".join(part[0] for part in (name or "?").split()[:2]).upper() or "?"
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    image = Image.new("RGBA", (size, size), bg)
     draw = ImageDraw.Draw(image)
-    draw.ellipse((0, 0, size - 1, size - 1), fill=bg)
-    font = None
-    try:
-        font_path = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "segoeuib.ttf")
-        font = ImageFont.truetype(font_path, size=int(size * 0.38))
-    except Exception:
-        try:
-            font = ImageFont.load_default()
-        except Exception:
-            font = None
-    if font is not None:
-        bbox = draw.textbbox((0, 0), initials, font=font)
-        text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        draw.text(
-            ((size - text_w) / 2 - bbox[0], (size - text_h) / 2 - bbox[1]),
-            initials, fill="white", font=font,
-        )
+    font = _pil_font("SecureTap-Semi-Bold.ttf", max(8, int(size * 0.32)))
+    bbox = draw.textbbox((0, 0), initials, font=font)
+    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((size - text_w) / 2 - bbox[0], (size - text_h) / 2 - bbox[1]), initials, fill=fg, font=font)
+    return image
+
+
+def _glyph_tile(size, bg, icon_name, fg, scale=0.55, bold=False):
+    """A square tile with one Phosphor icon centered on it - the thumbnail
+    for an event with no face photo (unknown crop, rejected card, ...)."""
+    image = Image.new("RGBA", (size, size), bg)
+    glyph = _icon(icon_name, bold=bold)
+    if glyph:
+        draw = ImageDraw.Draw(image)
+        font = _pil_font("Phosphor-Bold.ttf" if bold else "Phosphor.ttf", max(8, int(size * scale)))
+        bbox = draw.textbbox((0, 0), glyph, font=font)
+        glyph_w, glyph_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text(((size - glyph_w) / 2 - bbox[0], (size - glyph_h) / 2 - bbox[1]), glyph, fill=fg, font=font)
     return image
 
 
@@ -152,14 +269,11 @@ def _scaled_size(source_size, target_size):
 
 
 def _round_corners(image, radius):
-    """Masks image's corners to transparent so it visually matches the
-    rounded CTkFrame it's drawn inside (see GateMonitorWindow's video_frame)
-    - a plain tk.Canvas draws a flat rectangle no matter what, so without
-    this the live feed's own square corners poke past the frame's curve at
-    each corner, breaking the rounded look. Tkinter's PhotoImage renders an
-    RGBA image's alpha correctly on a Canvas, so this is enough on its own -
-    no separate background fill needed, since the canvas underneath is
-    already the same color the frame is."""
+    """Masks image's corners to transparent. A plain tk.Canvas draws a flat
+    rectangle no matter what, so the video panel's rounding is baked into
+    the one composited image it shows each frame (see _compose_panel) - an
+    RGBA PhotoImage's alpha renders correctly on a Canvas, so the page
+    background simply shows through the cut corners."""
     image = image.convert("RGBA")
     mask = Image.new("L", image.size, 0)
     ImageDraw.Draw(mask).rounded_rectangle(
@@ -170,20 +284,10 @@ def _round_corners(image, radius):
 
 
 def _rounded_rect_points(x0, y0, x1, y1, radius, steps_per_corner=12):
-    """Points for a rounded rectangle as a Canvas polygon, for something
-    this simple (a small, static-shaped overlay like the "LIVE MONITOR"
-    badge) without needing a rebuilt PIL image + PhotoImage to keep alive
-    every frame - the video panel's own rounding (a much bigger,
-    photographic image) still goes through _round_corners, where an actual
-    alpha mask is worth it.
-
-    Samples each corner as a real quarter-circle arc (steps_per_corner
-    points), rather than the 2-points-per-corner + smooth=True spline this
-    used originally - Tk's spline only approximates the corner from those 2
-    points and visibly undershoots the requested radius, reading as
-    "softened corners" rather than a genuinely round/pill end. Sampling the
-    actual arc trigonometrically draws the real curve regardless of
-    whether the caller also passes smooth=True to create_polygon."""
+    """Points for a rounded rectangle as a Canvas polygon - each corner a
+    real quarter-circle arc (steps_per_corner points), not the 2-points-per-
+    corner + smooth=True spline Tk would otherwise approximate it with, which
+    visibly undershoots the requested radius."""
     radius = min(radius, (x1 - x0) / 2, (y1 - y0) / 2)
     corners = (
         (x1 - radius, y0 + radius, -90, 0),    # top-right
@@ -217,141 +321,104 @@ def _play_alert_sound():
     threading.Thread(target=_beep, daemon=True).start()
 
 
-def _hex_to_rgb(color):
-    color = color.lstrip("#")
-    return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
+def _ellipsize(font, text, max_px):
+    """Trims text with a trailing ellipsis until it fits max_px as measured
+    in `font` - Tk labels never truncate on their own, they just clip or
+    push their neighbors out."""
+    if max_px <= 0 or font.measure(text) <= max_px:
+        return text
+    while text and font.measure(text + "…") > max_px:
+        text = text[:-1]
+    return text.rstrip() + "…"
 
 
-def _rgb_to_hex(rgb):
-    return "#%02x%02x%02x" % tuple(max(0, min(255, round(c))) for c in rgb)
-
-
-def _color_ramp(start_hex, end_hex, steps):
-    """A list of `steps + 1` hex colors interpolated evenly from start to
-    end - used to animate a hover color change frame by frame instead of
-    just snapping to the new color."""
-    start, end = _hex_to_rgb(start_hex), _hex_to_rgb(end_hex)
-    return [
-        _rgb_to_hex(tuple(start[c] + (end[c] - start[c]) * i / steps for c in range(3)))
-        for i in range(steps + 1)
-    ]
-
-
-class _HoverAnimator:
-    """Animates a widget's fg_color between two colors as the cursor enters
-    and leaves it, instead of snapping instantly - a short, cheap
-    step-through of precomputed colors via widget.after(), not a fragile
-    canvas trick. Bind the returned enter()/leave() methods to <Enter>/
-    <Leave> on every widget that makes up the hoverable area (a frame plus
-    its child labels, say), since CTk widgets don't bubble mouse events
-    from children up to their parent."""
-
-    STEPS = 8
-    INTERVAL_MS = 12
-
-    def __init__(self, widget, from_color, to_color):
-        self.widget = widget
-        self._ramp = _color_ramp(from_color, to_color, self.STEPS)
-        self._index = 0
-        self._job = None
-
-    def enter(self, _event=None):
-        self._animate_to(len(self._ramp) - 1)
-
-    def leave(self, _event=None):
-        self._animate_to(0)
-
-    def _animate_to(self, target_index):
-        if self._job is not None:
-            self.widget.after_cancel(self._job)
-            self._job = None
-        self._step(target_index)
-
-    def _step(self, target_index):
-        if not self.widget.winfo_exists() or self._index == target_index:
-            self._job = None
-            return
-        self._index += 1 if target_index > self._index else -1
-        self.widget.configure(fg_color=self._ramp[self._index])
-        self._job = self.widget.after(self.INTERVAL_MS, lambda: self._step(target_index))
-
-
-# ---------------------------------------------------------------------------
-# Shared components
-# ---------------------------------------------------------------------------
-
-
-class HeaderBar(ctk.CTkFrame):
-    """Maroon bar: title + subtitle on the left, an optional badge (e.g. an
-    ENTRY/EXIT pill) and a live clock on the right. Used at the top of all
-    three windows so they read as one consistent app."""
-
-    LOGO_SIZE = 72
-
-    def __init__(self, parent, title, subtitle="", show_clock=False, badge=None, center=False, logo_path=None):
-        super().__init__(parent, fg_color=MAROON, corner_radius=0)
-        self.grid_columnconfigure(0, weight=1)
-        self.badge_label = None
-        self.clock_label = None
-
-        if center:
-            # The launcher's header - a centered logo (if given) above the
-            # title/subtitle, no clock or badge, matching the design
-            # reference exactly.
-            block = ctk.CTkFrame(self, fg_color="transparent")
-            block.grid(row=0, column=0, pady=(26, 22))
-            if logo_path and os.path.isfile(logo_path):
-                try:
-                    logo_source = Image.open(logo_path).convert("RGBA")
-                    logo_image = ctk.CTkImage(
-                        light_image=logo_source, dark_image=logo_source, size=(self.LOGO_SIZE, self.LOGO_SIZE)
-                    )
-                    logo_label = ctk.CTkLabel(block, image=logo_image, text="")
-                    logo_label.pack(pady=(0, 10))
-                    self._logo_image_ref = logo_image  # keep a reference or Tk garbage-collects it
-                except Exception:
-                    pass  # missing/corrupt logo asset shouldn't block the launcher from opening
-            ctk.CTkLabel(block, text=title, font=(FONT, 24, "bold"), text_color="white").pack()
-            if subtitle:
-                ctk.CTkLabel(block, text=subtitle, font=(FONT, 13), text_color=MAROON_LIGHT).pack(pady=(6, 0))
-            return
-
-        left = ctk.CTkFrame(self, fg_color="transparent")
-        left.grid(row=0, column=0, sticky="w", padx=20, pady=14)
-        ctk.CTkLabel(left, text=title, font=(FONT, 17, "bold"), text_color="white").pack(anchor="w")
-        if subtitle:
-            ctk.CTkLabel(left, text=subtitle, font=(FONT, 11), text_color=MAROON_LIGHT).pack(anchor="w")
-
-        right = ctk.CTkFrame(self, fg_color="transparent")
-        right.grid(row=0, column=1, sticky="e", padx=20, pady=14)
-
-        if badge:
-            self.badge_label = ctk.CTkLabel(
-                right, text=badge, font=(FONT, 11, "bold"), text_color="white",
-                fg_color=MAROON_DARK, corner_radius=10,
-            )
-            self.badge_label.pack(side="left", padx=(0, 12), ipadx=8, ipady=2)
-
-        self.clock_label = None
-        if show_clock:
-            self.clock_label = ctk.CTkLabel(right, text="", font=(FONT, 11), text_color=MAROON_LIGHT)
-            self.clock_label.pack(side="left")
-            self._tick()
-
-    def set_badge(self, text):
-        if self.badge_label:
-            self.badge_label.configure(text=text)
-
-    def _tick(self):
-        if not self.winfo_exists():
-            return
-        self.clock_label.configure(text=f"● LIVE · {datetime.now().strftime('%I:%M:%S %p')}")
-        self.after(1000, self._tick)
 
 
 # ---------------------------------------------------------------------------
 # The gate monitor - the entry-agent's only window
 # ---------------------------------------------------------------------------
+
+# The redesign draws the gate monitor as a 1920x1080 screen, and every size in
+# this file (fonts, paddings, the profiles below) is in that design's pixels.
+# GateMonitorWindow fits that design to the actual screen by setting CTk's
+# widget scaling (see _fit_design_to_screen) - so on a 1080p monitor the
+# layout comes out at the design's proportions whatever Windows' display
+# scaling is set to, instead of every element growing 25% at 125% scaling.
+DESIGN_WIDTH, DESIGN_HEIGHT = 1920, 1080
+# Floor for that fit, so a small laptop screen shrinks the layout but never
+# to the point of unreadable text.
+MIN_DESIGN_FIT = 0.6
+
+# Size profile, in design pixels: the full 1920x1080 design ("WIDE") and its
+# narrow 1100x700-window variant ("NARROW"). Every size in between is
+# interpolated from the available width, so an un-maximized window still
+# fits instead of overflowing at the full-screen sizes.
+NARROW_SIZES = {
+    "header": 84, "pad": 26, "seal": 44, "title": 28, "clock": 28, "badge": 22,
+    "hero": 56, "stat": 44, "stat_top": 16, "col_gap": 26, "strip": 52, "banner_title": 22,
+    "banner_sub": 16, "scan": 112, "scan_label": 150, "photo": 64, "feat_thumb": 72,
+    "feat_name": 28, "feat_conf": 28, "feat_pad": 10, "band": 40, "feat_word": 18,
+    "row_name": 20, "row_word": 16, "tab": 16, "tile": 56, "tap_title": 24,
+}
+WIDE_SIZES = {
+    "header": 112, "pad": 42, "seal": 56, "title": 44, "clock": 44, "badge": 28,
+    "hero": 72, "stat": 56, "stat_top": 26, "col_gap": 42, "strip": 64, "banner_title": 28,
+    "banner_sub": 20, "scan": 150, "scan_label": 190, "photo": 76, "feat_thumb": 112,
+    "feat_name": 36, "feat_conf": 44, "feat_pad": 20, "band": 48, "feat_word": 22,
+    "row_name": 28, "row_word": 20, "tab": 20, "tile": 64, "tap_title": 28,
+}
+
+
+def _size_profile(design_width):
+    t = max(0.0, min(1.0, (design_width - 1100) / (DESIGN_WIDTH - 1100)))
+    return {key: round(NARROW_SIZES[key] + (WIDE_SIZES[key] - NARROW_SIZES[key]) * t) for key in NARROW_SIZES}
+
+
+def _screen_work_area(window):
+    """Real-pixel (width, height) of the usable screen, excluding the
+    taskbar. Tk's own winfo_screenwidth() reports DPI-scaled units, not real
+    pixels, so ask Windows directly; fall back to Tk's numbers elsewhere."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+            return rect.right - rect.left, rect.bottom - rect.top
+    except Exception:
+        pass
+    dpi = ctk.ScalingTracker.get_window_scaling(window)
+    return round(window.winfo_screenwidth() * dpi), round(window.winfo_screenheight() * dpi)
+
+
+# Everything that can land in the live log, and how it reads there: status
+# color, the tint behind a non-routine row, its icon, and its word. `sec`
+# marks the security-relevant kinds that get a colored bar and tint in the
+# list - a routine pass stays plain white.
+LOG_KINDS = {
+    "entry": {"color": VERIFIED, "icon": "sign-in", "word": "ENTRY"},
+    "exit": {"color": VERIFIED, "icon": "sign-out", "word": "EXIT"},
+    "card": {"color": VERIFIED, "icon": "identification-card", "word": "CARD"},
+    "unknown": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "user-circle-dashed", "word": "UNKNOWN", "sec": True},
+    "spoof": {"color": DANGER, "tint": DANGER_TINT, "icon": "warning-octagon", "word": "SPOOF", "sec": True},
+    "covered": {"color": PROMPT, "tint": PROMPT_TINT, "icon": "hand-palm", "word": "COVERED", "sec": True},
+    "card_rejected": {"color": DANGER, "tint": DANGER_TINT, "icon": "identification-card", "word": "CARD REJECTED", "sec": True},
+    "card_offline": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "cloud-slash", "word": "QUEUED", "sec": True},
+}
+
+# The alarm banner docked at the top of the video panel - only for the two
+# events that also sound the alarm. A covered face deliberately gets no
+# banner (and no sound): it's shown as a label on the face itself, so the
+# live view is never blocked for something a person fixes by lowering a hand.
+ALERTS = {
+    "unknown": {
+        "color": CAUTION, "icon": "user-circle-dashed", "title": "UNKNOWN PERSON",
+        "sub": "Not recognized — check this person at the gate",
+    },
+    "spoof": {
+        "color": DANGER, "icon": "warning-octagon", "title": "SPOOF SUSPECTED",
+        "sub": "Photo or screen held to the camera — not a live face",
+    },
+}
 
 
 class GateMonitorWindow:
@@ -365,14 +432,11 @@ class GateMonitorWindow:
     what the user already said. So this owns the CTk root itself, and closing
     it ends the process.
 
-    The layout ranks the three panels by how much a guard actually looks at
-    them. The live log is the widest panel and the one that grows with the
-    window, because it's the running record of who came through and the
-    thing worth reading. The camera feed takes the entire remaining height
-    of the left column. The card scanner sits under it as a compact strip
-    that keeps its natural height (its grid row has weight 0, so every spare
-    pixel goes to the feed above) - a tap is an occasional cross-check, not
-    the primary flow.
+    Layout (top to bottom): a maroon header with a brass rule; a stats row
+    led by one big "today" number; then the video panel (with the card
+    scanner strip under it) beside the live log, 7:5; and a white status bar.
+    The live log leads with the newest event as a large featured card, with
+    everything earlier listed below it.
 
     Camera side: a CCTV-style monitoring view, not a one-person kiosk. The
     camera continuously watches a stream of people walking through - nobody
@@ -404,24 +468,13 @@ class GateMonitorWindow:
     """
 
     MIN_VIDEO_SIZE = (320, 240)
-    # A plain tk.Canvas can't be rounded as a widget, and insetting it away
-    # from video_frame's own rounded edge (an earlier attempt at this) just
-    # trades the problem for a visible border on every side instead of only
-    # the corners. The actual fix: the canvas fills its cell edge-to-edge
-    # with zero inset, and every draw composites one full-canvas-sized RGBA
-    # image (backdrop + live frame + recognition boxes' backing) and masks
-    # THAT to this radius before handing it to the canvas - see
-    # _draw_frame/_draw_no_camera_placeholder and _round_corners. The
-    # rounding is baked into the image itself, not faked with layout.
-    VIDEO_PANEL_CORNER_RADIUS = 16
+    VIDEO_PANEL_CORNER_RADIUS = 14
     # How long with no frame at all before the video panel gives up waiting
     # and shows "No camera connected" instead of just sitting blank - long
     # enough that a real webcam's normal startup delay never trips it.
     CAMERA_GRACE_SECONDS = 3.0
     MAX_LOG_ROWS = 60
-    LOG_GRID_COLUMNS = 4
-    LOG_THUMB_SIZE = 88
-    CARD_AVATAR_SIZE = 76
+    LIST_THUMB_SIZE = 48
     ALERT_DISPLAY_MS = 6000
 
     FAILURE_HEADLINES = {
@@ -431,20 +484,20 @@ class GateMonitorWindow:
         "offline": "Offline",
     }
 
+    # (key, label, color, icon) - "today" is the hero number, the rest sit
+    # beside it separated by hairlines. Covered faces are still counted
+    # (self.stats["occlusion"], used for the last-session summary) but have
+    # no counter on screen.
     STAT_SPECS = (
-        ("today", "Today", MAROON),
-        ("entries", "Entries", SUCCESS),
-        ("unknown", "Unknown", WARNING),
-        ("spoof", "Spoof", DANGER),
-        ("occlusion", "Occluded", OCCLUSION),
-        ("in_frame", "In frame", ACCENT),
+        ("entries", "ENTRIES", INK, "sign-in"),
+        ("unknown", "UNKNOWN", CAUTION, "user-circle-dashed"),
+        ("spoof", "SPOOF", DANGER, "warning-octagon"),
+        ("in_frame", "IN FRAME", INK_600, "users"),
     )
-    # Window width below which the 6 stat tiles wrap to 3-per-row instead of
-    # squashing into one row - the window opens maximized by default, so
-    # this mostly matters if a guard un-maximizes/resizes it narrower.
-    STATS_WRAP_BREAKPOINT = 900
+    # The stats wrap onto a second row only when one row doesn't fit the
+    # left column - see _on_left_configure.
     STATS_COLUMNS_WIDE = len(STAT_SPECS)
-    STATS_COLUMNS_NARROW = 3
+    STATS_COLUMNS_NARROW = 2
 
     def __init__(self, gate_location, direction, get_preview_frame, on_tap,
                  officer_name="", version="", on_close=None,
@@ -473,21 +526,26 @@ class GateMonitorWindow:
         self._latest_image_size = (1, 1)
         # Drives the "No camera connected" placeholder in _update_video -
         # tracked as a timestamp rather than a sticky boolean so the same
-        # logic covers all three cases the same way: never connected (this
-        # just never advances), disconnected mid-session (stops advancing,
-        # so the placeholder reappears after the grace period), and
-        # reconnected (advances again the instant a frame arrives, so the
-        # placeholder disappears again on its own). Starts at window-
-        # creation time, not zero, so a real camera's normal brief startup
-        # delay doesn't immediately read as "already been silent too long".
+        # logic covers never connected, disconnected mid-session, and
+        # reconnected. Starts at window-creation time, not zero, so a real
+        # camera's normal brief startup delay doesn't immediately read as
+        # "already been silent too long".
         self._last_frame_at = time.monotonic()
+        self._showing_no_camera = False
+        # The visible feed area on the video canvas, (x0, y0, x1, y1) - set
+        # by _compose_panel each frame; face boxes are clipped to it.
+        self._feed_bounds = (0, 0, 1, 1)
+        self._panel_bounds = None
         self._seen_log_ids = set()
         self._log_entries = []  # newest first
         self._log_photo_images = []  # keeps CTkImage refs alive for the log list
         self.stats = {"entries": 0, "exits": 0, "unknown": 0, "spoof": 0, "occlusion": 0}
+        self._alert = None  # {"kind": ..., "time": ...} while the alarm banner shows
         self._alert_hide_job = None
         self._card_reset_job = None
-        self._card_avatar_image = None
+        self._card_images = {}
+        self._last_card_id = None
+        self._font_cache = {}
 
         # This IS the application window, not a child of some menu - the
         # entry-agent opens straight into the monitor. Being the CTk root (not
@@ -495,32 +553,25 @@ class GateMonitorWindow:
         # right behaviour when there's nothing behind it to return to.
         self.window = ctk.CTk()
         self.window.title(f"EVSU SecureTap - Gate monitor - {gate_location}")
-        self.window.configure(fg_color=BG)
+        self.window.configure(fg_color=CANVAS)
         # CustomTkinter multiplies geometry by the display's DPI scaling, so
         # these are deliberately conservative logical sizes - on a 125%
         # display 1200x720 is already 1500x900 real pixels. The window opens
         # maximized anyway (see below); this is just the restore size.
         self.window.geometry("1200x720")
-        # Width floor lowered from 1100 to 820: at 1100 a guard could never
-        # actually resize this window narrow enough to reach
-        # STATS_WRAP_BREAKPOINT (900), which would make the stat-tile wrap
-        # logic below unreachable through normal manual resizing.
-        self.window.minsize(820, 680)
+        self.window.minsize(820, 640)
         self.window.protocol("WM_DELETE_WINDOW", self._handle_close)
         self.window.bind("<Escape>", lambda _e: self._handle_close())
-        self.window.bind("<Configure>", self._on_window_configure)
         _apply_icon(self.window)
 
-        self.window.grid_rowconfigure(2, weight=1)
+        work_width = self._fit_design_to_screen()
+        self._scale = ctk.ScalingTracker.get_widget_scaling(self.window)
+        self._s = _size_profile(work_width / self._scale)
+
         self.window.grid_columnconfigure(0, weight=1)
+        self.window.grid_rowconfigure(2, weight=1)
 
-        self.header = HeaderBar(
-            self.window, f"{gate_location} — live monitoring",
-            subtitle="Face recognition + NFC card", show_clock=True, badge=direction.upper(),
-        )
-        self.header.grid(row=0, column=0, sticky="ew")
-
-        self._build_stats_strip()
+        self._build_header()
         self._build_main_area()
         self._build_status_bar()
         self._rebuild_log_list()
@@ -536,14 +587,33 @@ class GateMonitorWindow:
         self._queue = queue.Queue()
         self.window.after(100, self._process_queue)
         self.window.after(FOCUS_CHECK_MS, self._keep_focus)
+        self._tick_clock()
         # Open filling the screen - this is an operational display a guard
-        # leaves up all shift, not a dialog. Deferred because CTkToplevel
-        # re-applies its own window attributes shortly after construction,
-        # and "zoomed" set inline gets clobbered by that. Windows-only state,
-        # so a TclError elsewhere just leaves the restore geometry in place.
+        # leaves up all shift, not a dialog. Deferred because CTk re-applies
+        # its own window attributes shortly after construction, and "zoomed"
+        # set inline gets clobbered by that. Windows-only state, so a
+        # TclError elsewhere just leaves the restore geometry in place.
         self.window.after(300, self._maximize)
         if self._get_preview_frame:
             self.window.after(VIDEO_REFRESH_MS, self._update_video)
+
+    def _fit_design_to_screen(self):
+        """Scales every CTk widget so the 1920x1080 design fills the screen
+        a maximized window gets (the work area minus the title bar), rather
+        than rendering at design size times Windows' display scaling. Only
+        this process is affected - the gate monitor is the entry-agent's
+        sole window. Returns the work area's width in real pixels."""
+        dpi = ctk.ScalingTracker.get_window_scaling(self.window)
+        work_width, work_height = _screen_work_area(self.window)
+        client_height = work_height - round(24 * dpi)  # a maximized window's title bar
+        fit = max(MIN_DESIGN_FIT, min(work_width / DESIGN_WIDTH, client_height / DESIGN_HEIGHT))
+        ctk.set_widget_scaling(fit / dpi)
+        # Changing the scaling makes CTk pin the window's max size to its
+        # current size for about a second (it restores it on a timer), which
+        # would silently block the maximize scheduled in __init__ - release
+        # that pin now. CTk's own timer later restores the proper min size.
+        tk.Tk.maxsize(self.window, 100000, 100000)
+        return work_width
 
     def _maximize(self):
         if self._closed:
@@ -553,39 +623,164 @@ class GateMonitorWindow:
         except tk.TclError:
             pass
 
-    # ---- layout ---------------------------------------------------------
+    # ---- small builders -------------------------------------------------
+
+    def _tkfont(self, family, px, weight="normal"):
+        """A tkinter Font at `px` logical pixels - for measuring text and for
+        drawing on the video canvas, which (unlike CTk widgets) doesn't scale
+        its own fonts for the display's DPI."""
+        key = (family, px, weight)
+        if key not in self._font_cache:
+            self._font_cache[key] = tkfont.Font(
+                root=self.window, family=family, size=-max(1, round(px * self._scale)), weight=weight
+            )
+        return self._font_cache[key]
+
+    def _px(self, logical):
+        return round(logical * self._scale)
 
     @staticmethod
-    def _pad(text):
-        """Pill-style CTkLabels get their horizontal breathing room from the
-        text itself - `place`d and `grid`ed labels can't take pack's ipadx,
-        so padding the string is the one approach that works everywhere."""
-        return f"  {text}  "
+    def _label(parent, text="", font=None, color=INK, **kwargs):
+        return ctk.CTkLabel(parent, text=text, font=font, text_color=color, **kwargs)
 
-    def _chip(self, parent, text, color):
+    def _icon_label(self, parent, name, size, color, bold=True, **kwargs):
+        family = ICON_FONT_BOLD if bold else ICON_FONT
         return ctk.CTkLabel(
-            parent, text=self._pad(text), font=(FONT, 10), text_color=color,
-            fg_color=CARD_BG, corner_radius=9, height=24,
+            parent, text=_icon(name, bold), font=(family or FONT, size), text_color=color, **kwargs
         )
 
-    def _build_stats_strip(self):
-        self.stats_strip = ctk.CTkFrame(self.window, fg_color="transparent")
-        self.stats_strip.grid(row=1, column=0, sticky="ew", padx=18, pady=(14, 8))
+    def _ctk_image(self, pil_image, size):
+        return ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=(size, size))
 
+    def _thumb(self, entry, size):
+        """The picture for a log entry: the person's photo (or the actual
+        cropped capture for an unknown/spoof/covered face), falling back to
+        an initials tile or an icon tile when there's no photo to show.
+        Rendered at the display's real pixel size so it stays crisp."""
+        real = self._px(size)
+        image = _avatar_image(entry.get("photo_bytes"), real)
+        if image is None:
+            kind = entry["kind"]
+            if kind in ("unknown", "spoof"):
+                image = _glyph_tile(real, INK, "user-circle-dashed", INK_400)
+            elif kind == "covered":
+                image = _glyph_tile(real, INK, "hand-palm", INK_400)
+            elif kind == "card_rejected":
+                image = _glyph_tile(real, DANGER, "identification-card", SURFACE, bold=True)
+            elif kind == "card_offline":
+                image = _glyph_tile(real, CAUTION, "cloud-slash", SURFACE, bold=True)
+            else:
+                image = _initials_avatar(entry.get("initials_seed") or entry.get("name"), real)
+        image = _round_corners(image, self._px(3))
+        return self._ctk_image(image, size)
+
+    # ---- layout ---------------------------------------------------------
+
+    def _build_header(self):
+        s = self._s
+        header = ctk.CTkFrame(self.window, fg_color=MAROON, corner_radius=0, height=s["header"])
+        header.grid(row=0, column=0, sticky="ew")
+        header.pack_propagate(False)
+        self.header = header
+        ctk.CTkFrame(self.window, fg_color=BRASS, corner_radius=0, height=3).grid(row=1, column=0, sticky="ew")
+
+        try:
+            seal = Image.open(ICON_PATH).convert("RGBA")
+            self._seal_image = ctk.CTkImage(light_image=seal, dark_image=seal, size=(s["seal"], s["seal"]))
+            ctk.CTkLabel(header, image=self._seal_image, text="").pack(side="left", padx=(s["pad"], 26))
+        except Exception:
+            pass  # a missing seal asset shouldn't stop the gate from opening
+
+        wordmark = ctk.CTkFrame(header, fg_color="transparent")
+        wordmark.pack(side="left", padx=(0, 26))
+        self._label(wordmark, "EVSU", (WIDE_BLACK, 20), "white", height=22).pack(anchor="w")
+        self._label(wordmark, "SecureTap", (SEMI_BOLD, 20), "white", height=22).pack(anchor="w")
+
+        # Plain tk.Frame - a 1px CTkFrame draws nothing, which is why this
+        # divider used to be missing.
+        tk.Frame(header, bg=BRASS, width=max(1, self._px(1))).pack(side="left", fill="y", pady=26)
+
+        # Right side packs right-to-left: direction pill, then the clock.
+        badge = ctk.CTkFrame(header, fg_color=SURFACE, corner_radius=round(s["badge"] * 1.1))
+        badge.pack(side="right", padx=(26, s["pad"]))
+        direction = (self.direction or "entry").lower()
+        self._icon_label(badge, "sign-out" if direction == "exit" else "sign-in", round(s["badge"] * 1.0),
+                         MAROON_DEEP).pack(side="left", padx=(18, 8), pady=8)
+        self._label(badge, direction.upper(), (WIDE_HEAVY, s["badge"]), MAROON_DEEP).pack(
+            side="left", padx=(0, 22), pady=8
+        )
+
+        clock = ctk.CTkFrame(header, fg_color="transparent")
+        clock.pack(side="right")
+        self.clock_label = self._label(clock, "", (FONT_MONO_MEDIUM, s["clock"]), "white", height=s["clock"] + 4)
+        self.clock_label.pack(anchor="e")
+        self.date_label = self._label(clock, "", (FONT_MONO, 14), "white", height=18)
+        self.date_label.pack(anchor="e")
+
+        title = ctk.CTkFrame(header, fg_color="transparent")
+        title.pack(side="left", fill="x", expand=True, padx=(26, 26))
+        self._title_full = f"{self.gate_location} — live monitoring"
+        self._title_label = self._label(
+            title, self._title_full, (SEMI_HEAVY, s["title"]), "white", anchor="w", height=s["title"] + 6,
+        )
+        self._title_label.pack(fill="x", anchor="w")
+        self._label(title, "Face recognition + NFC card", (FONT, 16), "white", anchor="w", height=20).pack(
+            fill="x", anchor="w"
+        )
+        self._title_frame = title
+        self._title_width = None
+        title.bind("<Configure>", self._fit_header_title)
+
+    def _fit_header_title(self, _event=None):
+        """Ellipsizes the gate title to whatever width is left between the
+        wordmark and the clock, so a long gate name or a narrow window never
+        runs the title underneath the clock."""
+        width = self._title_frame.winfo_width()
+        if width <= 1 or width == self._title_width:
+            return
+        self._title_width = width
+        font = self._tkfont(SEMI_HEAVY, self._s["title"])
+        self._title_label.configure(text=_ellipsize(font, self._title_full, width - self._px(4)))
+
+    def _tick_clock(self):
+        if self._closed:
+            return
+        now = datetime.now()
+        self.clock_label.configure(text=now.strftime("%I:%M:%S %p"))
+        self.date_label.configure(text=f"{now:%a} · {now:%b} {now.day}, {now.year}")
+        self.window.after(1000, self._tick_clock)
+
+    def _build_stats_strip(self, parent):
+        """The stats row above the feed (left column only - the live log
+        takes the full height of the right column): the "today" hero number,
+        then one label + number per stat, each behind a hairline divider,
+        all sitting on one baseline."""
+        s = self._s
+        self.stats_strip = ctk.CTkFrame(parent, fg_color="transparent")
+        self.stats_strip.grid(row=0, column=0, sticky="ew", pady=(max(0, s["stat_top"] - 8), 16))
+
+        hero = ctk.CTkFrame(self.stats_strip, fg_color="transparent")
+        hero.grid(row=0, column=0, sticky="sw", padx=(0, 68))
+        self._hero_frame = hero
+        self._label(hero, "TODAY", (COND_BOLD, 14), INK_600, height=18).pack(anchor="w")
         self.stat_tiles = {}
-        self._stat_tile_frames = []
-        for key, label, color in self.STAT_SPECS:
-            tile = ctk.CTkFrame(
-                self.stats_strip, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER
-            )
-            head = ctk.CTkFrame(tile, fg_color="transparent")
-            head.pack(fill="x", padx=16, pady=(12, 0))
-            ctk.CTkLabel(head, text="●", font=(FONT, 9), text_color=color).pack(side="left", padx=(0, 6))
-            ctk.CTkLabel(head, text=label.upper(), font=(FONT, 10, "bold"), text_color=TEXT_MUTED).pack(side="left")
+        self.stat_tiles["today"] = self._label(hero, "0", (WIDE_HEAVY, s["hero"]), INK, height=round(s["hero"] * 0.95))
+        self.stat_tiles["today"].pack(anchor="w")
 
-            value_label = ctk.CTkLabel(tile, text="0", font=(FONT, 26, "bold"), text_color=TEXT_PRIMARY)
-            value_label.pack(padx=16, pady=(0, 12), anchor="w")
-            self.stat_tiles[key] = value_label
+        self._stat_tile_frames = []
+        for key, label, color, icon in self.STAT_SPECS:
+            tile = ctk.CTkFrame(self.stats_strip, fg_color="transparent")
+            # Plain tk.Frame - a CTkFrame this thin draws nothing at all.
+            tk.Frame(tile, bg=LINE, width=max(1, self._px(1))).pack(side="left", fill="y")
+            body = ctk.CTkFrame(tile, fg_color="transparent")
+            body.pack(side="left", anchor="s", padx=(26, 42))
+            head = ctk.CTkFrame(body, fg_color="transparent")
+            head.pack(anchor="w")
+            self._icon_label(head, icon, 16, color, height=18).pack(side="left", padx=(0, 6))
+            self._label(head, label, (COND_BOLD, 14), color, height=18).pack(side="left")
+            value = self._label(body, "0", (WIDE_BOLD, s["stat"]), color, height=round(s["stat"] * 0.95))
+            value.pack(anchor="w")
+            self.stat_tiles[key] = value
             self._stat_tile_frames.append(tile)
 
         self._stats_columns = None  # forces the first _relayout_stats call to actually apply
@@ -597,216 +792,293 @@ class GateMonitorWindow:
         self._stats_columns = columns
         for tile in self._stat_tile_frames:
             tile.grid_forget()
-        for column in range(max(self.STATS_COLUMNS_WIDE, self.STATS_COLUMNS_NARROW)):
-            # Reset every column this strip has ever used, not just the ones
-            # about to be reused - otherwise a column dropped when going from
-            # 6-wide to 3-narrow keeps its old weight/uniform tag and quietly
-            # reserves dead space nothing sits in anymore.
-            self.stats_strip.grid_columnconfigure(column, weight=0, uniform="")
+        # Wrapped onto two rows, the hero number spans both so it stays
+        # beside the stats instead of leaving a hole under itself.
+        rows = -(-len(self._stat_tile_frames) // columns)
+        self._hero_frame.grid_configure(rowspan=rows)
         for index, tile in enumerate(self._stat_tile_frames):
             row, column = divmod(index, columns)
-            tile.grid(
-                row=row, column=column, sticky="ew",
-                padx=(0 if column == 0 else 10, 0), pady=(0 if row == 0 else 10, 0),
-            )
-        for column in range(columns):
-            self.stats_strip.grid_columnconfigure(column, weight=1, uniform="stat")
+            # "ns" so the divider runs the full height of the row.
+            tile.grid(row=row, column=column + 1, sticky="nsw", pady=(0 if row == 0 else 10, 0))
 
-    def _on_window_configure(self, event):
-        # Tkinter fires <Configure> for every child widget resize too, not
-        # just the toplevel - without this guard, every stat tile's own
-        # grid() call above would re-enter this handler.
-        if event.widget is not self.window:
+    def _on_left_configure(self, event):
+        # Wraps the stats onto two rows only when one row genuinely doesn't
+        # fit the left column - measured from the stats' own requested
+        # widths rather than a guessed window breakpoint, since the column's
+        # width depends on the 7:5 split as much as on the window. (CTk
+        # delivers this from the frame's internal canvas, so event.widget is
+        # never the CTkFrame itself - no widget check here.) Measured once
+        # the resize settles, from the column's real width - the event's own
+        # width can be a stale intermediate during a maximize/restore.
+        self.window.after_idle(self._check_stats_wrap)
+
+    def _check_stats_wrap(self):
+        if self._closed:
             return
-        wrapped = event.width < self.STATS_WRAP_BREAKPOINT
+        width = self._left_column.winfo_width()
+        if width <= 1:
+            return
+        # The hero's right padding isn't part of its requested width.
+        needed = (self._hero_frame.winfo_reqwidth() + self._px(68)
+                  + sum(t.winfo_reqwidth() for t in self._stat_tile_frames))
+        wrapped = width < needed
         self._relayout_stats(self.STATS_COLUMNS_NARROW if wrapped else self.STATS_COLUMNS_WIDE)
 
     def _build_main_area(self):
+        """Two columns under the header, 7:5. Left: the stats row, the video
+        feed (absorbing all spare height) and the card scanner strip. Right:
+        the live log, running the full height from the header to the status
+        bar - it's the running record, so it gets every row it can show."""
+        s = self._s
         area = ctk.CTkFrame(self.window, fg_color="transparent")
-        area.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 10))
+        area.grid(row=2, column=0, sticky="nsew", padx=s["pad"], pady=(8, 16))
         area.grid_rowconfigure(0, weight=1)
-        # The live log is the wider half (3 vs 2) - it's the panel a guard
-        # reads, so it gets the space. `uniform` makes those weights an
-        # actual 2:3 width ratio instead of just a split of leftover space.
-        area.grid_columnconfigure(0, weight=2, uniform="main")
-        area.grid_columnconfigure(1, weight=3, uniform="main")
+        area.grid_columnconfigure(0, weight=7, uniform="main")
+        area.grid_columnconfigure(1, weight=5, uniform="main")
 
         left = ctk.CTkFrame(area, fg_color="transparent")
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, s["col_gap"]))
         left.grid_columnconfigure(0, weight=1)
-        left.grid_rowconfigure(0, weight=1)  # video absorbs all spare height;
-        # the card panel's row stays weight 0 and keeps its natural height, so
-        # the live monitor is always the taller of the two.
+        left.grid_rowconfigure(1, weight=1)  # the feed absorbs all spare height
+        self._left_column = left
 
+        self._build_stats_strip(left)
         self._build_video_panel(left)
         self._build_card_panel(left)
         self._build_log_panel(area)
+        left.bind("<Configure>", self._on_left_configure)
 
     def _build_video_panel(self, parent):
-        # Plain, unrounded container now - the canvas below fills it exactly
-        # edge-to-edge and paints its own rounded panel directly (see
-        # VIDEO_PANEL_CORNER_RADIUS's comment), so rounding this frame too
-        # would be invisible at best and a mismatched double edge at worst.
-        video_frame = ctk.CTkFrame(parent, fg_color=BG, corner_radius=0)
-        video_frame.grid(row=0, column=0, sticky="nsew")
-        video_frame.grid_rowconfigure(0, weight=1)
-        video_frame.grid_columnconfigure(0, weight=1)
-
-        # bg=BG (the page background), not VIDEO_BG - this shows only in the
-        # instant before the first draw ever lands (see _draw_frame/
-        # _draw_no_camera_placeholder), which paint a full-canvas rounded
-        # VIDEO_BG panel over literally every pixel from then on, corners
-        # included. No inset: the canvas fills video_frame exactly.
-        self.video_canvas = tk.Canvas(video_frame, bg=BG, highlightthickness=0)
-        self.video_canvas.grid(row=0, column=0, sticky="nsew")
-
-        # The "LIVE MONITOR" badge and the caption below it used to be
-        # separate CTkLabel widgets stacked on top of the canvas. A CTkLabel
-        # is itself backed by its OWN small canvas that has to paint some
-        # solid color across its whole bounding box first - Tk has no way
-        # for one widget to show "whatever's behind it" from a different
-        # sibling widget, so bg_color is always a flat, static fill, never
-        # true transparency. That looked fine over the placeholder's flat
-        # VIDEO_BG, but shows as an obviously wrong solid patch over real,
-        # constantly-changing video - and no bg_color choice fixes that,
-        # since the mismatch is structural, not a wrong color. Both are now
-        # drawn directly ON the video canvas instead, every redraw (the same
-        # approach _draw_box already uses for recognition labels) - a true
-        # overlay, so the badge has no surrounding rectangle beyond its own
-        # red pill, and the caption has no background at all. See
-        # _draw_overlays, called at the end of both _draw_frame and
-        # _draw_no_camera_placeholder. _caption_text is the plain string
-        # state that replaces caption_label's old .configure(text=...) calls.
-        self._caption_text = "Starting camera..."
-
-        # The spoof/occlusion/unknown-person alert banner had the exact same
-        # CTkLabel-over-live-video problem described above (fg_color=DANGER
-        # pill, bg_color=VIDEO_BG filling the rounded corners' cutout with a
-        # flat near-black fill instead of the live frame behind it - VIDEO_BG
-        # is "#0B1220", near-black, which is why the corners specifically
-        # looked solid black rather than some other obviously-wrong color).
-        # Fixed the same way: no widget, just state read by _draw_overlays.
-        # None means "not currently shown".
-        self._alert_text = None
+        # The canvas fills its cell edge-to-edge and paints the whole panel
+        # itself - dark rounded body, the top strip (LIVE row or alarm
+        # banner) and the feed - as ONE composited image each frame, masked
+        # to the panel's corner radius (see _compose_panel). Overlay text is
+        # drawn straight onto the canvas on top of that, never as CTkLabel
+        # widgets: a widget can't show the live video behind it, so any
+        # label over the feed would sit in its own flat-colored box.
+        self.video_canvas = tk.Canvas(parent, bg=CANVAS, highlightthickness=0)
+        self.video_canvas.grid(row=1, column=0, sticky="nsew")
+        self._caption_text = "Starting camera…"
 
     def _build_card_panel(self, parent):
-        """The compact card-scanner strip under the feed. Swaps between a
-        "tap a card" prompt and a horizontal result row - horizontal because
-        the panel is deliberately short, and because the full-height portrait
-        card this replaces is no longer needed: every tap also lands in the
-        live log next to it."""
-        panel = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=16, border_width=1, border_color=BORDER)
-        panel.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
-        panel.grid_columnconfigure(0, weight=1)
+        """The compact card-scanner strip under the feed: a status bar on its
+        left edge, a fixed "CARD SCANNER · Reader ready" label block, then a
+        body that swaps between the tap prompt and the latest tap's result.
+        The outer frame is filled with the status color and the white inner
+        panel sits inset by the bar's width - CTk can't round just one side of
+        a frame, so this is how the colored edge follows the rounded corners."""
+        s = self._s
+        self.card_panel = ctk.CTkFrame(parent, fg_color=LINE, corner_radius=8, height=s["scan"])
+        self.card_panel.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        self.card_panel.grid_propagate(False)
+        self.card_panel.grid_rowconfigure(0, weight=1)
+        self.card_panel.grid_columnconfigure(0, weight=1)
 
-        head = ctk.CTkFrame(panel, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=16, pady=(13, 0))
-        head.grid_columnconfigure(1, weight=1)
-        ctk.CTkFrame(head, fg_color=MAROON, width=4, height=18, corner_radius=2).grid(row=0, column=0, padx=(0, 10))
-        ctk.CTkLabel(head, text="Card scanner", font=(FONT, 14, "bold"), text_color=TEXT_PRIMARY).grid(
-            row=0, column=1, sticky="w"
-        )
-        self.reader_label = ctk.CTkLabel(head, text="● Reader ready", font=(FONT, 10), text_color=SUCCESS)
-        self.reader_label.grid(row=0, column=2, sticky="e")
+        inner = ctk.CTkFrame(self.card_panel, fg_color=SURFACE, corner_radius=7)
+        inner.grid(row=0, column=0, sticky="nsew", padx=(6, 1), pady=1)
+        inner.grid_rowconfigure(0, weight=1)
+        inner.grid_columnconfigure(2, weight=1)
+        self.card_inner = inner
 
-        self.card_body = ctk.CTkFrame(panel, fg_color="transparent")
-        self.card_body.grid(row=1, column=0, sticky="nsew", padx=16, pady=(10, 14))
-        self.card_body.grid_columnconfigure(0, weight=1)
+        label_block = ctk.CTkFrame(inner, fg_color="transparent", width=s["scan_label"])
+        # Inset vertically so its square canvas can't paint over the
+        # panel's rounded corners.
+        label_block.grid(row=0, column=0, sticky="ns", padx=(14, 16), pady=8)
+        label_block.grid_propagate(False)
+        label_block.grid_rowconfigure((0, 3), weight=1)
+        self._label(label_block, "CARD SCANNER", (COND_BOLD, 14), INK_600, anchor="w").grid(row=1, column=0, sticky="w")
+        ready = ctk.CTkFrame(label_block, fg_color="transparent")
+        ready.grid(row=2, column=0, sticky="w", pady=(4, 0))
+        self._icon_label(ready, "check-circle", 16, VERIFIED).pack(side="left", padx=(0, 6))
+        self.reader_label = self._label(ready, "Reader ready", (FONT, 14, "bold"), VERIFIED)
+        self.reader_label.pack(side="left")
+
+        ctk.CTkFrame(inner, fg_color=LINE, width=1, height=1, corner_radius=0).grid(row=0, column=1, sticky="ns")
+
+        # The swapping body. Its fg changes to a tint for a rejected/queued
+        # tap, so every widget inside is recolored explicitly on each render
+        # (see _set_card_body_color) - CTk only pushes a new parent color
+        # down one level.
+        self.card_body = ctk.CTkFrame(inner, fg_color=SURFACE, corner_radius=0)
+        self.card_body.grid(row=0, column=2, sticky="nsew", padx=(0, 6), pady=6)
         self.card_body.grid_rowconfigure(0, weight=1)
+        self.card_body.grid_columnconfigure(1, weight=1)
 
-        self.card_waiting = ctk.CTkFrame(self.card_body, fg_color=SURFACE_ALT, corner_radius=14)
-        waiting_inner = ctk.CTkFrame(self.card_waiting, fg_color="transparent")
-        waiting_inner.pack(expand=True, pady=20)
-        ctk.CTkLabel(waiting_inner, text="(( • ))", font=(FONT, 22, "bold"), text_color=ACCENT).pack()
-        ctk.CTkLabel(waiting_inner, text="Tap a card", font=(FONT, 15, "bold"), text_color=TEXT_PRIMARY).pack(
-            pady=(8, 1)
-        )
-        ctk.CTkLabel(
-            waiting_inner, text="Hold ID near the reader", font=(FONT, 11), text_color=TEXT_SECONDARY
-        ).pack()
+        tile = s["tile"]
+        self.card_tile = ctk.CTkLabel(self.card_body, text="", width=tile, height=tile, corner_radius=8)
+        self.card_tile.grid(row=0, column=0, padx=(20, 20))
 
-        self.card_result = ctk.CTkFrame(self.card_body, fg_color="transparent")
-        self.card_result.grid_columnconfigure(1, weight=1)
-        self.card_avatar = ctk.CTkLabel(self.card_result, text="")
-        self.card_avatar.grid(row=0, column=0, sticky="n")
-
-        info = ctk.CTkFrame(self.card_result, fg_color="transparent")
-        info.grid(row=0, column=1, sticky="nsew", padx=(16, 0))
-        self.card_status = ctk.CTkLabel(info, text="", font=(FONT, 12, "bold"), anchor="w")
-        self.card_status.pack(fill="x")
-        self.card_name = ctk.CTkLabel(info, text="", font=(FONT, 18, "bold"), text_color=TEXT_PRIMARY, anchor="w")
-        self.card_name.pack(fill="x", pady=(3, 0))
-        self.card_sub = ctk.CTkLabel(
-            info, text="", font=(FONT, 11), text_color=TEXT_SECONDARY, anchor="w",
-            wraplength=260, justify="left",
-        )
-        self.card_sub.pack(fill="x")
-        # card_ids is packed/unpacked per result rather than just blanked: a
-        # rejected tap has no IDs to show, and an empty label still reserves
-        # its line - height the camera feed above should be getting instead.
-        self.card_ids = ctk.CTkLabel(info, text="", font=(FONT_MONO, 11), text_color=TEXT_PRIMARY, anchor="w")
-        self.card_ids.pack(fill="x", pady=(8, 0))
-        # Same packed/unpacked-per-result pattern as card_ids above - a
-        # distinguishing note (see users.models.Person.distinguishing_note)
+        text = ctk.CTkFrame(self.card_body, fg_color="transparent")
+        text.grid(row=0, column=1, sticky="ew")
+        self.card_text = text
+        self.card_title = self._label(text, "", (SEMI_HEAVY, s["tap_title"]), INK, anchor="w")
+        self.card_title.pack(fill="x", anchor="w")
+        self.card_sub = self._label(text, "", (FONT, 16), INK_600, anchor="w")
+        self.card_sub.pack(fill="x", anchor="w")
+        self.card_ids = self._label(text, "", (FONT_MONO_MEDIUM, 14), INK_600, anchor="w")
+        self.card_ids.pack(fill="x", anchor="w")
+        # A distinguishing note (see users.models.Person.distinguishing_note)
         # only shows when this specific person has one on file.
-        self.card_note = ctk.CTkLabel(
-            info, text="", font=(FONT, 10, "bold"), text_color=WARNING, anchor="w",
-            wraplength=260, justify="left",
-        )
-        self.card_time = ctk.CTkLabel(info, text="", font=(FONT, 10), text_color=TEXT_MUTED, anchor="w")
-        self.card_time.pack(fill="x", pady=(4, 0))
+        self.card_note = self._label(text, "", (FONT, 13, "bold"), CAUTION, anchor="w")
+
+        right = ctk.CTkFrame(self.card_body, fg_color="transparent")
+        right.grid(row=0, column=2, sticky="e", padx=(12, 20))
+        self.card_right = right
+        word_row = ctk.CTkFrame(right, fg_color="transparent")
+        word_row.pack(anchor="e")
+        self.card_word_icon = self._icon_label(word_row, "identification-card", 24, VERIFIED)
+        self.card_word_icon.pack(side="left", padx=(0, 6))
+        self.card_word = self._label(word_row, "", (COND_HEAVY, 22), VERIFIED)
+        self.card_word.pack(side="left")
+        self.card_word_row = word_row
+        self.card_time = self._label(right, "", (FONT_MONO_MEDIUM, 16), INK_600, anchor="e")
+        self.card_time.pack(anchor="e")
 
     def _build_log_panel(self, parent):
-        log_frame = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=16, border_width=1, border_color=BORDER)
-        log_frame.grid(row=0, column=1, sticky="nsew")
-        log_frame.grid_rowconfigure(1, weight=1)
-        log_frame.grid_columnconfigure(0, weight=1)
+        s = self._s
+        log = ctk.CTkFrame(parent, fg_color="transparent")
+        log.grid(row=0, column=1, sticky="nsew")
+        self._log_panel = log
+        log.grid_columnconfigure(0, weight=1)
+        log.grid_rowconfigure(4, weight=1)
 
-        head = ctk.CTkFrame(log_frame, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=18, pady=(15, 8))
-        head.grid_columnconfigure(1, weight=1)
-        ctk.CTkFrame(head, fg_color=MAROON, width=4, height=22, corner_radius=2).grid(row=0, column=0, padx=(0, 10))
-        ctk.CTkLabel(head, text="Live log", font=(FONT, 17, "bold"), text_color=TEXT_PRIMARY).grid(
-            row=0, column=1, sticky="w"
+        head = ctk.CTkFrame(log, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        head.grid_columnconfigure(0, weight=1)
+        self._label(head, "Live log", (SEMI_BOLD, 20), INK, anchor="w").grid(row=0, column=0, sticky="w")
+        self.log_count_label = self._label(
+            head, f"Newest first · last {self.MAX_LOG_ROWS}", (FONT_MONO, 14), INK_600, anchor="e"
         )
-        self.log_count_label = ctk.CTkLabel(
-            head, text=self._pad("0 events"), font=(FONT, 10, "bold"), text_color=TEXT_SECONDARY,
-            fg_color=SURFACE_ALT, corner_radius=9, height=24,
-        )
-        self.log_count_label.grid(row=0, column=2, sticky="e")
+        self.log_count_label.grid(row=0, column=1, sticky="e")
 
-        self.log_list = ctk.CTkScrollableFrame(log_frame, fg_color="transparent")
-        self.log_list.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 12))
-        for col in range(self.LOG_GRID_COLUMNS):
-            self.log_list.grid_columnconfigure(col, weight=1, uniform="log_card")
+        # Featured (newest) event: a colored band with the event's word and
+        # time, over a white body with the photo, name, ID and match score.
+        # Band and body are two rounded frames overlapped with a square
+        # filler strip hiding the seam, since CTk can't round only the top or
+        # bottom corners of one frame.
+        self._band_h = s["band"]
+        # Tall enough for a name wrapped onto two lines plus the ID line
+        # under it, not just the photo - long Filipino names wrap often.
+        text_h = round(s["feat_name"] * 1.3 * 2 + 18)
+        body_h = max(s["feat_thumb"], text_h) + 2 * s["feat_pad"]
+        self.feat_card = ctk.CTkFrame(log, fg_color="transparent", corner_radius=0, height=self._band_h + body_h)
+        self.feat_card.grid(row=1, column=0, sticky="ew")
+        self.feat_band = ctk.CTkFrame(self.feat_card, fg_color=INK_600, corner_radius=8, height=self._band_h + 10)
+        self.feat_band.place(x=0, y=0, relwidth=1)
+        self.feat_body = ctk.CTkFrame(self.feat_card, fg_color=SURFACE, corner_radius=8, height=body_h)
+        self.feat_body.place(x=0, y=self._band_h, relwidth=1)
+        ctk.CTkFrame(self.feat_card, fg_color=SURFACE, corner_radius=0, height=10).place(
+            x=0, y=self._band_h, relwidth=1
+        )
+
+        # Fixed heights: pack/grid would otherwise shrink these frames to
+        # their contents and break the band/body overlap above.
+        self.feat_band.pack_propagate(False)
+        self.feat_body.grid_propagate(False)
+        band_row = ctk.CTkFrame(self.feat_band, fg_color=INK_600, corner_radius=0, height=self._band_h - 4)
+        band_row.pack(fill="x", padx=12, pady=(2, 0))
+        band_row.pack_propagate(False)
+        self.feat_band_row = band_row
+        self.feat_icon = self._icon_label(band_row, "sign-in", s["feat_word"] + 4, "white", fg_color=INK_600)
+        self.feat_icon.pack(side="left", padx=(8, 8))
+        self.feat_word = self._label(band_row, "", (COND_HEAVY, s["feat_word"]), "white", fg_color=INK_600, anchor="w")
+        self.feat_word.pack(side="left", fill="x", expand=True)
+        self.feat_time = self._label(band_row, "", (FONT_MONO_MEDIUM, 16), "white", fg_color=INK_600)
+        self.feat_time.pack(side="right", padx=(10, 8))
+
+        self.feat_body.grid_columnconfigure(1, weight=1)
+        self.feat_body.grid_rowconfigure(0, weight=1)
+        self.feat_thumb = ctk.CTkLabel(self.feat_body, text="")
+        self.feat_thumb.grid(row=0, column=0, padx=(18, 16), pady=s["feat_pad"])
+        feat_text = ctk.CTkFrame(self.feat_body, fg_color="transparent")
+        feat_text.grid(row=0, column=1, sticky="ew")
+        self.feat_name = self._label(feat_text, "", (FONT, s["feat_name"], "bold"), INK, anchor="w", justify="left")
+        self.feat_name.pack(fill="x", anchor="w")
+        self.feat_id = self._label(feat_text, "", (FONT_MONO_MEDIUM, 16), INK_600, anchor="w")
+        self.feat_id.pack(fill="x", anchor="w", pady=(6, 0))
+        self.feat_match = ctk.CTkFrame(self.feat_body, fg_color="transparent")
+        self.feat_match.grid(row=0, column=2, sticky="e", padx=(12, 18))
+        self._label(self.feat_match, "MATCH", (COND_BOLD, 14), INK_600, anchor="e").pack(anchor="e")
+        self.feat_conf = self._label(self.feat_match, "", (FONT_MONO_SEMIBOLD, s["feat_conf"]), INK, anchor="e")
+        self.feat_conf.pack(anchor="e")
+
+        self.feat_empty = self._label(
+            log, "Waiting for the first scan or tap…", (FONT, 16), INK_600, anchor="w"
+        )
+
+        self._label(log, "EARLIER", (COND_BOLD, 14), INK_600, anchor="w").grid(
+            row=3, column=0, sticky="w", pady=(20, 6)
+        )
+        self.log_list = ctk.CTkScrollableFrame(
+            log, fg_color=SURFACE, corner_radius=8, border_width=1, border_color=LINE,
+            # Scrollbar blends into the card until hovered (the design shows
+            # none); the list still scrolls with the mouse wheel.
+            scrollbar_button_color=SURFACE, scrollbar_button_hover_color=LINE,
+        )
+        self.log_list.grid(row=4, column=0, sticky="nsew")
+        self.log_list.grid_columnconfigure(0, weight=1)
+        # Names/meta lines are ellipsized to the list's width at build time,
+        # so re-lay the log out (debounced) when that width actually changes.
+        self._log_width = None
+        self._log_relayout_job = None
+        log.bind("<Configure>", self._on_log_configure)
+
+    def _on_log_configure(self, event):
+        if self._log_width is not None and abs(event.width - self._log_width) < 8:
+            return
+        self._log_width = event.width
+        if self._log_relayout_job:
+            self.window.after_cancel(self._log_relayout_job)
+        self._log_relayout_job = self.window.after(150, self._relayout_log)
+
+    def _relayout_log(self):
+        self._log_relayout_job = None
+        if not self._closed:
+            self._rebuild_log_list()
 
     def _build_status_bar(self):
-        bar = ctk.CTkFrame(self.window, fg_color="transparent")
-        bar.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 14))
-        self.threshold_label = self._chip(bar, "Recognition running", TEXT_SECONDARY)
-        self.threshold_label.pack(side="left")
-        # Camera health used to sit on the entry-agent's own launcher screen.
-        # That screen is gone - the monitor opens directly now - so it moves
-        # here rather than being dropped: a camera that stopped responding is
-        # precisely what a guard needs to notice, and the feed going still
-        # doesn't always look different from an empty gate.
-        self.camera_label = self._chip(bar, "Camera ✓", SUCCESS)
-        self.camera_label.pack(side="left", padx=(8, 0))
-        self._build_camera_picker(bar)
+        tk.Frame(self.window, bg=LINE, height=max(1, self._px(1))).grid(row=3, column=0, sticky="ew")
+        bar = ctk.CTkFrame(self.window, fg_color=SURFACE, corner_radius=0, height=48)
+        bar.grid(row=4, column=0, sticky="ew")
+        inner = ctk.CTkFrame(bar, fg_color="transparent")
+        inner.pack(fill="x", padx=self._s["pad"], pady=6)
 
-        # Same for the officer/version footer the launcher used to carry.
+        threshold = ctk.CTkFrame(inner, fg_color="transparent")
+        threshold.pack(side="left")
+        self._label(threshold, "Recognition threshold", (FONT, 14), INK_600).pack(side="left", padx=(0, 6))
+        self.threshold_label = self._label(threshold, "—", (FONT_MONO_MEDIUM, 14), INK)
+        self.threshold_label.pack(side="left")
+
+        # Camera health - a camera that stopped responding is precisely what
+        # a guard needs to notice, and the feed going still doesn't always
+        # look different from an empty gate.
+        camera = ctk.CTkFrame(inner, fg_color="transparent")
+        camera.pack(side="left", padx=(26, 0))
+        self.camera_icon = self._icon_label(camera, "check-circle", 16, VERIFIED)
+        self.camera_icon.pack(side="left", padx=(0, 6))
+        self.camera_label = self._label(camera, "Camera OK", (FONT, 14, "bold"), VERIFIED)
+        self.camera_label.pack(side="left")
+        self._build_camera_picker(inner)
+
         identity = " · ".join(part for part in (self.officer_name, self.version) if part)
         if identity:
-            ctk.CTkLabel(bar, text=identity, font=(FONT, 10), text_color=TEXT_MUTED).pack(
-                side="left", padx=(14, 0)
-            )
+            self._label(inner, identity, (FONT, 14), INK_600).pack(side="left", padx=(26, 0))
 
-        self.sync_label = self._chip(bar, "Synced", SUCCESS)
-        self.sync_label.pack(side="right")
-        self.queue_label = self._chip(bar, "Queue 0", TEXT_MUTED)
-        self.queue_label.pack(side="right", padx=(0, 8))
-        self.backend_label = self._chip(bar, "Backend ✓", SUCCESS)
-        self.backend_label.pack(side="right", padx=(0, 8))
+        # Right side, packed right-to-left: sync, queue, backend.
+        sync = ctk.CTkFrame(inner, fg_color="transparent")
+        sync.pack(side="right")
+        self.sync_icon = self._icon_label(sync, "check-circle", 16, VERIFIED)
+        self.sync_icon.pack(side="left", padx=(0, 6))
+        self.sync_label = self._label(sync, "Synced", (FONT, 14, "bold"), VERIFIED)
+        self.sync_label.pack(side="left")
+        self.queue_label = self._label(inner, "Queue 0", (FONT_MONO_MEDIUM, 14), INK_600)
+        self.queue_label.pack(side="right", padx=(0, 26))
+        backend = ctk.CTkFrame(inner, fg_color="transparent")
+        backend.pack(side="right", padx=(0, 26))
+        self.backend_icon = self._icon_label(backend, "check-circle", 16, VERIFIED)
+        self.backend_icon.pack(side="left", padx=(0, 6))
+        self.backend_label = self._label(backend, "Backend OK", (FONT, 14, "bold"), VERIFIED)
+        self.backend_label.pack(side="left")
 
     def _build_camera_picker(self, bar):
         """A laptop with more than one camera (or a desktop where the
@@ -832,12 +1104,12 @@ class GateMonitorWindow:
 
         self.camera_picker = ctk.CTkOptionMenu(
             bar, values=display_values, command=self._handle_camera_picked,
-            width=190, height=24, font=(FONT, 10), dropdown_font=(FONT, 10),
-            fg_color=CARD_BG, text_color=TEXT_PRIMARY,
-            button_color=MAROON, button_hover_color=MAROON_DARK,
+            width=210, height=30, corner_radius=3, font=(FONT_MONO, 13), dropdown_font=(FONT_MONO, 13),
+            fg_color=CANVAS, text_color=INK, button_color=CANVAS, button_hover_color=LINE,
+            dropdown_fg_color=SURFACE, dropdown_hover_color=CANVAS, dropdown_text_color=INK,
         )
         self.camera_picker.set(default_value)
-        self.camera_picker.pack(side="left", padx=(8, 0))
+        self.camera_picker.pack(side="left", padx=(12, 0))
         if not self._camera_options:
             # Nothing to switch to - still shown (so it's obvious the app
             # looked and found none), just not interactive.
@@ -916,9 +1188,7 @@ class GateMonitorWindow:
                     self.stats["occlusion"] = occlusion
                     self._refresh_stat_labels()
                 elif kind == "threshold":
-                    self.threshold_label.configure(
-                        text=self._pad(f"Recognition running · threshold {payload:.2f}")
-                    )
+                    self.threshold_label.configure(text=f"{payload:.2f}")
                 elif kind == "card_match":
                     self._render_card_match(payload)
                 elif kind == "card_failure":
@@ -927,26 +1197,31 @@ class GateMonitorWindow:
                 elif kind == "card_status":
                     self._show_card_waiting()
                 elif kind == "queue_count":
-                    self.queue_label.configure(text=self._pad(f"Queue {payload}"))
+                    self.queue_label.configure(
+                        text=f"Queue {payload}", text_color=CAUTION if payload else INK_600
+                    )
                 elif kind == "backend_ok":
-                    self.backend_label.configure(
-                        text=self._pad("Backend ✓" if payload else "Backend ✗"),
-                        text_color=SUCCESS if payload else DANGER,
-                    )
+                    self._set_status(self.backend_icon, self.backend_label, payload,
+                                     "Backend OK", "Backend not OK", DANGER, "x-circle")
                 elif kind == "camera_ok":
-                    self.camera_label.configure(
-                        text=self._pad("Camera ✓" if payload else "Camera ✗"),
-                        text_color=SUCCESS if payload else DANGER,
-                    )
+                    self._set_status(self.camera_icon, self.camera_label, payload,
+                                     "Camera OK", "Camera not connected", CAUTION, "warning")
         except queue.Empty:
             pass
         self.window.after(100, self._process_queue)
 
+    def _set_status(self, icon_label, text_label, ok, ok_text, bad_text, bad_color, bad_icon):
+        color = VERIFIED if ok else bad_color
+        icon_label.configure(text=_icon("check-circle" if ok else bad_icon), text_color=color)
+        text_label.configure(text=ok_text if ok else bad_text, text_color=color)
+
     def _render_offline(self, offline):
         if offline:
-            self.sync_label.configure(text=self._pad("Offline - retrying"), text_color=DANGER)
+            self.sync_icon.configure(text=_icon("clock-counter-clockwise"), text_color=CAUTION)
+            self.sync_label.configure(text="Not synced", text_color=CAUTION)
         else:
-            self.sync_label.configure(text=self._pad("Synced"), text_color=SUCCESS)
+            self.sync_icon.configure(text=_icon("check-circle"), text_color=VERIFIED)
+            self.sync_label.configure(text="Synced", text_color=VERIFIED)
 
     # ---- card scanner ---------------------------------------------------
 
@@ -956,6 +1231,7 @@ class GateMonitorWindow:
         if not nfc_id:
             self.show_card_failure("Card read failed - try again.", "read_error")
             return
+        self._last_card_id = nfc_id
         if self.on_tap:
             self.on_tap(nfc_id)
 
@@ -971,82 +1247,132 @@ class GateMonitorWindow:
             self._card_input.focus_force()
         self.window.after(FOCUS_CHECK_MS, self._keep_focus)
 
+    def _set_card_body_color(self, color, bar_color):
+        self.card_panel.configure(fg_color=bar_color)
+        self.card_body.configure(fg_color=color)
+        for frame in (self.card_text, self.card_right, self.card_word_row):
+            frame.configure(bg_color=color)
+        for label in (self.card_tile, self.card_title, self.card_sub, self.card_ids, self.card_note,
+                      self.card_word_icon, self.card_word, self.card_time):
+            label.configure(fg_color=color)
+
+    def _set_card_tile(self, pil_image, size, radius):
+        """pil_image is already at real pixel size; size is logical."""
+        image = self._ctk_image(_round_corners(pil_image, self._px(radius)), size)
+        self._card_images["tile"] = image  # keep a reference or Tk drops it
+        self.card_tile.configure(image=image, width=size, height=size)
+
+    def _pack_card_lines(self, *labels):
+        """Shows exactly these text lines, in this order - re-packing from
+        scratch each time so a line hidden by the previous result can't end
+        up in the wrong place."""
+        for label in (self.card_title, self.card_sub, self.card_ids, self.card_note):
+            label.pack_forget()
+        for label in labels:
+            label.pack(fill="x", anchor="w")
+
     def _show_card_waiting(self):
-        self.card_result.grid_forget()
-        self.card_waiting.grid(row=0, column=0, sticky="nsew")
-
-    def _show_card_result(self):
-        self.card_waiting.grid_forget()
-        self.card_result.grid(row=0, column=0, sticky="nsew")
-
-    def _set_card_avatar(self, photo_bytes, name, fallback_color):
-        avatar = _avatar_image(photo_bytes, self.CARD_AVATAR_SIZE)
-        if avatar is None:
-            avatar = _initials_avatar(
-                name or "?", self.CARD_AVATAR_SIZE, bg=MAROON if name else fallback_color
-            )
-        self._card_avatar_image = ctk.CTkImage(
-            light_image=avatar, dark_image=avatar, size=(self.CARD_AVATAR_SIZE, self.CARD_AVATAR_SIZE)
-        )
-        self.card_avatar.configure(image=self._card_avatar_image, text="")
+        tile = self._s["tile"]
+        self._set_card_body_color(SURFACE, LINE)
+        self._set_card_tile(_glyph_tile(self._px(tile), CANVAS, "identification-card", INK_600, scale=0.56), tile, 8)
+        self.card_title.configure(text="Tap a card", text_color=INK, font=(SEMI_HEAVY, self._s["tap_title"]))
+        self.card_sub.configure(text="Hold ID near the reader")
+        self._pack_card_lines(self.card_title, self.card_sub)
+        self.card_right.grid_remove()
 
     def _render_card_match(self, profile):
         timestamp = datetime.now().strftime("%I:%M:%S %p")
         name = profile.get("name") or "Unknown"
-        direction = (profile.get("direction") or self.direction or "").upper()
+        direction = (profile.get("direction") or self.direction or "entry").upper()
 
-        self._set_card_avatar(profile.get("photo_bytes"), name, SUCCESS)
-        self.card_status.configure(text="✓ Access granted", text_color=SUCCESS)
-        self.card_name.configure(text=name, text_color=TEXT_PRIMARY)
+        self._set_card_body_color(SURFACE, VERIFIED)
+        photo_size = self._s["photo"]
+        photo = _avatar_image(profile.get("photo_bytes"), self._px(photo_size))
+        if photo is None:
+            photo = _initials_avatar(name, self._px(photo_size))
+        self._set_card_tile(photo, photo_size, 3)
+        self.card_title.configure(
+            text=self._fit_card_text(name, (FONT, 28, "bold")), text_color=INK, font=(FONT, 28, "bold")
+        )
         role = (profile.get("role") or "").capitalize()
-        self.card_sub.configure(
-            text=" · ".join(part for part in (role, profile.get("department")) if part) or "—"
-        )
+        self.card_sub.configure(text=" · ".join(part for part in (role, profile.get("department")) if part) or "—")
         self.card_ids.configure(
-            text=f"ID {profile.get('student_id') or '—'}   ·   CARD {profile.get('card_id') or '—'}"
+            text=f"{profile.get('student_id') or '—'} · Card {profile.get('card_id') or '—'}", text_color=INK_600
         )
-        self.card_ids.pack(fill="x", pady=(8, 0), before=self.card_time)
         note = profile.get("distinguishing_note")
         if note:
-            self.card_note.configure(text=f"⚠ {note}")
-            self.card_note.pack(fill="x", pady=(4, 0), before=self.card_time)
+            self.card_note.configure(text=f"Note: {note}", text_color=CAUTION)
+            self._pack_card_lines(self.card_title, self.card_sub, self.card_ids, self.card_note)
         else:
-            self.card_note.pack_forget()
-        self.card_time.configure(text=f"Logged · {timestamp} · {direction.capitalize()}")
-        self._show_card_result()
+            self._pack_card_lines(self.card_title, self.card_sub, self.card_ids)
+        self.card_word_icon.configure(text=_icon("identification-card"), text_color=VERIFIED)
+        self.card_word.configure(text=f"CARD · {direction}", text_color=VERIFIED)
+        self.card_time.configure(text=timestamp)
+        self.card_time.pack(anchor="e")
+        self.card_right.grid()
         self._schedule_card_reset()
 
         self._push_log_row(
-            name=name,
-            meta=f"{profile.get('student_id') or '—'} · {timestamp}",
-            badge_text=f"CARD · {direction}" if direction else "CARD",
-            color=SUCCESS,
-            photo_bytes=profile.get("photo_bytes"),
-            initials_seed=name,
+            kind="card", name=name, id_text=profile.get("student_id") or "—", time=timestamp,
+            word=f"CARD · {direction}", photo_bytes=profile.get("photo_bytes"), initials_seed=name,
         )
 
     def _render_card_failure(self, reason, reason_code):
         timestamp = datetime.now().strftime("%I:%M:%S %p")
-        label = self.FAILURE_HEADLINES.get(reason_code, "Access denied")
+        card_id = self._last_card_id
+        card_text = f"Card {card_id} · {timestamp}" if card_id else timestamp
+        tile = self._s["tile"]
 
-        self._set_card_avatar(None, None, DANGER)
-        self.card_status.configure(text="✗ Card rejected", text_color=DANGER)
-        self.card_name.configure(text=label, text_color=DANGER)
-        self.card_sub.configure(text=reason or "")
-        self.card_ids.pack_forget()
-        self.card_note.pack_forget()
-        self.card_time.configure(text=timestamp)
-        self._show_card_result()
+        if reason_code == "offline":
+            # Not a rejection - the backend just couldn't be reached, and the
+            # tap is already sitting in the offline queue.
+            self._set_card_body_color(CAUTION_TINT, CAUTION)
+            self._set_card_tile(
+                _glyph_tile(self._px(tile), CAUTION, "cloud-slash", SURFACE, scale=0.56, bold=True), tile, 8
+            )
+            self.card_title.configure(
+                text="Offline — tap queued, will sync automatically", text_color=INK, font=(FONT, 20, "bold")
+            )
+            self.card_ids.configure(text=card_text, text_color=INK)
+            self._pack_card_lines(self.card_title, self.card_ids)
+            self.card_right.grid_remove()
+            kind, label = "card_offline", "Tap queued"
+        else:
+            label = self.FAILURE_HEADLINES.get(reason_code, "Access denied")
+            self._set_card_body_color(DANGER_TINT, DANGER)
+            self._set_card_tile(
+                _glyph_tile(self._px(tile), DANGER, "identification-card", SURFACE, scale=0.56, bold=True), tile, 8
+            )
+            self.card_title.configure(text=label, text_color=DANGER, font=(SEMI_HEAVY, self._s["tap_title"]))
+            self.card_ids.configure(text=card_text, text_color=INK)
+            # The backend's own reason, when it says more than the headline
+            # (e.g. "Rejected: check SERVICE_TOKEN ...").
+            if reason and reason.rstrip(".") != label:
+                self.card_note.configure(text=reason, text_color=INK_600)
+                self._pack_card_lines(self.card_title, self.card_ids, self.card_note)
+            else:
+                self._pack_card_lines(self.card_title, self.card_ids)
+            self.card_word_icon.configure(text=_icon("x-circle"), text_color=DANGER)
+            self.card_word.configure(text="CARD REJECTED", text_color=DANGER)
+            self.card_time.pack_forget()
+            self.card_right.grid()
+            kind = "card_rejected"
         self._schedule_card_reset()
 
         self._push_log_row(
-            name=label,
-            meta=f"Card rejected · {timestamp}",
-            badge_text="CARD ✗",
-            color=DANGER,
-            photo_bytes=None,
-            name_color=DANGER,
+            kind=kind, name=label if kind == "card_rejected" else "Card tap queued",
+            id_text=f"Card {card_id}" if card_id else "Card", time=timestamp,
+            word="CARD REJECTED" if kind == "card_rejected" else "QUEUED",
+            feature_word=f"CARD REJECTED · {label}" if kind == "card_rejected" else "OFFLINE · TAP QUEUED",
         )
+
+    def _fit_card_text(self, text, font):
+        """Ellipsizes a long name so it can't push the card strip's right-
+        hand block (CARD · ENTRY + time) off the panel."""
+        available = self.card_body.winfo_width() - self._px(self._s["photo"] + 40 + 220)
+        family, size = font[0], font[1]
+        weight = font[2] if len(font) > 2 else "normal"
+        return _ellipsize(self._tkfont(family, size, weight), text, available)
 
     def _schedule_card_reset(self):
         if self._card_reset_job:
@@ -1058,6 +1384,8 @@ class GateMonitorWindow:
         if self._closed:
             return
         self._show_card_waiting()
+
+    # ---- camera events ----------------------------------------------------
 
     def _render_recognitions(self, recognitions, image_size):
         self._latest_recognitions = recognitions
@@ -1072,73 +1400,68 @@ class GateMonitorWindow:
             self._seen_log_ids.add(log_id)
             if item.get("spoof_suspected"):
                 self.stats["spoof"] += 1
-                self._show_alert_banner("⚠  Possible spoof detected — photo/screen, not a live face")
+                self._show_alert_banner("spoof")
                 _play_alert_sound()
             elif item.get("occlusion_suspected"):
+                # Counted and logged, but no banner and no alarm sound -
+                # covering your face isn't inherently adversarial (a scarf, a
+                # cough, a phone call). The face's own "PLEASE UNCOVER YOUR
+                # FACE" label on the feed is the prompt.
                 self.stats["occlusion"] += 1
-                # No alarm sound - unlike spoof/unknown, covering your face
-                # isn't inherently adversarial (a scarf, a cough, a phone
-                # call), so this is shown prominently but doesn't escalate
-                # audibly by default.
-                self._show_alert_banner("🤚  Please uncover your face and rescan")
             elif item["matched"]:
                 key = "exits" if item["direction"] == "exit" else "entries"
                 self.stats[key] += 1
             else:
                 self.stats["unknown"] += 1
-                self._show_alert_banner("⚠  Unknown person detected — verify identity")
+                self._show_alert_banner("unknown")
                 _play_alert_sound()
             self._push_log_entry(item)
 
         self._refresh_stat_labels()
 
-    def _show_alert_banner(self, text):
-        """A visible banner over the video feed plus an audible alarm - each
-        fires once per genuinely new unmatched-face or spoof-suspected event
-        (the same dedup the stats/log already rely on upstream in this
-        method, keyed off log_id), not on every ~0.2s poll while the
-        person/attempt is still in frame, so this can't turn into a
-        continuous blare. Just sets state here - _draw_overlays (called every
-        video refresh tick from _update_video, several times a second) is
-        what actually draws it, the same as the "LIVE MONITOR" badge."""
-        self._alert_text = text
+    def _show_alert_banner(self, kind):
+        """Docks the alarm banner across the top of the video panel - fires
+        once per genuinely new unknown-face or spoof event (the same log_id
+        dedup the stats/log rely on), not on every ~0.2s poll while the
+        person is still in frame. Just sets state here - _draw_overlays,
+        called on every video refresh tick, is what draws it."""
+        self._alert = {"kind": kind, "time": datetime.now().strftime("%I:%M:%S %p")}
         if self._alert_hide_job:
             self.window.after_cancel(self._alert_hide_job)
         self._alert_hide_job = self.window.after(self.ALERT_DISPLAY_MS, self._hide_alert_banner)
 
     def _hide_alert_banner(self):
         self._alert_hide_job = None
-        self._alert_text = None
-        # No explicit redraw needed - _update_video's own timer (running
-        # continuously at VIDEO_REFRESH_MS regardless of camera state) picks
-        # this up and simply stops drawing the banner on its next tick.
+        self._alert = None
+        # No explicit redraw needed - _update_video's own timer picks this up
+        # and simply stops drawing the banner on its next tick.
 
     def _refresh_stat_labels(self):
         self.stat_tiles["entries"].configure(text=str(self.stats["entries"]))
         self.stat_tiles["unknown"].configure(text=str(self.stats["unknown"]))
         self.stat_tiles["spoof"].configure(text=str(self.stats["spoof"]))
-        self.stat_tiles["occlusion"].configure(text=str(self.stats["occlusion"]))
         self.stat_tiles["today"].configure(text=str(self.stats["entries"] + self.stats["exits"]))
 
-    def _push_log_row(self, *, name, meta, badge_text, color, photo_bytes,
-                      name_color=None, initials_seed=None):
+    # ---- live log ---------------------------------------------------------
+
+    def _push_log_row(self, *, kind, name, id_text, time, word=None, feature_word=None,
+                      conf=None, photo_bytes=None, initials_seed=None, extra=""):
         """The one way anything reaches the live log. Both credentials go
         through here - a face event from the scan loop and an NFC tap render
-        as the same kind of card, differing only in their badge - so the log
+        as the same kind of row, differing only in their kind - so the log
         is a single chronological record of the gate rather than two
-        half-stories. `color` carries the status (green/amber/red) directly
-        instead of being re-derived per entry, since "denied card tap" and
-        "unmatched face" are both failures but not the same color.
-        `initials_seed` is the name to build a placeholder badge from when
-        there's no photo; None falls back to a neutral "?"."""
+        half-stories."""
         self._log_entries.insert(0, {
+            "kind": kind,
             "name": name,
-            "meta": meta,
-            "badge_text": badge_text,
-            "color": color,
+            "id_text": id_text,
+            "time": time,
+            "word": word or LOG_KINDS[kind]["word"],
+            "feature_word": feature_word or word or LOG_KINDS[kind]["word"],
+            "conf": conf,
             "photo_bytes": photo_bytes,
-            "name_color": name_color or TEXT_PRIMARY,
             "initials_seed": initials_seed,
+            "extra": extra,
         })
         self._log_entries = self._log_entries[: self.MAX_LOG_ROWS]
         self._rebuild_log_list()
@@ -1146,97 +1469,146 @@ class GateMonitorWindow:
     def _push_log_entry(self, item):
         timestamp = datetime.now().strftime("%I:%M:%S %p")
         # A moment of occlusion seen earlier in this same encounter, even
-        # though it isn't this event's own outcome (that's occlusion_suspected
-        # below, handled separately) - appended to whichever meta line already
-        # fires, rather than dropped, per EntryLog.occlusion_detected.
-        occlusion_note = " · face briefly covered" if item.get("occlusion_seen") else ""
+        # though it isn't this event's own outcome - appended to the meta
+        # line rather than dropped, per EntryLog.occlusion_detected.
+        extra = " · face briefly covered" if item.get("occlusion_seen") else ""
         if item.get("spoof_suspected"):
             self._push_log_row(
-                name="Possible spoof",
-                meta=f"Liveness check failed · {timestamp}{occlusion_note}",
-                badge_text="SPOOF", color=DANGER,
-                photo_bytes=item.get("photo_bytes"), name_color=DANGER,
+                kind="spoof", name="Possible spoof", id_text="Liveness check failed", time=timestamp,
+                feature_word="SPOOF SUSPECTED", photo_bytes=item.get("photo_bytes"), extra=extra,
             )
         elif item.get("occlusion_suspected"):
             self._push_log_row(
-                name="Please uncover your face",
-                meta=f"Mouth/nose covered · {timestamp}",
-                badge_text="COVERED", color=OCCLUSION,
-                photo_bytes=item.get("photo_bytes"), name_color=OCCLUSION,
+                kind="covered", name="Face covered", id_text="Mouth/nose covered", time=timestamp,
+                feature_word="PLEASE UNCOVER YOUR FACE", photo_bytes=item.get("photo_bytes"),
             )
         elif item["matched"]:
+            direction = "exit" if item["direction"] == "exit" else "entry"
             self._push_log_row(
-                name=item["name"],
-                meta=f"{item.get('student_id') or '—'} · {timestamp}{occlusion_note}",
-                badge_text=item["direction"].upper(), color=SUCCESS,
-                photo_bytes=item.get("photo_bytes"), initials_seed=item["name"],
+                kind=direction, name=item["name"], id_text=item.get("student_id") or "—", time=timestamp,
+                conf=item.get("confidence"), photo_bytes=item.get("photo_bytes"),
+                initials_seed=item["name"], extra=extra,
             )
         else:
             self._push_log_row(
-                name="Unknown face",
-                meta=f"Not matched · {timestamp}{occlusion_note}",
-                badge_text="UNKNOWN", color=WARNING,
-                photo_bytes=item.get("photo_bytes"), name_color=WARNING,
+                kind="unknown", name="Unknown", id_text="No ID on file", time=timestamp,
+                photo_bytes=item.get("photo_bytes"), extra=extra,
             )
 
-    def _log_thumbnail(self, entry):
-        """The reference photo for a match, or the actual cropped capture
-        for an unrecognized/spoof-suspected face - so the guard sees who or
-        what the system caught, not just a name. Falls back to an
-        initials/? badge when no photo is available (fetch failed, nothing
-        was captured, or the tap was rejected outright)."""
-        avatar = _avatar_image(entry["photo_bytes"], self.LOG_THUMB_SIZE)
-        if avatar is None:
-            seed = entry["initials_seed"]
-            avatar = _initials_avatar(
-                seed or "?", self.LOG_THUMB_SIZE, bg=MAROON if seed else entry["color"]
-            )
-        return ctk.CTkImage(light_image=avatar, dark_image=avatar, size=(self.LOG_THUMB_SIZE, self.LOG_THUMB_SIZE))
+    def _meta(self, entry):
+        conf = f" · {entry['conf']}%" if entry.get("conf") is not None else ""
+        return f"{entry['id_text']} · {entry['time']}{conf}{entry['extra']}"
+
+    def _render_featured(self, entry):
+        s = self._s
+        view = LOG_KINDS[entry["kind"]]
+        color = view["color"]
+        self.feat_band.configure(fg_color=color)
+        self.feat_band_row.configure(fg_color=color)
+        for widget in (self.feat_icon, self.feat_word, self.feat_time):
+            widget.configure(fg_color=color)
+        self.feat_icon.configure(text=_icon(view["icon"]))
+        self.feat_word.configure(text=entry["feature_word"])
+        self.feat_time.configure(text=entry["time"])
+
+        image = self._thumb(entry, s["feat_thumb"])
+        self._log_photo_images.append(image)
+        self.feat_thumb.configure(image=image)
+        body_width = self.feat_body.winfo_width() / self._scale
+        # Before the window is first laid out the width reads as ~1 - fall
+        # back to a sensible wrap rather than wrapping every word.
+        reserved = s["feat_thumb"] + 60 + (110 if entry.get("conf") is not None else 0)
+        wrap = max(140, body_width - reserved if body_width > 200 else 360)
+        # The ID line under the name must always stay visible. A wide card
+        # allows two lines (ellipsized well short of two full widths, since
+        # word wrap never packs lines completely); a narrow one gets a
+        # single ellipsized line, where word wrap would otherwise spill a
+        # long name onto a third.
+        name_font = self._tkfont(FONT, s["feat_name"], "bold")
+        if wrap >= 300:
+            name = _ellipsize(name_font, entry["name"], self._px(wrap) * 1.6)
+        else:
+            name = _ellipsize(name_font, entry["name"], self._px(wrap))
+        self.feat_name.configure(text=name, wraplength=wrap)
+        self.feat_id.configure(text=entry["id_text"] + entry["extra"])
+        if entry.get("conf") is not None:
+            self.feat_conf.configure(text=f"{entry['conf']}%")
+            self.feat_match.grid()
+        else:
+            self.feat_match.grid_remove()
 
     def _rebuild_log_list(self):
-        count = len(self._log_entries)
-        self.log_count_label.configure(text=self._pad(f"{count} event{'s' if count != 1 else ''}"))
-
         for child in self.log_list.winfo_children():
             child.destroy()
-        if not self._log_entries:
-            ctk.CTkLabel(
-                self.log_list, text="Waiting for the first scan or tap...",
-                font=(FONT, 11), text_color=TEXT_MUTED,
-            ).grid(row=0, column=0, columnspan=self.LOG_GRID_COLUMNS, pady=16)
-            return
         self._log_photo_images = []  # keep CTkImage refs alive - Tk drops unreferenced ones
-        for index, entry in enumerate(self._log_entries):
-            row, col = divmod(index, self.LOG_GRID_COLUMNS)
-            status_color = entry["color"]
-            card = ctk.CTkFrame(
-                self.log_list, fg_color=CARD_BG, corner_radius=14,
-                border_width=2, border_color=status_color,
+
+        if not self._log_entries:
+            self.feat_card.grid_remove()
+            self.feat_empty.grid(row=1, column=0, sticky="w", pady=(4, 0))
+            self._label(self.log_list, "Earlier events appear here.", (FONT, 14), INK_400).grid(
+                row=0, column=0, sticky="w", padx=14, pady=14
             )
-            card.grid(row=row, column=col, sticky="nsew", padx=6, pady=6)
+            return
 
-            ctk.CTkLabel(
-                card, text=entry["badge_text"], font=(FONT, 9, "bold"), text_color="white",
-                fg_color=status_color, corner_radius=8,
-            ).pack(pady=(10, 8), ipadx=8, ipady=2)
+        self.feat_empty.grid_remove()
+        self.feat_card.grid()
+        self._render_featured(self._log_entries[0])
 
-            thumb_image = self._log_thumbnail(entry)
-            self._log_photo_images.append(thumb_image)
-            thumb_wrap = ctk.CTkFrame(
-                card, fg_color="transparent", corner_radius=12,
-                border_width=2, border_color=status_color,
+        s = self._s
+        earlier = self._log_entries[1:]
+        if not earlier:
+            self._label(self.log_list, "Earlier events appear here.", (FONT, 14), INK_400).grid(
+                row=0, column=0, sticky="w", padx=14, pady=14
             )
-            thumb_wrap.pack(pady=(0, 8), padx=10)
-            ctk.CTkLabel(thumb_wrap, image=thumb_image, text="").pack(padx=3, pady=3)
+            return
+        row_font = self._tkfont(FONT, s["row_name"], "bold")
+        meta_font = self._tkfont(FONT_MONO_MEDIUM, 14)
+        word_font = self._tkfont(COND_HEAVY, s["row_word"])
+        panel_width = self._log_panel.winfo_width()
+        if panel_width <= 1:
+            panel_width = self._px(560)  # not laid out yet - _on_log_configure redoes this once it is
+        for index, entry in enumerate(earlier):
+            view = LOG_KINDS[entry["kind"]]
+            bg = view.get("tint", SURFACE)
+            row = ctk.CTkFrame(self.log_list, fg_color=bg, corner_radius=0)
+            row.grid(row=index * 2, column=0, sticky="ew")
+            row.grid_columnconfigure(2, weight=1)
+            ctk.CTkFrame(row, fg_color=view["color"] if view.get("sec") else bg, width=3, height=1, corner_radius=0).grid(
+                row=0, column=0, sticky="ns"
+            )
+            thumb = self._thumb(entry, self.LIST_THUMB_SIZE)
+            self._log_photo_images.append(thumb)
+            ctk.CTkLabel(row, image=thumb, text="", fg_color=bg).grid(row=0, column=1, padx=(14, 14), pady=10)
 
-            ctk.CTkLabel(
-                card, text=entry["name"], font=(FONT, 13, "bold"), text_color=entry["name_color"],
-                wraplength=170, justify="center",
-            ).pack(padx=10)
-            ctk.CTkLabel(
-                card, text=entry["meta"], font=(FONT, 9), text_color=TEXT_MUTED,
-                wraplength=170, justify="center",
-            ).pack(padx=10, pady=(2, 14))
+            text = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
+            text.grid(row=0, column=2, sticky="ew")
+            # The scrollable frame's own width is its content's width, not
+            # the visible width - measure the panel instead, less the thumb
+            # column, this row's status word, paddings and the scrollbar.
+            word_w = word_font.measure(entry["word"]) + self._px(s["row_word"] + 6 + 10 + 16)
+            name_width = panel_width - self._px(self.LIST_THUMB_SIZE + 28 + 40) - word_w
+            self._label(
+                text, _ellipsize(row_font, entry["name"], name_width), (FONT, s["row_name"], "bold"), INK,
+                anchor="w", fg_color=bg,
+            ).pack(fill="x", anchor="w")
+            self._label(
+                text, _ellipsize(meta_font, self._meta(entry), name_width), (FONT_MONO_MEDIUM, 14), INK_600,
+                anchor="w", fg_color=bg,
+            ).pack(fill="x", anchor="w")
+
+            word = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
+            word.grid(row=0, column=3, sticky="e", padx=(10, 16))
+            self._icon_label(word, view["icon"], s["row_word"], view["color"], fg_color=bg).pack(
+                side="left", padx=(0, 6)
+            )
+            self._label(word, entry["word"], (COND_HEAVY, s["row_word"]), view["color"], fg_color=bg).pack(side="left")
+
+            # Plain tk.Frame - a CTkFrame this thin draws nothing at all.
+            tk.Frame(self.log_list, bg=LINE, height=max(1, self._px(1))).grid(
+                row=index * 2 + 1, column=0, sticky="ew"
+            )
+
+    # ---- video panel ------------------------------------------------------
 
     def _update_video(self):
         if self._closed:
@@ -1244,15 +1616,19 @@ class GateMonitorWindow:
         frame = self._get_preview_frame()
         if frame is not None:
             self._last_frame_at = time.monotonic()
+            if self._showing_no_camera:
+                self._showing_no_camera = False
             self._draw_frame(frame)
         elif time.monotonic() - self._last_frame_at >= self.CAMERA_GRACE_SECONDS:
             # No frame for a while now - either no camera ever connected, or
             # one did and then stopped (unplugged, driver crash - see
-            # Camera._close_after_failure). Either way this keeps checking:
-            # Camera's own background loop keeps retrying the connection on
-            # its own timer for as long as the app runs, so the moment a
-            # frame actually arrives again, the branch above takes back over
-            # and this placeholder stops being drawn - no restart needed.
+            # Camera._close_after_failure). Camera's own background loop
+            # keeps retrying the connection for as long as the app runs, so
+            # the moment a frame arrives again the branch above takes back
+            # over - no restart needed.
+            if not self._showing_no_camera:
+                self._showing_no_camera = True
+                self.stat_tiles["in_frame"].configure(text="—")
             self._draw_no_camera_placeholder()
         self.window.after(VIDEO_REFRESH_MS, self._update_video)
 
@@ -1262,148 +1638,184 @@ class GateMonitorWindow:
             self.video_canvas.winfo_height() or self.MIN_VIDEO_SIZE[1],
         )
 
-    def _draw_rounded_label(self, x0, y0, x1, y1, text, *, fill, text_color="white", font_size=10, bold=True):
-        """One shared "rounded, alpha-composited pill with centered text"
-        drawer for every canvas overlay that needs one - the "LIVE MONITOR"
-        badge and the alert banner both go through this now, specifically so
-        this class of bug (a rounded shape whose corner cutouts get painted
-        some flat color instead of showing the live video through them -
-        see _draw_overlays and _show_alert_banner's comments for the two
-        real instances of it found here) has exactly one correct
-        implementation to share, rather than each overlay growing its own
-        copy that could independently regress. Draws straight onto
-        self.video_canvas - true transparency, not an image composited in
-        afterwards, so there's no separate mask/alpha step to get wrong: the
-        canvas polygon simply doesn't cover the corner pixels at all, and
-        whatever was drawn there already (the live frame) just shows
-        through, with the arcs themselves genuinely anti-aliased by Tk's own
-        polygon rendering (see _rounded_rect_points for why these are true
-        trigonometric arcs, not a spline-smoothed approximation)."""
-        weight = "bold" if bold else "normal"
-        self.video_canvas.create_polygon(
-            # radius = half the box height, same as the badge always used -
-            # the shortest side of a pill sets how round it can go before
-            # the two end-caps would overlap.
-            _rounded_rect_points(x0, y0, x1, y1, radius=(y1 - y0) / 2),
-            # smooth=False - the points already trace true quarter-circle
-            # arcs (see _rounded_rect_points), so Tk's spline smoothing
-            # would only soften the genuinely round shape back down again.
-            fill=fill, outline="", smooth=False,
-        )
-        self.video_canvas.create_text(
-            (x0 + x1) / 2, (y0 + y1) / 2, text=text, font=(FONT, font_size, weight), fill=text_color,
-        )
+    def _strip_height(self):
+        return self._px(self._s["strip"])
 
-    def _draw_overlays(self, canvas_w, canvas_h):
-        """The "LIVE MONITOR" badge, the status caption, and the alert
-        banner (if one is currently showing) - drawn straight onto the
-        canvas, on top of whatever was just drawn there (a live frame, the
-        "no camera" placeholder, and any recognition boxes), so each is the
-        only thing visible where it sits - no separate widget, no
-        surrounding rectangle beyond the rounded pill itself. See
-        _build_video_panel's comment for why this replaced CTkLabel widgets.
-        Called last from both _draw_frame and _draw_no_camera_placeholder,
-        which between them run continuously at VIDEO_REFRESH_MS regardless
-        of camera state - that's what makes the alert banner's appear/
-        disappear timing (driven by _show_alert_banner/_hide_alert_banner
-        just flipping self._alert_text) actually visible without a redraw
-        call of its own."""
-        badge_x, badge_y = canvas_w * 0.015, canvas_h * 0.022
-        badge_w, badge_h = 118, 24
-        self._draw_rounded_label(
-            badge_x, badge_y, badge_x + badge_w, badge_y + badge_h,
-            "● LIVE MONITOR", fill=DANGER,
-        )
+    # How much of the camera frame may be trimmed off (per axis) so the feed
+    # fills the panel edge to edge. Past this - a very tall or very wide
+    # window - the whole frame is shown with bars instead, so nobody standing
+    # near the edge of the picture can be cropped out of view.
+    MAX_FEED_CROP = 0.35
 
-        # No backing rectangle at all here - a plain text draw, so there is
-        # nothing to blend with anything: it just floats over the feed.
-        self.video_canvas.create_text(
-            canvas_w * 0.015, canvas_h * 0.975, text=self._caption_text,
-            font=(FONT, 10), fill="#9CA3AF", anchor="sw",
-        )
-
-        if self._alert_text:
-            # Width comes from actual font metrics, not a guessed character
-            # count - this draws at most a few times a second (once per
-            # video refresh tick, never per recognition item), so measuring
-            # properly costs nothing worth avoiding and gets the pill's
-            # edges right around the real text instead of over/under-sized.
-            banner_height = 36
-            banner_font = tkfont.Font(family=FONT, size=13, weight="bold")
-            banner_width = banner_font.measure(self._alert_text) + 2 * 18
-            banner_cx = canvas_w * 0.5
-            # Sits below the LIVE pill's row rather than level with it, so a
-            # long banner can't slide under the pill on a narrow window -
-            # same 10%-down position the old CTkLabel used (rely=0.10).
-            banner_top = canvas_h * 0.10
-            self._draw_rounded_label(
-                banner_cx - banner_width / 2, banner_top,
-                banner_cx + banner_width / 2, banner_top + banner_height,
-                self._alert_text, fill=DANGER, font_size=13,
-            )
-
-    def _draw_no_camera_placeholder(self):
+    def _compose_panel(self, frame_image=None):
+        """The whole video panel as one image, filling the canvas cell: dark
+        body, the top strip (filled with the alarm color while a banner
+        shows), and the live frame filling the area below it (cropped a
+        little if its shape differs from the panel's - see MAX_FEED_CROP) -
+        then ONE rounded mask over the lot. Returns (image, panel rect,
+        frame placement): the rect is (x, y, w, h) on the canvas; the
+        placement is where the full, uncropped frame would sit, for mapping
+        face boxes, which _draw_box then clips to the visible feed."""
         canvas_w, canvas_h = self._panel_size()
-        panel = _round_corners(
-            Image.new("RGBA", (canvas_w, canvas_h), VIDEO_BG), self.VIDEO_PANEL_CORNER_RADIUS
-        )
-        # Kept as self._video_image (not a local) for the same reason
-        # _draw_frame does - Tk drops a PhotoImage with no surviving
-        # reference, which would blank the canvas on the very next redraw.
+        rect = (0, 0, canvas_w, canvas_h)
+        strip_h = self._strip_height()
+        feed_w, feed_h = canvas_w, max(1, canvas_h - strip_h)
+        self._feed_bounds = (0, strip_h, feed_w, strip_h + feed_h)
+        panel = Image.new("RGBA", (canvas_w, canvas_h), INK)
+        if self._alert:
+            ImageDraw.Draw(panel).rectangle((0, 0, canvas_w, strip_h), fill=ALERTS[self._alert["kind"]]["color"])
+        placement = None
+        if frame_image is not None:
+            src_w, src_h = frame_image.size
+            cover = max(feed_w / src_w, feed_h / src_h)
+            crop = 1 - min(feed_w / (src_w * cover), feed_h / (src_h * cover))
+            scale = cover if crop <= self.MAX_FEED_CROP else min(feed_w / src_w, feed_h / src_h)
+            img_w, img_h = max(1, round(src_w * scale)), max(1, round(src_h * scale))
+            origin_x, origin_y = (feed_w - img_w) // 2, strip_h + (feed_h - img_h) // 2
+            resized = frame_image.resize((img_w, img_h), Image.LANCZOS)
+            # Paste only the part inside the feed area, so a cropped frame
+            # can't spill up into the strip.
+            visible = resized.crop((
+                max(0, -origin_x), max(0, strip_h - origin_y),
+                min(img_w, feed_w - origin_x), min(img_h, strip_h + feed_h - origin_y),
+            ))
+            panel.paste(visible, (max(0, origin_x), max(strip_h, origin_y)))
+            placement = (origin_x, origin_y, img_w, img_h)
+        panel = _round_corners(panel, self._px(self.VIDEO_PANEL_CORNER_RADIUS))
+        return panel, rect, placement
+
+    def _show_panel(self, panel, rect):
+        # Kept as self._video_image (not a local) - Tk drops a PhotoImage
+        # with no surviving reference, which would blank the canvas.
         self._video_image = ImageTk.PhotoImage(panel)
         self.video_canvas.delete("all")
-        self.video_canvas.create_image(0, 0, image=self._video_image, anchor="nw")
+        self.video_canvas.create_image(rect[0], rect[1], image=self._video_image, anchor="nw")
+        self._panel_bounds = rect
 
-        cx, cy = canvas_w / 2, canvas_h / 2
-        self.video_canvas.create_text(
-            cx, cy - 20, text="📷", font=(FONT, 32), fill=TEXT_MUTED,
+    def _canvas_text(self, x, y, text, family, px, color, anchor="w", weight="normal", width=None):
+        kwargs = {"width": width} if width else {}
+        return self.video_canvas.create_text(
+            x, y, text=text, font=self._tkfont(family, px, weight), fill=color, anchor=anchor, **kwargs
         )
-        self.video_canvas.create_text(
-            cx, cy + 14, text="No camera connected", font=(FONT, 14, "bold"), fill=TEXT_MUTED,
+
+    def _draw_overlays(self, rect):
+        """The top strip's contents - either the LIVE row (a square status
+        dot, LIVE / NO SIGNAL, and the caption) or the alarm banner's icon,
+        title, subtitle, speaker mark and time - drawn straight onto the
+        canvas over the composited panel. Called last from both _draw_frame
+        and _draw_no_camera_placeholder, which between them run continuously
+        at VIDEO_REFRESH_MS, so the banner's appear/disappear timing needs no
+        redraw call of its own."""
+        s = self._s
+        panel_x, panel_y, panel_w, _panel_h = rect
+        strip_h = self._strip_height()
+        cy = panel_y + strip_h / 2
+        x = panel_x + self._px(26)
+        if self._alert:
+            alert = ALERTS[self._alert["kind"]]
+            glyph = _icon(alert["icon"])
+            if glyph:
+                self._canvas_text(x, cy, glyph, ICON_FONT_BOLD, 36 * s["strip"] / 64, "white")
+                x += self._px(36 * s["strip"] / 64 + 16)
+            title_id = self._canvas_text(x, cy, alert["title"], SEMI_HEAVY, s["banner_title"], "white")
+            x = self.video_canvas.bbox(title_id)[2] + self._px(16)
+            # Right side first, so the subtitle can be ellipsized into
+            # whatever width is left between the title and it.
+            right_x = panel_x + panel_w - self._px(26)
+            time_id = self._canvas_text(right_x, cy, self._alert["time"], FONT_MONO_MEDIUM, 16, "white", anchor="e")
+            right_x = self.video_canvas.bbox(time_id)[0] - self._px(12)
+            speaker = _icon("speaker-high")
+            if speaker:
+                speaker_id = self._canvas_text(right_x, cy, speaker, ICON_FONT_BOLD, 28 * s["strip"] / 64, "white", anchor="e")
+                right_x = self.video_canvas.bbox(speaker_id)[0] - self._px(16)
+            sub_font = self._tkfont(FONT, s["banner_sub"])
+            sub = _ellipsize(sub_font, alert["sub"], right_x - x)
+            if sub and right_x - x > self._px(40):
+                self._canvas_text(x, cy, sub, FONT, s["banner_sub"], "white")
+            return
+
+        live = not self._showing_no_camera
+        dot = self._px(10)
+        self.video_canvas.create_rectangle(
+            x, cy - dot / 2, x + dot, cy + dot / 2, fill=BRASS if live else INK_400, outline=""
         )
-        self.video_canvas.create_text(
-            cx, cy + 36, text="Card taps still work - connecting a camera will resume automatically",
-            font=(FONT, 10), fill=TEXT_MUTED,
+        word_id = self._canvas_text(x + dot + self._px(10), cy, "LIVE" if live else "NO SIGNAL", COND_HEAVY, 16, "white")
+        caption_x = self.video_canvas.bbox(word_id)[2] + self._px(16)
+        self._canvas_text(caption_x, cy, self._caption_text, FONT_MONO, 14, INK_400)
+
+    def _draw_no_camera_placeholder(self):
+        s = self._s
+        panel, rect, _placement = self._compose_panel(None)
+        self._show_panel(panel, rect)
+        panel_x, panel_y, panel_w, panel_h = rect
+        strip_h = self._strip_height()
+        cx, cy = panel_x + panel_w / 2, panel_y + strip_h + (panel_h - strip_h) / 2
+        t = (s["strip"] - 52) / 12  # 0 at the narrow profile, 1 at full HD
+        glyph = _icon("video-camera-slash", bold=False)
+        if glyph:
+            self._canvas_text(cx, cy - self._px(48), glyph, ICON_FONT, 44 + 12 * t, BRASS, anchor="s")
+        wrap = min(panel_w - self._px(52), self._px(620))
+        self._canvas_text(
+            cx, cy - self._px(28), "No camera connected — card taps still work.", SEMI_HEAVY, 22 + 6 * t,
+            "white", anchor="n", width=wrap,
         )
-        self._caption_text = "No camera detected"
-        self._draw_overlays(canvas_w, canvas_h)
+        self._canvas_text(
+            cx, cy + self._px(28 + 14 * t), "Connecting a camera resumes automatically.", FONT, 16 + 4 * t,
+            LINE, anchor="n", width=wrap,
+        )
+        index = self._initial_camera_index if self._initial_camera_index is not None else 0
+        self._caption_text = f"Camera {index} · waiting for device"
+        self._draw_overlays(rect)
 
     def _draw_frame(self, frame):
         rgb = frame[:, :, ::-1]  # BGR (OpenCV) -> RGB
         image = Image.fromarray(rgb)
-
-        canvas_w, canvas_h = self._panel_size()
-        target = _scaled_size(image.size, (canvas_w, canvas_h))
-        image = image.resize(target, Image.LANCZOS)
-
-        img_w, img_h = target
-        origin_x, origin_y = (canvas_w - img_w) // 2, (canvas_h - img_h) // 2
-        # One full-panel-sized composite - a solid VIDEO_BG rectangle (cheap;
-        # no rounding drawn on it yet) with the live frame pasted at its
-        # centered offset, letterboxed on whichever sides don't match the
-        # panel's aspect ratio - then ONE rounded-corner mask over the whole
-        # thing. Masking after the paste (not the frame alone, before
-        # pasting) is what actually fixes the black-square-corner bug: if the
-        # live frame's own size happens to leave little or no letterbox, a
-        # mask applied only to it beforehand wouldn't reach the panel's true
-        # corners at all - this way the final clip always matches the panel
-        # exactly, regardless of the frame's aspect ratio.
-        panel = Image.new("RGBA", (canvas_w, canvas_h), VIDEO_BG)
-        panel.paste(image, (origin_x, origin_y))
-        panel = _round_corners(panel, self.VIDEO_PANEL_CORNER_RADIUS)
-        self._video_image = ImageTk.PhotoImage(panel)
-
-        self.video_canvas.delete("all")
-        self.video_canvas.create_image(0, 0, image=self._video_image, anchor="nw")
+        panel, rect, placement = self._compose_panel(image)
+        self._show_panel(panel, rect)
 
         src_w, src_h = self._latest_image_size
-        if src_w > 0 and src_h > 0:
+        if src_w > 0 and src_h > 0 and placement:
+            origin_x, origin_y, img_w, img_h = placement
             for item in self._latest_recognitions:
                 self._draw_box(item, origin_x, origin_y, img_w, img_h, src_w, src_h)
 
         count = len(self._latest_recognitions)
         self._caption_text = f"{src_w}×{src_h} · {count} face{'s' if count != 1 else ''} tracked"
-        self._draw_overlays(canvas_w, canvas_h)
+        self._draw_overlays(rect)
+
+    @staticmethod
+    def _box_style(item):
+        """(color, icon, label) for one face on the feed."""
+        if item.get("spoof_suspected"):
+            # Shown red as soon as THIS frame's liveness score misses - a
+            # guard should see the warning the moment it's suspected. While
+            # item["retry"] is also true it's still just a suspicion, not yet
+            # logged or alarmed, and the label says so.
+            return DANGER, "warning-octagon", "SPOOF" if not item.get("retry") else "CHECKING · POSSIBLE SPOOF"
+        if item.get("occlusion_suspected"):
+            # Checked before the generic retry case: it needs its own color
+            # even while unconfirmed. Telling someone to uncover their face
+            # is harmless even if this frame's read turns out wrong, so the
+            # label never hedges.
+            return PROMPT, "hand-palm", "PLEASE UNCOVER YOUR FACE"
+        if item.get("retry"):
+            # Not a decided outcome yet - a skipped frame (blurry, edge-
+            # cropped, turned away) or an unmatched face still short of
+            # enough agreement to count as a real "Unknown". Neutral, so it
+            # never reads as a red flag on a single bad frame.
+            return INK_600, "circle-notch", item.get("hint") or "Checking…"
+        if item.get("tiebreak"):
+            # A confusable-pair tiebreak means the match itself looked fine -
+            # it's overridden because this person is on record as easily
+            # confused with someone similar (see users.models.ConfusablePair).
+            label = "TAP CARD · LOOKALIKE CHECK" if item.get("confusable_pair") else "TAP CARD TO CONFIRM"
+            return PROMPT, "identification-card", label
+        if item["matched"]:
+            label = item["name"]
+            if item.get("confidence") is not None:
+                label = f"{label} · {item['confidence']}%"
+            return VERIFIED, "sign-out" if item.get("direction") == "exit" else "sign-in", label
+        return CAUTION, "user-circle-dashed", "UNKNOWN"
 
     def _draw_box(self, item, origin_x, origin_y, img_w, img_h, src_w, src_h):
         box = item.get("box")
@@ -1413,64 +1825,39 @@ class GateMonitorWindow:
         y0 = origin_y + (box["top"] / src_h) * img_h
         x1 = origin_x + (box["right"] / src_w) * img_w
         y1 = origin_y + (box["bottom"] / src_h) * img_h
+        # Clipped to the visible feed - the frame may be cropped a little to
+        # fill the panel (see _compose_panel), and a face in the trimmed
+        # margin shouldn't draw its box over the strip or off the panel.
+        feed_x0, feed_y0, feed_x1, feed_y1 = self._feed_bounds
+        x0, y0 = max(x0, feed_x0), max(y0, feed_y0)
+        x1, y1 = min(x1, feed_x1 - 1), min(y1, feed_y1 - 1)
+        if x1 - x0 < self._px(8) or y1 - y0 < self._px(8):
+            return  # face is (almost) entirely in the cropped-off margin
+        color, icon_name, label = self._box_style(item)
 
-        if item.get("spoof_suspected"):
-            # Liveness (anti-spoofing) is flagging this face - shown red as
-            # soon as THIS frame's score misses the threshold, not only once
-            # the multi-frame vote confirms it (see IdentifyView.
-            # _confirm_or_vote_spoof) - a guard should see the warning the
-            # moment it's suspected. Still just a suspicion, not yet logged/
-            # alarmed, while item["retry"] is also true (see _render_
-            # recognitions) - the label makes that distinction visible too.
-            color = DANGER
-            label = "⚠ Possible spoof" if not item.get("retry") else "⚠ Checking - possible spoof"
-        elif item.get("occlusion_suspected"):
-            # Also its own branch, checked before the generic retry case
-            # below for the same reason spoof is: it needs its own color
-            # (OCCLUSION, not the generic checking-gray retry uses) even
-            # while unconfirmed. Unlike spoof, the label doesn't hedge
-            # between "checking" and "confirmed" - telling someone to
-            # uncover their face is a harmless thing to say even if this
-            # frame's read turns out wrong, so there's no reason to soften it
-            # the way a spoof accusation needs softening.
-            color = OCCLUSION
-            label = "🤚 Please uncover your face"
-        elif item.get("retry"):
-            # Not a decided outcome yet - a skipped frame (blurry,
-            # edge-cropped, or the face turned away from the camera), or an
-            # unmatched face still short of enough agreement to count as a
-            # real "Unknown" (see IdentifyView). Neutral color so this never
-            # reads as a red flag on a single bad frame. The backend sends a
-            # short hint for the skips a person can actually act on ("Face
-            # the camera"); the voting paths have nothing to act on and fall
-            # back to the generic label.
-            color = TEXT_MUTED
-            label = item.get("hint") or "Checking..."
-        elif item.get("tiebreak"):
-            color = ACCENT
-            # A confusable-pair tiebreak means the match itself looked fine -
-            # it's being overridden anyway because this person is on record
-            # as easily confused with someone similar (see users.models.
-            # ConfusablePair) - worth its own label so it doesn't read as an
-            # ordinary "the system wasn't sure" prompt.
-            label = "Tap card - lookalike check" if item.get("confusable_pair") else "Tap card to confirm"
-        elif item["matched"]:
-            color = SUCCESS
-            label = item["name"]
-            if item.get("confidence") is not None:
-                label = f"{label} · {item['confidence']}%"
-        else:
-            color = WARNING
-            label = "Unknown"
+        self.video_canvas.create_rectangle(x0, y0, x1, y1, outline=color, width=self._px(2))
 
-        self.video_canvas.create_rectangle(x0, y0, x1, y1, outline=color, width=2)
-        label_y = max(y0 - 10, 10)
-        label_w = max(60, len(label) * 6.5)
-        self.video_canvas.create_rectangle(x0, label_y - 9, x0 + label_w, label_y + 9, fill=color, outline="")
-        self.video_canvas.create_text(
-            x0 + 4, label_y, text=label, anchor="w", font=(FONT, 9, "bold"),
-            fill="black" if color in (WARNING, TEXT_MUTED) else "white",
-        )
+        # The name tab: a solid color tab sitting on the box's top edge,
+        # icon + label in white. Flipped inside the box if it would run up
+        # into the top strip.
+        tab_px = self._s["tab"]
+        text_font = self._tkfont(FONT, tab_px, "bold")
+        glyph = _icon(icon_name)
+        icon_w = self._px(tab_px + 6) if glyph else 0
+        pad_x, pad_y = self._px(10), self._px(6)
+        tab_h = text_font.metrics("linespace") + 2 * pad_y
+        tab_w = icon_w + text_font.measure(label) + 2 * pad_x
+        top = y0 - tab_h
+        if top < feed_y0 + self._px(4):
+            top = y0
+        # Kept inside the feed - a face near the right edge would otherwise
+        # push its tab off the side of the panel.
+        left = max(feed_x0, min(x0 - self._px(1), feed_x1 - tab_w - self._px(4)))
+        self.video_canvas.create_rectangle(left, top, left + tab_w, top + tab_h, fill=color, outline="")
+        cy = top + tab_h / 2
+        if glyph:
+            self._canvas_text(left + pad_x, cy, glyph, ICON_FONT_BOLD, tab_px, "white")
+        self._canvas_text(left + pad_x + icon_w, cy, label, FONT, tab_px, "white", weight="bold")
 
     def _handle_close(self):
         self._closed = True

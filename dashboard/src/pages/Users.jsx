@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import apiClient from "../api/client";
 import GuidedEnrollment from "../components/GuidedEnrollment";
 import WebcamCapture from "../components/WebcamCapture";
+import { Avatar, Field, Icon, Notice, PageHeader, Segmented } from "../components/ui";
 import { PHOTO_ACCEPT, photoFormatError, previewUrlFor, readPhotoInput } from "../lib/photoUpload";
 import { useAuth } from "../auth/AuthContext";
 
@@ -17,6 +18,8 @@ const emptyForm = {
 const emptyConfusableForm = { person_a: "", person_b: "" };
 
 const emptyEnrollment = { mode: "guided", isReady: false, primaryPhoto: null, extraPhotos: [] };
+
+const PEOPLE_COLS = "minmax(0,2.3fr) 72px 110px 100px minmax(0,1.3fr) 90px 190px";
 
 // DRF field validation errors come back as {"photo": ["reason"], ...} - not
 // {"detail": "..."} - so pull out the first field's actual message instead
@@ -37,35 +40,78 @@ function extractErrorMessage(err) {
 // The real cap is per-person and higher once flagged in a confusable pair.
 const DEFAULT_MAX_EMBEDDINGS = 5;
 
-function Field({ label, children }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-500">{label}</span>
-      {children}
-    </label>
-  );
+function formatDate(value) {
+  return new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-const inputClass =
-  "w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 shadow-sm transition-colors placeholder:text-ink-400 focus:border-maroon focus:outline-none focus:ring-1 focus:ring-maroon";
+// The one flag worth showing under a person's name, most urgent first.
+function personFlag(person) {
+  if (person.pending_deactivation) {
+    return {
+      label: "Pending deactivation",
+      icon: "clock",
+      className: "text-caution",
+      title: "A SASO has requested this record be deactivated - awaiting Admin approval",
+    };
+  }
+  if (person.confusable_partners?.length > 0) {
+    return {
+      label: "Lookalike pair",
+      icon: "users-three",
+      className: "text-ink-600",
+      title: `Always requires a card tap at the gate - unusually similar to ${person.confusable_partners
+        .map((p) => p.full_name)
+        .join(", ")}`,
+    };
+  }
+  if (person.face_embeddings?.some((e) => e.is_low_confidence)) {
+    return {
+      label: "Single-photo enrollment · lower confidence",
+      icon: "image",
+      className: "text-ink-600",
+      title: "Enrolled from a single uncorroborated photo (bulk import or fallback capture)",
+    };
+  }
+  return null;
+}
 
-function IdCardIcon(props) {
+function Tabs({ tabs, active, onChange }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <rect x="3.5" y="5.5" width="17" height="13" rx="1.8" stroke="currentColor" strokeWidth="1.4" />
-      <circle cx="8.5" cy="11" r="1.8" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M5.8 15.5c.5-1.6 1.7-2.4 2.7-2.4s2.2.8 2.7 2.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-      <path d="M14 10h4M14 12.3h4M14 14.6h2.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
+    <div className="mt-s5 flex flex-none gap-s5 border-b border-line">
+      {tabs.map((tab) => {
+        const selected = tab.key === active;
+        return (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => onChange(tab.key)}
+            className={`-mb-px flex items-center gap-s2 border-b-[3px] pb-s3 text-sm transition-colors ${
+              selected ? "border-brass font-bold text-ink" : "border-transparent text-ink-600 hover:text-ink"
+            }`}
+          >
+            {tab.label}
+            {tab.count !== undefined && tab.count !== "" && (
+              <span className="font-mono text-xs font-normal text-ink-600">{tab.count}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
 export default function Users() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const [activeTab, setActiveTab] = useState("people");
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [people, setPeople] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
+  const [requestNotes, setRequestNotes] = useState({});
   const [requestActionError, setRequestActionError] = useState("");
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [formError, setFormError] = useState("");
@@ -141,10 +187,29 @@ export default function Users() {
   const resetForm = () => {
     setForm(emptyForm);
     setEditingId(null);
+    setFormError("");
+    setAddPhotoError("");
     setEnrollment(emptyEnrollment);
     setEnrollmentResetKey((k) => k + 1); // remounts GuidedEnrollment with fresh slot state
     setProfilePhoto(null);
+    setIsDrawerOpen(false);
   };
+
+  const openAddDrawer = () => {
+    resetForm();
+    setIsDrawerOpen(true);
+  };
+
+  // Escape closes the drawer, same as the X and Cancel.
+  useEffect(() => {
+    if (!isDrawerOpen) return undefined;
+    const onKey = (event) => {
+      if (event.key === "Escape" && !isSubmitting) resetForm();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDrawerOpen, isSubmitting]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -196,11 +261,11 @@ export default function Users() {
 
         if (created.confusable_partners?.length > 0) {
           // Drop straight into the edit view instead of a full reset - the
-          // enrollment-photos section right below (with its now-extended
-          // photo cap) and the confusable-partners banner are both driven
-          // by editingPerson, so this puts the "please capture more
-          // photos"/"please confirm this is expected" prompts right in
-          // front of whoever's enrolling, not one extra click away.
+          // enrollment-photos section (with its now-extended photo cap) and
+          // the confusable-partners banner are both driven by editingPerson,
+          // so this puts the "please capture more photos"/"please confirm
+          // this is expected" prompts right in front of whoever's
+          // enrolling, not one extra click away.
           setEditingId(created.id);
           setForm({
             full_name: created.full_name,
@@ -233,6 +298,8 @@ export default function Users() {
 
   const handleEdit = (person) => {
     setEditingId(person.id);
+    setFormError("");
+    setAddPhotoError("");
     setForm({
       full_name: person.full_name,
       role: person.role,
@@ -242,6 +309,7 @@ export default function Users() {
       distinguishing_note: person.distinguishing_note || "",
     });
     setProfilePhoto(null); // clear any leftover preview from a previous edit session
+    setIsDrawerOpen(true);
   };
 
   const handleDeactivate = async (person) => {
@@ -299,11 +367,14 @@ export default function Users() {
   };
 
   const handleRejectRequest = async (request) => {
-    const note = window.prompt(`Reject the deactivation request for ${request.person_name}? Optional note:`, "");
-    if (note === null) return;
     setRequestActionError("");
     try {
-      await apiClient.post(`/deactivation-requests/${request.id}/reject/`, { note });
+      await apiClient.post(`/deactivation-requests/${request.id}/reject/`, { note: requestNotes[request.id] || "" });
+      setRequestNotes((prev) => {
+        const next = { ...prev };
+        delete next[request.id];
+        return next;
+      });
       loadPendingRequests();
       loadPeople();
     } catch (err) {
@@ -315,11 +386,11 @@ export default function Users() {
     event.preventDefault();
     setConfusableError("");
     if (!confusableForm.person_a || !confusableForm.person_b) {
-      setConfusableError("Select both people to flag them as a confusable pair.");
+      setConfusableError("Select both people to flag them as a lookalike pair.");
       return;
     }
     if (confusableForm.person_a === confusableForm.person_b) {
-      setConfusableError("A person can't be flagged as confusable with themselves.");
+      setConfusableError("A person can't be flagged as a lookalike of themselves.");
       return;
     }
     try {
@@ -337,7 +408,7 @@ export default function Users() {
 
   const handleUnflagPair = async (pair) => {
     const confirmed = window.confirm(
-      `Remove the confusable-pair flag between ${pair.person_a_name} and ${pair.person_b_name}? ` +
+      `Remove the lookalike-pair flag between ${pair.person_a_name} and ${pair.person_b_name}? ` +
         "A gate scan will no longer force a card tap for this pair specifically."
     );
     if (!confirmed) return;
@@ -379,502 +450,614 @@ export default function Users() {
       const { data } = await apiClient.post("/users/bulk-import", payload, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setBulkReport(data);
+      setBulkReport({ ...data, fileName: bulkFile.name, at: new Date() });
       loadPeople();
     } catch (err) {
-      setBulkReport(err.response?.data || { detail: "Bulk import failed." });
+      setBulkReport({ ...(err.response?.data || { detail: "Bulk import failed." }), fileName: bulkFile.name, at: new Date() });
     }
   };
 
+  const query = search.trim().toLowerCase();
+  const visiblePeople = people.filter((person) => {
+    if (roleFilter && person.role !== roleFilter) return false;
+    if (statusFilter === "active" && !person.is_active) return false;
+    if (statusFilter === "inactive" && person.is_active) return false;
+    if (!query) return true;
+    return [person.full_name, person.student_or_employee_id, person.nfc_id]
+      .filter(Boolean)
+      .some((value) => value.toLowerCase().includes(query));
+  });
+
+  const eyebrows = {
+    people: isAdmin ? "People · Admin view" : "People · SASO view",
+    requests: isAdmin ? "Requests & lookalike pairs" : "Lookalike pairs",
+    bulk: "Bulk import",
+  };
+
+  const tabs = [
+    { key: "people", label: "People", count: people.length },
+    {
+      key: "requests",
+      label: isAdmin ? "Requests & pairs" : "Lookalike pairs",
+      count: isAdmin ? `${pendingRequests.length} · ${confusablePairs.length}` : confusablePairs.length,
+    },
+    { key: "bulk", label: "Bulk import", count: "" },
+  ];
+
+  const bulkRows = bulkReport
+    ? [
+        ...(bulkReport.errors || []).map((rowError) => ({
+          row: rowError.row,
+          name: "—",
+          detail: rowError.error,
+          status: "Error",
+          icon: "x-circle",
+          className: "text-danger",
+          bar: "#C62828",
+        })),
+        ...(bulkReport.confusable_warnings || []).map((warning) => ({
+          row: warning.row,
+          name: warning.imported_full_name,
+          detail: `similar to ${warning.full_name} (${warning.student_or_employee_id}) · ${Math.round(
+            warning.similarity * 100
+          )}%`,
+          status: "Lookalike warning",
+          icon: "users-three",
+          className: "text-caution",
+          bar: "#9A5B00",
+        })),
+      ].sort((a, b) => a.row - b.row)
+    : [];
+
+  const photoCount = editingPerson?.face_embeddings?.length || 0;
+  const photoMax = editingPerson?.max_embeddings || DEFAULT_MAX_EMBEDDINGS;
+
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="font-display text-2xl font-semibold text-ink-900">User Management</h1>
-        <p className="mt-1 text-sm text-ink-500">
-          {isAdmin
-            ? "Register, edit, and deactivate students and staff."
-            : "Register and edit students and staff. Deactivating a record requires Admin approval."}
-        </p>
-      </div>
+    <div className="flex flex-col">
+      <PageHeader eyebrow={eyebrows[activeTab]} title="User Management">
+        <button type="button" onClick={() => setActiveTab("bulk")} className="btn-secondary">
+          <Icon name="upload-simple" size={16} />
+          Bulk import
+        </button>
+        <button type="button" onClick={openAddDrawer} className="btn-primary">
+          <Icon name="plus" bold size={16} />
+          Add person
+        </button>
+      </PageHeader>
 
-      {loadError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
-      {isAdmin && pendingRequests.length > 0 && (
-        <div className="rounded-xl border border-gold-500/30 bg-gold-500/5 p-6 shadow-sm">
-          <h2 className="font-display text-lg font-semibold text-ink-900">
-            Pending deactivation requests ({pendingRequests.length})
-          </h2>
-          <p className="mt-1 text-xs text-ink-500">
-            Filed by a Security Manager (SASO) - review the reason, then approve or reject.
-          </p>
-          {requestActionError && (
-            <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{requestActionError}</p>
-          )}
-          <ul className="mt-4 space-y-3">
-            {pendingRequests.map((request) => (
-              <li
-                key={request.id}
-                className="flex items-center justify-between rounded-lg border border-ink-900/10 bg-white p-3"
-              >
-                <div>
-                  <p className="text-sm font-semibold text-ink-900">
-                    {request.person_name} <span className="font-normal text-ink-500">({request.student_or_employee_id})</span>
-                  </p>
-                  <p className="text-xs text-ink-500">
-                    Requested by {request.requested_by_username} on{" "}
-                    {new Date(request.requested_at).toLocaleString()}
-                  </p>
-                  <p className="mt-1 text-sm text-ink-700">&ldquo;{request.reason}&rdquo;</p>
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <button
-                    onClick={() => handleApproveRequest(request)}
-                    className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => handleRejectRequest(request)}
-                    className="rounded-lg border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-700 transition-colors hover:bg-parchment-100"
-                  >
-                    Reject
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
+      {loadError && (
+        <Notice tone="danger" className="mt-s4">
+          {loadError}
+        </Notice>
       )}
 
-      <form
-        onSubmit={handleSubmit}
-        className="space-y-5 rounded-xl border border-ink-900/10 bg-white p-6 shadow-sm"
-      >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Full name">
-            <input
-              required
-              placeholder="Juan Dela Cruz"
-              value={form.full_name}
-              onChange={handleChange("full_name")}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Role">
-            <select value={form.role} onChange={handleChange("role")} className={inputClass}>
+      {activeTab === "people" && (
+        <>
+          <div className="mt-s5 flex flex-none flex-wrap gap-s4">
+            <span className="relative block min-w-[220px] max-w-[360px] flex-1">
+              <Icon name="magnifying-glass" size={16} className="pointer-events-none absolute left-[10px] top-3 text-ink-600" />
+              <input
+                type="text"
+                placeholder="Search name, ID or NFC ID"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="input pl-9"
+              />
+            </span>
+            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="input w-[150px]">
+              <option value="">All roles</option>
               <option value="student">Student</option>
               <option value="staff">Staff</option>
             </select>
-          </Field>
-          <Field label="Student / Employee ID">
-            <input
-              required
-              placeholder="2021-00123"
-              value={form.student_or_employee_id}
-              onChange={handleChange("student_or_employee_id")}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="NFC ID">
-            <input
-              required
-              placeholder="Tap a card to fill this in"
-              value={form.nfc_id}
-              onChange={handleChange("nfc_id")}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Department / Course">
-            <input
-              placeholder="BSIT"
-              value={form.department_or_course}
-              onChange={handleChange("department_or_course")}
-              className={inputClass}
-            />
-          </Field>
-        </div>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="input w-[150px]">
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
 
-        <Field label="Distinguishing note (optional)">
-          <input
-            placeholder="e.g. mole on left cheek, wears glasses - visible to security staff, never used for matching"
-            value={form.distinguishing_note}
-            onChange={handleChange("distinguishing_note")}
-            className={inputClass}
-          />
-        </Field>
-
-        <div className="space-y-3 rounded-xl border border-ink-900/10 bg-parchment-50 p-4">
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-maroon/10 text-maroon">
-              <IdCardIcon className="h-4.5 w-4.5" />
-            </span>
-            <div>
-              <p className="text-sm font-semibold text-ink-900">
-                Profile picture <span className="font-normal text-ink-400">(optional)</span>
-              </p>
-              <p className="text-xs text-ink-500">
-                Shown to the guard on a card tap or gate pass. Separate from the face-recognition photos
-                below - doesn&rsquo;t need to be one of those, any clear photo works. Leave blank to keep
-                using the enrollment photo.
-              </p>
+          <div className="card mt-s4 overflow-hidden">
+            <div className="overflow-x-auto">
+              <div className="min-w-[980px]">
+                <div
+                  className="table-head grid h-9 items-center gap-s3 border-b border-line px-s4"
+                  style={{ gridTemplateColumns: PEOPLE_COLS }}
+                >
+                  <span>Name</span>
+                  <span>Role</span>
+                  <span>ID</span>
+                  <span>NFC ID</span>
+                  <span>Department / course</span>
+                  <span>Status</span>
+                  <span className="text-right">Actions</span>
+                </div>
+                {visiblePeople.map((person) => {
+                  const flag = personFlag(person);
+                  return (
+                    <div
+                      key={person.id}
+                      className="grid min-h-[52px] items-center gap-s3 border-b border-line px-s4 py-s2 text-sm"
+                      style={{ gridTemplateColumns: PEOPLE_COLS }}
+                    >
+                      <span className="flex min-w-0 items-center gap-s3">
+                        <Avatar src={person.photo_reference} name={person.full_name} size={32} />
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <span className="truncate font-bold">{person.full_name}</span>
+                          {flag && (
+                            <span title={flag.title} className={`flex items-center gap-s1 truncate text-xs font-bold ${flag.className}`}>
+                              <Icon name={flag.icon} bold size={12} />
+                              {flag.label}
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                      <span className="capitalize">{person.role}</span>
+                      <span className="truncate font-mono text-[13px] font-medium">{person.student_or_employee_id}</span>
+                      <span className="truncate font-mono text-[13px] text-ink-600">{person.nfc_id}</span>
+                      <span className="truncate text-ink-600">{person.department_or_course}</span>
+                      {person.is_active ? (
+                        <span className="flex items-center gap-s1 font-bold text-verified">
+                          <Icon name="check-circle" bold size={14} />
+                          Active
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-s1 font-bold text-ink-600">
+                          <Icon name="minus-circle" bold size={14} />
+                          Inactive
+                        </span>
+                      )}
+                      <span className="flex items-center justify-end gap-s4">
+                        <button type="button" onClick={() => handleEdit(person)} className="link-action">
+                          Edit
+                        </button>
+                        {person.is_active ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDeactivate(person)}
+                            disabled={person.pending_deactivation}
+                            className="link-danger"
+                          >
+                            {person.pending_deactivation ? "Pending…" : isAdmin ? "Deactivate" : "Request deactivation"}
+                          </button>
+                        ) : (
+                          <button type="button" onClick={() => handleReactivate(person)} className="text-sm font-bold text-verified hover:underline">
+                            Reactivate
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePermanently(person)}
+                            title="Delete permanently - cannot be undone"
+                            aria-label={`Delete ${person.full_name} permanently`}
+                            className="flex h-8 w-8 items-center justify-center rounded-sm text-danger hover:bg-danger-tint"
+                          >
+                            <Icon name="trash" size={16} />
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+                {visiblePeople.length === 0 && (
+                  <p className="px-s4 py-s5 text-sm text-ink-600">
+                    {people.length === 0 ? "No one enrolled yet. Use Add person to register the first." : "No one matches these filters."}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-3 pl-11">
-            {profilePhoto.file && !profilePhoto.previewUrl ? (
-              // Selected, accepted, just unrenderable in this browser (HEIC).
-              <div className="flex h-20 w-20 flex-col items-center justify-center rounded-lg bg-parchment-200 text-[10px] text-ink-500">
-                <span>HEIC</span>
-                <span className="text-ink-400">no preview</span>
-              </div>
-            ) : (
-              (profilePhoto.previewUrl || editingPerson?.photo_reference) && (
-                <img
-                  src={profilePhoto.previewUrl || editingPerson.photo_reference}
-                  alt="Profile preview"
-                  className="h-20 w-20 rounded-lg border border-ink-900/10 object-cover"
-                />
-              )
+        </>
+      )}
+
+      {activeTab === "requests" && (
+        <div className="mt-s6 grid grid-cols-1 gap-s6 xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+          <div className="flex min-w-0 flex-col gap-s4">
+            <div className="flex items-baseline justify-between gap-s4">
+              <span className="t-section">Pending deactivation requests</span>
+              <span className="text-sm text-ink-600">Admin approval required</span>
+            </div>
+            {requestActionError && <Notice tone="danger">{requestActionError}</Notice>}
+            {!isAdmin && (
+              <p className="border-t border-line pt-s4 text-sm leading-normal text-ink-600">
+                Requests you file with &ldquo;Request deactivation&rdquo; on the People tab wait here for an Admin to
+                approve or reject them.
+              </p>
             )}
-            <div className="space-y-2">
-              <WebcamCapture onCapture={setProfilePhoto} />
-              <div className="flex items-center gap-2">
+            {isAdmin && pendingRequests.length === 0 && (
+              <p className="border-t border-line pt-s4 text-sm leading-normal text-ink-600">
+                No pending requests. Deactivations filed by a Security Manager (SASO) appear here for review.
+              </p>
+            )}
+            {pendingRequests.map((request) => (
+              <div key={request.id} className="card flex flex-col gap-s4 p-s5">
+                <div className="flex items-start gap-s4">
+                  <Avatar name={request.person_name} size={56} />
+                  <div className="flex min-w-0 flex-1 flex-col gap-s1">
+                    <span className="text-xl font-bold">{request.person_name}</span>
+                    <span className="text-sm text-ink-600">
+                      <span className="font-mono font-medium text-ink">{request.student_or_employee_id}</span>
+                    </span>
+                  </div>
+                  <span className="font-mono text-xs text-ink-600">{formatDate(request.requested_at)}</span>
+                </div>
+                <div className="grid grid-cols-[120px_1fr] gap-y-s2 border-t border-line pt-s4 text-sm">
+                  <span className="text-ink-600">Requested by</span>
+                  <span className="font-mono font-medium">{request.requested_by_username}</span>
+                  <span className="text-ink-600">Reason</span>
+                  <span className="font-bold">{request.reason}</span>
+                </div>
                 <input
-                  type="file"
-                  accept={PHOTO_ACCEPT}
-                  onChange={(e) => setProfilePhoto(readPhotoInput(e))}
-                  className="rounded border border-ink-200 px-2 py-1.5 text-sm file:mr-3 file:rounded file:border-0 file:bg-maroon/10 file:px-2 file:py-1 file:text-xs file:font-medium file:text-maroon"
+                  placeholder="Note to requester (optional)"
+                  value={requestNotes[request.id] || ""}
+                  onChange={(e) => setRequestNotes((prev) => ({ ...prev, [request.id]: e.target.value }))}
+                  className="input"
                 />
-                {profilePhoto.file && (
-                  <button type="button" onClick={() => setProfilePhoto(null)} className="text-sm font-medium text-maroon hover:underline">
-                    Clear selection
+                <div className="flex gap-s3">
+                  <button type="button" onClick={() => handleApproveRequest(request)} className="btn-primary">
+                    <Icon name="check" bold size={16} />
+                    Approve
                   </button>
-                )}
-              </div>
-              <p className="text-xs text-ink-400">JPEG, PNG or HEIC only.</p>
-              {profilePhotoError && <p className="text-sm text-red-600">{profilePhotoError}</p>}
-            </div>
-          </div>
-        </div>
-
-        {!editingId && (
-          <GuidedEnrollment key={enrollmentResetKey} onChange={setEnrollment} disabled={isSubmitting} />
-        )}
-
-        {formError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>}
-
-        <div className="flex gap-2 border-t border-ink-900/10 pt-4">
-          <button
-            type="submit"
-            disabled={isSubmitting || (!editingId && !enrollment.isReady)}
-            className="rounded-lg bg-maroon px-5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-maroon-600 disabled:opacity-50"
-          >
-            {editingId ? "Save changes" : "Add user"}
-          </button>
-          {editingId && (
-            <button
-              type="button"
-              onClick={resetForm}
-              className="rounded-lg border border-ink-200 px-5 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-parchment-100"
-            >
-              Cancel edit
-            </button>
-          )}
-        </div>
-      </form>
-
-      {editingPerson && (
-        <div className="rounded-xl border border-ink-900/10 bg-white p-6 shadow-sm">
-          {editingPerson.confusable_partners?.length > 0 && (
-            <div className="mb-4 rounded-lg border border-gold-500/40 bg-gold-500/10 p-3">
-              <p className="text-sm font-semibold text-ink-900">
-                Unusually similar to{" "}
-                {editingPerson.confusable_partners.map((partner) => partner.full_name).join(", ")}
-              </p>
-              <p className="mt-1 text-xs text-ink-700">
-                Please confirm this is expected (e.g. twins/siblings) - a gate scan will always require a
-                card tap for this person regardless of face-match confidence, and every future scan of{" "}
-                {editingPerson.confusable_partners.length > 1 ? "either of them" : "them"} will too. Consider
-                capturing a few extra photos below (more variation helps) and adding a distinguishing note
-                above. Manage this flag in Confusable pairs further down if it was detected in error.
-              </p>
-            </div>
-          )}
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="font-display text-lg font-semibold text-ink-900">
-                Enrollment photos - {editingPerson.full_name}
-              </h2>
-              <p className="text-xs text-ink-500">
-                {editingPerson.face_embeddings?.length || 0}/{editingPerson.max_embeddings || DEFAULT_MAX_EMBEDDINGS}{" "}
-                photos. A few photos with slight variation (angle, expression) match more reliably than just
-                one.
-              </p>
-            </div>
-          </div>
-          <div className="mb-4 flex flex-wrap gap-3">
-            {(editingPerson.face_embeddings || []).map((embedding) => (
-              <div key={embedding.id} className="relative">
-                <img
-                  src={embedding.source_image}
-                  alt=""
-                  className="h-16 w-16 rounded-lg border-2 border-gold-500 object-cover"
-                />
-                {embedding.is_low_confidence && (
-                  <span
-                    title="Single-photo import, not a guided live capture"
-                    className="absolute -right-1 -top-1 rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white shadow-sm"
-                  >
-                    !
-                  </span>
-                )}
+                  <button type="button" onClick={() => handleRejectRequest(request)} className="btn-secondary">
+                    Reject
+                  </button>
+                </div>
               </div>
             ))}
-            {(editingPerson.face_embeddings || []).length === 0 && (
-              <p className="text-xs text-ink-400">No enrollment photos yet.</p>
-            )}
           </div>
-          {(editingPerson.face_embeddings?.length || 0) < (editingPerson.max_embeddings || DEFAULT_MAX_EMBEDDINGS) ? (
-            <div className="space-y-2 rounded-lg border border-ink-900/10 bg-parchment-50 p-3">
-              <WebcamCapture onCapture={handleAddPhoto} />
-              <p className="text-xs text-ink-500">or upload a file instead (JPEG, PNG or HEIC only):</p>
-              <input
-                type="file"
-                accept={PHOTO_ACCEPT}
-                disabled={isAddingPhoto}
-                onChange={(e) => handleAddPhoto(readPhotoInput(e))}
-                className="rounded border border-ink-200 bg-white px-2 py-1.5 text-sm file:mr-3 file:rounded file:border-0 file:bg-maroon/10 file:px-2 file:py-1 file:text-xs file:font-medium file:text-maroon"
-              />
+
+          <div className="flex min-w-0 flex-col gap-s4">
+            <span className="t-section">Lookalike pairs</span>
+            <p className="text-sm leading-normal text-ink-600">
+              Two people flagged here are always sent to a card-tap confirmation at the gate, regardless of face-match
+              confidence - identical twins, or anyone else no camera can be expected to reliably tell apart.
+            </p>
+            {confusableError && <Notice tone="danger">{confusableError}</Notice>}
+            <div className="flex flex-col border-t border-line">
+              {confusablePairs.map((pair) => (
+                <div key={pair.id} className="flex flex-col gap-s2 border-b border-line py-s4">
+                  <div className="flex flex-wrap items-center gap-s3 text-base font-bold">
+                    <span>{pair.person_a_name}</span>
+                    <Icon name="arrows-left-right" bold size={16} className="text-ink-600" />
+                    <span>{pair.person_b_name}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm text-ink-600">
+                    {pair.source === "manual" ? (
+                      <span className="flex items-center gap-s2">
+                        <Icon name="flag" size={16} />
+                        Flagged by{" "}
+                        <span className="font-mono font-semibold text-ink">{pair.flagged_by_username || "an admin"}</span>
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-s2">
+                        <Icon name="cpu" size={16} />
+                        Auto-detected &middot; similarity{" "}
+                        <span className="font-mono font-semibold text-ink">
+                          {(pair.detected_similarity || 0).toFixed(2)}
+                        </span>
+                      </span>
+                    )}
+                    <button type="button" onClick={() => handleUnflagPair(pair)} className="link-danger">
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {confusablePairs.length === 0 && (
+                <p className="py-s4 text-sm text-ink-600">No lookalike pairs on record.</p>
+              )}
             </div>
-          ) : (
-            <p className="text-xs font-medium text-gold-700">Maximum photos reached.</p>
-          )}
-          {addPhotoError && <p className="mt-2 text-sm text-red-600">{addPhotoError}</p>}
+            <form onSubmit={handleFlagConfusablePair} className="card mt-s5 flex flex-col gap-s3 p-s4">
+              <span className="text-base font-bold">Flag two people as a pair</span>
+              <select
+                value={confusableForm.person_a}
+                onChange={(e) => setConfusableForm((prev) => ({ ...prev, person_a: e.target.value }))}
+                className="input"
+              >
+                <option value="">Person A</option>
+                {people.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.full_name} ({p.student_or_employee_id})
+                  </option>
+                ))}
+              </select>
+              <select
+                value={confusableForm.person_b}
+                onChange={(e) => setConfusableForm((prev) => ({ ...prev, person_b: e.target.value }))}
+                className="input"
+              >
+                <option value="">Person B</option>
+                {people.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.full_name} ({p.student_or_employee_id})
+                  </option>
+                ))}
+              </select>
+              <button type="submit" className="btn-secondary self-start">
+                <Icon name="users-three" size={16} />
+                Flag as lookalike pair
+              </button>
+            </form>
+          </div>
         </div>
       )}
 
-      <div className="rounded-xl border border-ink-900/10 bg-white p-6 shadow-sm">
-        <h2 className="font-display text-lg font-semibold text-ink-900">Confusable pairs</h2>
-        <p className="mt-1 text-xs text-ink-500">
-          Two people flagged here are always sent to a card-tap confirmation at the gate, regardless of
-          face-match confidence - identical twins, or anyone else no camera can be expected to reliably tell
-          apart. Auto-detected at enrollment when two records' photos come back unusually similar, or flagged
-          by hand below (e.g. a guard reports a real mix-up).
-        </p>
-        {confusableError && (
-          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{confusableError}</p>
-        )}
-        <form onSubmit={handleFlagConfusablePair} className="mt-3 flex flex-wrap items-end gap-3">
-          <Field label="Person A">
-            <select
-              value={confusableForm.person_a}
-              onChange={(e) => setConfusableForm((prev) => ({ ...prev, person_a: e.target.value }))}
-              className={inputClass}
-            >
-              <option value="">Select a person...</option>
-              {people.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.full_name} ({p.student_or_employee_id})
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Person B">
-            <select
-              value={confusableForm.person_b}
-              onChange={(e) => setConfusableForm((prev) => ({ ...prev, person_b: e.target.value }))}
-              className={inputClass}
-            >
-              <option value="">Select a person...</option>
-              {people.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.full_name} ({p.student_or_employee_id})
-                </option>
-              ))}
-            </select>
-          </Field>
-          <button
-            type="submit"
-            className="rounded-lg bg-maroon px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-maroon-600"
-          >
-            Flag as confusable
-          </button>
-        </form>
-        <ul className="mt-4 space-y-2">
-          {confusablePairs.map((pair) => (
-            <li
-              key={pair.id}
-              className="flex items-center justify-between rounded-lg border border-ink-900/10 bg-parchment-50 p-3 text-sm"
-            >
-              <span className="text-ink-900">
-                {pair.person_a_name} <span className="text-ink-400">&harr;</span> {pair.person_b_name}
-                <span className="ml-2 text-xs font-normal text-ink-500">
-                  {pair.source === "manual"
-                    ? `flagged by ${pair.flagged_by_username || "an admin"}`
-                    : `auto-detected (${Math.round((pair.detected_similarity || 0) * 100)}% similarity)`}
+      {activeTab === "bulk" && (
+        <div className="mt-s6 grid grid-cols-1 gap-s6 xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+          <div className="flex min-w-0 flex-col gap-s3">
+            <div className="flex flex-wrap items-baseline justify-between gap-s4">
+              <span className="t-section">Last bulk import</span>
+              {bulkReport && (
+                <span className="font-mono text-xs text-ink-600">
+                  {bulkReport.fileName} &middot; {formatDate(bulkReport.at)}
                 </span>
-              </span>
-              <button
-                onClick={() => handleUnflagPair(pair)}
-                className="text-sm font-medium text-red-600 hover:underline"
-              >
-                Remove
-              </button>
-            </li>
-          ))}
-          {confusablePairs.length === 0 && (
-            <p className="text-xs text-ink-400">No confusable pairs on record.</p>
-          )}
-        </ul>
-      </div>
-
-      <form onSubmit={handleBulkImport} className="rounded-xl border border-ink-900/10 bg-white p-6 shadow-sm">
-        <h2 className="font-display text-lg font-semibold text-ink-900">Bulk import (CSV/XLSX)</h2>
-        <p className="mb-3 mt-1 text-xs text-ink-500">
-          Columns: full_name, role, student_or_employee_id, nfc_id, department_or_course. Photos
-          must already be on the server in the configured bulk-photos folder, named
-          &lt;student_or_employee_id&gt;.jpg.
-        </p>
-        <div className="flex items-center gap-3">
-          <input
-            type="file"
-            accept=".csv,.xlsx"
-            onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
-            className="text-sm file:mr-3 file:rounded file:border-0 file:bg-maroon/10 file:px-2 file:py-1 file:text-xs file:font-medium file:text-maroon"
-          />
-          <button
-            type="submit"
-            className="rounded-lg bg-maroon px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-maroon-600"
-          >
-            Import
-          </button>
-        </div>
-        {bulkReport && (
-          <div className="mt-3 text-xs">
-            {bulkReport.detail && <p className="text-red-600">{bulkReport.detail}</p>}
-            {bulkReport.created !== undefined && (
-              <p className="font-medium text-emerald-700">{bulkReport.created} row(s) imported successfully.</p>
+              )}
+            </div>
+            {!bulkReport && (
+              <p className="border-t border-line pt-s4 text-sm text-ink-600">
+                Results appear here after an import: every row that failed, and every row that looks like someone
+                already enrolled.
+              </p>
             )}
-            {bulkReport.errors?.length > 0 && (
-              <ul className="mt-1 list-disc pl-5 text-red-600">
-                {bulkReport.errors.map((rowError) => (
-                  <li key={rowError.row}>
-                    Row {rowError.row}: {rowError.error}
-                  </li>
+            {bulkReport?.detail && <Notice tone="danger">{bulkReport.detail}</Notice>}
+            {bulkReport?.created !== undefined && (
+              <Notice tone="verified">
+                <span className="font-bold">{bulkReport.created} row(s) imported.</span>
+              </Notice>
+            )}
+            {bulkRows.length > 0 && (
+              <div className="card overflow-hidden">
+                {bulkRows.map((row, index) => (
+                  <div
+                    key={`${row.row}-${index}`}
+                    className="grid min-h-10 grid-cols-[64px_minmax(0,1fr)_170px] items-center gap-s3 border-b border-l-[3px] border-b-line py-s1 pl-[13px] pr-s4 text-sm"
+                    style={{ borderLeftColor: row.bar }}
+                  >
+                    <span className="font-mono text-xs text-ink-600">Row {row.row}</span>
+                    <span className="truncate">
+                      <b>{row.name}</b> <span className="text-ink-600">{row.detail}</span>
+                    </span>
+                    <span className={`flex items-center gap-s1 font-bold ${row.className}`}>
+                      <Icon name={row.icon} bold size={14} />
+                      {row.status}
+                    </span>
+                  </div>
                 ))}
-              </ul>
-            )}
-            {bulkReport.confusable_warnings?.length > 0 && (
-              <div className="mt-2 rounded-lg border border-gold-500/30 bg-gold-500/5 p-2">
-                <p className="font-semibold text-ink-900">
-                  {bulkReport.confusable_warnings.length} row(s) flagged as unusually similar to an existing
-                  record - please review:
-                </p>
-                <ul className="mt-1 list-disc pl-5 text-ink-700">
-                  {bulkReport.confusable_warnings.map((warning, index) => (
-                    <li key={index}>
-                      Row {warning.row} ({warning.imported_full_name}) is unusually similar to{" "}
-                      {warning.full_name} ({warning.student_or_employee_id}) -{" "}
-                      {Math.round(warning.similarity * 100)}% similarity.
-                    </li>
-                  ))}
-                </ul>
               </div>
             )}
           </div>
-        )}
-      </form>
 
-      <div className="overflow-x-auto rounded-xl border border-ink-900/10 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-ink-900/10 text-sm">
-          <thead className="bg-parchment-100">
-            <tr>
-              {["Name", "Role", "ID", "NFC ID", "Department", "Status", ""].map((h) => (
-                <th
-                  key={h}
-                  className="border-b-2 border-maroon/20 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-ink-500"
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-ink-900/5">
-            {people.map((person) => (
-              <tr key={person.id} className="transition-colors hover:bg-parchment-50">
-                <td className="px-4 py-2.5 font-medium text-ink-900">
-                  {person.full_name}
-                  {person.face_embeddings?.some((e) => e.is_low_confidence) && (
-                    <span
-                      title="Enrolled from a single uncorroborated photo (bulk import or fallback capture)"
-                      className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800"
-                    >
-                      Fallback enrollment
-                    </span>
-                  )}
-                  {person.confusable_partners?.length > 0 && (
-                    <span
-                      title={`Always requires a card tap at the gate - unusually similar to ${person.confusable_partners.map((p) => p.full_name).join(", ")}`}
-                      className="ml-2 inline-flex items-center rounded-full border border-gold-500/40 bg-gold-500/10 px-2 py-0.5 text-[10px] font-bold text-gold-800"
-                    >
-                      Confusable pair
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 capitalize text-ink-700">{person.role}</td>
-                <td className="px-4 py-2.5 text-ink-700">{person.student_or_employee_id}</td>
-                <td className="px-4 py-2.5 text-ink-700">{person.nfc_id}</td>
-                <td className="px-4 py-2.5 text-ink-700">{person.department_or_course}</td>
-                <td className="px-4 py-2.5">
-                  <span
-                    className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
-                      person.is_active
-                        ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
-                        : "border border-ink-200 bg-ink-50 text-ink-500"
-                    }`}
-                  >
-                    {person.is_active ? "Active" : "Inactive"}
+          <form onSubmit={handleBulkImport} className="card flex flex-col gap-s4 self-start p-s5">
+            <div className="flex flex-col gap-s1">
+              <span className="t-eyebrow">CSV or XLSX</span>
+              <span className="t-section">Import a roster</span>
+            </div>
+            <p className="text-sm leading-normal text-ink-600">
+              Columns: <span className="font-mono text-ink">full_name, role, student_or_employee_id, nfc_id,
+              department_or_course</span>. Photos must already be on the server in the bulk-photos folder, named{" "}
+              <span className="font-mono text-ink">&lt;student_or_employee_id&gt;.jpg</span>. These enrollments are
+              single-photo and flagged lower confidence.
+            </p>
+            <input type="file" accept=".csv,.xlsx" onChange={(e) => setBulkFile(e.target.files?.[0] || null)} className="file-input" />
+            <button type="submit" disabled={!bulkFile} className="btn-primary self-start">
+              <Icon name="upload-simple" size={16} />
+              Import
+            </button>
+          </form>
+        </div>
+      )}
+
+      {isDrawerOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-ink/30" onClick={() => !isSubmitting && resetForm()} aria-hidden="true" />
+          <form
+            onSubmit={handleSubmit}
+            role="dialog"
+            aria-modal="true"
+            aria-label={editingId ? "Edit person" : "Add person"}
+            className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[560px] flex-col bg-surface shadow-[-12px_0_40px_rgba(18,20,22,0.18)]"
+          >
+            <div className="flex flex-none items-start justify-between border-b border-line px-s5 pb-s4 pt-s5">
+              <div className="flex flex-col gap-s1">
+                <span className="t-eyebrow">User management</span>
+                <span className="font-display stretch-semi text-[28px] font-extrabold leading-none">
+                  {editingId ? "Edit person" : "Add person"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={resetForm}
+                aria-label="Close"
+                className="flex h-8 w-8 items-center justify-center rounded-sm text-ink-600 hover:bg-canvas"
+              >
+                <Icon name="x" size={20} />
+              </button>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col gap-s4 overflow-y-auto px-s5 py-s4">
+              <div className="grid grid-cols-[minmax(0,7fr)_minmax(0,5fr)] gap-x-s4 gap-y-s3">
+                <Field label="Full name" className="col-span-2">
+                  <input required value={form.full_name} onChange={handleChange("full_name")} className="input" />
+                </Field>
+                <Field label="Student/Employee ID">
+                  <input
+                    required
+                    placeholder="2021-00123"
+                    value={form.student_or_employee_id}
+                    onChange={handleChange("student_or_employee_id")}
+                    className="input font-mono"
+                  />
+                </Field>
+                <div className="flex flex-col gap-s2">
+                  <span className="field-label">Role</span>
+                  <Segmented
+                    value={form.role}
+                    onChange={(role) => setForm((prev) => ({ ...prev, role }))}
+                    options={[
+                      { value: "student", label: "Student" },
+                      { value: "staff", label: "Staff" },
+                    ]}
+                  />
+                </div>
+                <Field label="Department/course">
+                  <input
+                    placeholder="BSIT"
+                    value={form.department_or_course}
+                    onChange={handleChange("department_or_course")}
+                    className="input"
+                  />
+                </Field>
+                <Field label="NFC ID">
+                  <input
+                    required
+                    placeholder="Tap a card to fill this in"
+                    value={form.nfc_id}
+                    onChange={handleChange("nfc_id")}
+                    className="input border-dashed border-ink-400 font-mono"
+                  />
+                </Field>
+              </div>
+
+              <Field label="Distinguishing note (optional)" hint="Visible to security staff, never used for matching.">
+                <input
+                  placeholder="e.g. mole on left cheek, wears glasses"
+                  value={form.distinguishing_note}
+                  onChange={handleChange("distinguishing_note")}
+                  className="input"
+                />
+              </Field>
+
+              <div className="flex gap-s4">
+                {profilePhoto.file && !profilePhoto.previewUrl ? (
+                  // Selected, accepted, just unrenderable in this browser (HEIC).
+                  <div className="flex h-[72px] w-[72px] flex-none flex-col items-center justify-center rounded-sm bg-canvas text-[11px] text-ink-600">
+                    <span className="font-bold">HEIC</span>
+                    <span>no preview</span>
+                  </div>
+                ) : profilePhoto.previewUrl || editingPerson?.photo_reference ? (
+                  <img
+                    src={profilePhoto.previewUrl || editingPerson.photo_reference}
+                    alt="Profile preview"
+                    className="h-[72px] w-[72px] flex-none rounded-sm border border-line object-cover"
+                  />
+                ) : (
+                  <div className="flex h-[72px] w-[72px] flex-none flex-col items-center justify-center gap-0.5 rounded-sm border border-dashed border-ink-400 text-[11px] text-ink-600">
+                    <Icon name="image" size={20} />
+                    Photo
+                  </div>
+                )}
+                <div className="flex min-w-0 flex-1 flex-col gap-s2">
+                  <span className="field-label">
+                    Profile picture <span className="font-normal text-ink-600">(optional)</span>
                   </span>
-                  {person.pending_deactivation && (
-                    <span
-                      title="A SASO has requested this record be deactivated - awaiting Admin approval"
-                      className="ml-2 inline-flex items-center rounded-full border border-gold-500/40 bg-gold-500/10 px-2.5 py-1 text-xs font-semibold text-gold-800"
-                    >
-                      Pending deactivation
+                  <span className="text-xs leading-snug text-ink-600">
+                    Shown to the guard on a card tap or gate pass. Separate from the face-recognition photos - any
+                    clear photo works. JPEG, PNG or HEIC only.
+                  </span>
+                  <WebcamCapture onCapture={setProfilePhoto} />
+                  <div className="flex items-center gap-s3">
+                    <input
+                      type="file"
+                      accept={PHOTO_ACCEPT}
+                      onChange={(e) => setProfilePhoto(readPhotoInput(e))}
+                      className="file-input"
+                    />
+                    {profilePhoto.file && (
+                      <button type="button" onClick={() => setProfilePhoto(null)} className="link-action whitespace-nowrap">
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  {profilePhotoError && <span className="text-sm font-bold text-danger">{profilePhotoError}</span>}
+                </div>
+              </div>
+
+              {!editingId && (
+                <GuidedEnrollment key={enrollmentResetKey} onChange={setEnrollment} disabled={isSubmitting} />
+              )}
+
+              {editingPerson && (
+                <div className="flex flex-col gap-s3 border-t border-line pt-s4">
+                  {editingPerson.confusable_partners?.length > 0 && (
+                    <Notice tone="caution" icon="users-three">
+                      <b>
+                        Unusually similar to{" "}
+                        {editingPerson.confusable_partners.map((partner) => partner.full_name).join(", ")}.
+                      </b>{" "}
+                      Please confirm this is expected (e.g. twins/siblings) - a gate scan will always require a card
+                      tap for {editingPerson.confusable_partners.length > 1 ? "any of them" : "both of them"},
+                      regardless of face-match confidence. Capture a few extra photos below and add a distinguishing
+                      note above. Remove the flag under Lookalike pairs if it was detected in error.
+                    </Notice>
+                  )}
+                  <div className="flex items-baseline justify-between">
+                    <span className="t-section">Face enrollment</span>
+                    <span className="font-mono text-sm font-semibold">
+                      {photoCount} / {photoMax} photos
                     </span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <button onClick={() => handleEdit(person)} className="mr-3 text-sm font-medium text-maroon hover:underline">
-                    Edit
-                  </button>
-                  {person.is_active ? (
-                    <button
-                      onClick={() => handleDeactivate(person)}
-                      disabled={person.pending_deactivation}
-                      className="mr-3 text-sm font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:text-ink-300 disabled:no-underline"
-                    >
-                      {isAdmin ? "Deactivate" : "Request deactivation"}
-                    </button>
+                  </div>
+                  <span className="text-xs text-ink-600">
+                    A few photos with slight variation (angle, expression) match more reliably than just one.
+                  </span>
+                  <div className="flex flex-wrap gap-s2">
+                    {(editingPerson.face_embeddings || []).map((embedding) => (
+                      <div key={embedding.id} className="relative">
+                        <img
+                          src={embedding.source_image}
+                          alt=""
+                          className="h-16 w-16 rounded-sm border border-line object-cover"
+                        />
+                        {embedding.is_low_confidence && (
+                          <span
+                            title="Single-photo import, not a guided live capture"
+                            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-sm bg-caution text-white"
+                          >
+                            <Icon name="warning" bold size={12} />
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                    {photoCount === 0 && <p className="text-xs text-ink-600">No enrollment photos yet.</p>}
+                  </div>
+                  {photoCount < photoMax ? (
+                    <div className="flex flex-col gap-s2 rounded-sm border border-line p-s3">
+                      <WebcamCapture onCapture={handleAddPhoto} />
+                      <span className="text-xs text-ink-600">or upload a file instead (JPEG, PNG or HEIC only):</span>
+                      <input
+                        type="file"
+                        accept={PHOTO_ACCEPT}
+                        disabled={isAddingPhoto}
+                        onChange={(e) => handleAddPhoto(readPhotoInput(e))}
+                        className="file-input"
+                      />
+                    </div>
                   ) : (
-                    <button onClick={() => handleReactivate(person)} className="mr-3 text-sm font-medium text-emerald-700 hover:underline">
-                      Reactivate
-                    </button>
+                    <span className="text-xs font-bold text-ink-600">Maximum photos reached.</span>
                   )}
-                  {isAdmin && (
-                    <button
-                      onClick={() => handleDeletePermanently(person)}
-                      className="text-sm font-medium text-red-800 hover:underline"
-                      title="Permanently remove this record - cannot be undone"
-                    >
-                      Delete permanently
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  {addPhotoError && <Notice tone="danger">{addPhotoError}</Notice>}
+                </div>
+              )}
+
+              {formError && <Notice tone="danger">{formError}</Notice>}
+            </div>
+
+            <div className="flex flex-none items-center justify-end gap-s3 border-t border-line px-s5 py-s4">
+              <button type="button" onClick={resetForm} className="btn-ghost">
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting || (!editingId && !enrollment.isReady)}
+                className="btn-primary"
+              >
+                {isSubmitting ? "Saving…" : editingId ? "Save changes" : "Save person"}
+              </button>
+            </div>
+          </form>
+        </>
+      )}
     </div>
   );
 }

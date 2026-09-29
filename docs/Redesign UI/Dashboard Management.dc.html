@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Atkinson+Hyperlegible+Next:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css">
+<style>body{margin:0}a{color:#7B1113}a:hover{color:#4A0A0C}</style>
+</helmet>
+<div style="width:100%;height:100%;font-family:'Atkinson Hyperlegible Next',sans-serif;color:#121416;background:#EEF0F2;overflow:hidden;box-sizing:border-box;display:flex;position:relative">
+  <div style="width:232px;flex:none;background:#4A0A0C;color:#FFFFFF;display:flex;flex-direction:column;padding:26px 0 16px;box-sizing:border-box">
+    <div style="display:flex;align-items:center;gap:10px;padding:0 20px 42px">
+      <img src="assets/evsu-seal.png" alt="EVSU seal" style="width:40px;height:40px;flex:none"></img>
+      <div style="display:flex;flex-direction:column;gap:2px"><span style="font-family:'Archivo';font-stretch:125%;font-weight:900;font-size:12px;letter-spacing:0.14em;line-height:1">EVSU</span><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px;line-height:1">SecureTap</span></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="7">
+        <div style="display:flex;align-items:center;gap:10px;height:40px;padding:0 20px 0 17px;border-left:3px solid {{ n.bar }};background:{{ n.bg }};color:{{ n.fg }};font-size:14px;font-weight:{{ n.fw }}"><i class="ph ph-{{ n.icon }}" style="font-size:20px"></i>{{ n.label }}</div>
+      </sc-for>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;flex-direction:column;gap:10px;padding:16px 20px 0;border-top:1px solid #7B1113">
+      <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:14px;font-weight:700">System Administrator</span><span style="font-size:12px;color:#D9DCDF">Admin</span></div>
+      <div style="height:40px;border:1px solid #D9DCDF;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:700"><i class="ph ph-sign-out" style="font-size:16px"></i>Log out</div>
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;padding:42px 42px 26px;box-sizing:border-box;overflow:hidden">
+    <div style="flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:26px">
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+        <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">{{ page.eyebrow }}</span>
+        <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:44px;letter-spacing:-0.01em;line-height:1;white-space:nowrap">{{ page.title }}</span>
+      </div>
+      <sc-if value="{{ isUM }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;gap:10px">
+          <div style="height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;background:#FFFFFF;border:1px solid #D9DCDF;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700;box-sizing:border-box"><i class="ph ph-upload-simple" style="font-size:16px"></i>Bulk import</div>
+          <div style="height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700"><i class="ph-bold ph-plus" style="font-size:16px"></i>Add person</div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isReports }}" hint-placeholder-val="{{ false }}">
+        <div style="display:grid;grid-template-columns:auto auto auto;height:40px;border:1px solid #D9DCDF;border-radius:3px;overflow:hidden;background:#FFFFFF;font-size:14px;font-weight:700;box-sizing:border-box">
+          <span style="display:flex;align-items:center;padding:0 16px;background:#121416;color:#FFFFFF">Today</span>
+          <span style="display:flex;align-items:center;padding:0 16px;color:#4B5157;border-left:1px solid #D9DCDF">Last 7 days</span>
+          <span style="display:flex;align-items:center;padding:0 16px;color:#4B5157;border-left:1px solid #D9DCDF">Last 30 days</span>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isAccounts }}" hint-placeholder-val="{{ false }}">
+        <div style="height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700"><i class="ph-bold ph-plus" style="font-size:16px"></i>New account</div>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ isUM }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;display:flex;gap:26px;margin-top:26px;border-bottom:1px solid #D9DCDF">
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+          <span style="display:flex;align-items:center;gap:6px;padding:0 0 10px;border-bottom:3px solid {{ t.bar }};margin-bottom:-1px;font-size:14px;font-weight:{{ t.fw }};color:{{ t.fg }}">{{ t.label }}<span style="font-family:'IBM Plex Mono';font-size:12px;color:#4B5157">{{ t.count }}</span></span>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ showPeople }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;display:flex;gap:16px;margin-top:26px">
+        <span style="flex:1;max-width:360px;height:40px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;gap:10px;font-size:14px;color:#4B5157"><i class="ph ph-magnifying-glass" style="font-size:16px"></i>Search name, ID or NFC ID</span>
+        <span style="height:40px;width:150px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:14px">All roles<i class="ph-bold ph-caret-down" style="font-size:14px"></i></span>
+        <span style="height:40px;width:150px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:14px">Active<i class="ph-bold ph-caret-down" style="font-size:14px"></i></span>
+      </div>
+      <div style="flex:1;min-height:0;margin-top:16px;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:minmax(0,2.3fr) 72px 104px 96px minmax(0,1.3fr) 84px 150px;gap:10px;align-items:center;height:36px;padding:0 16px;border-bottom:1px solid #D9DCDF;font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">
+          <span>NAME</span><span>ROLE</span><span>ID</span><span>NFC ID</span><span>DEPARTMENT / COURSE</span><span>STATUS</span><span style="text-align:right">ACTIONS</span>
+        </div>
+        <sc-for list="{{ people }}" as="p" hint-placeholder-count="9">
+          <div style="display:grid;grid-template-columns:minmax(0,2.3fr) 72px 104px 96px minmax(0,1.3fr) 84px 150px;gap:10px;align-items:center;min-height:52px;padding:6px 16px;border-bottom:1px solid #D9DCDF;font-size:14px;box-sizing:border-box">
+            <span style="display:flex;align-items:center;gap:10px;min-width:0">
+              <span style="flex:none;width:32px;height:32px;border-radius:3px;background:#EEF0F2;color:#4B5157;display:flex;align-items:center;justify-content:center;font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:12px">{{ p.ini }}</span>
+              <span style="display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.name }}</span>
+                <sc-if value="{{ p.flag }}" hint-placeholder-val="{{ false }}"><span style="display:flex;align-items:center;gap:4px;font-size:12px;font-weight:700;color:{{ p.flagFg }}"><i class="ph-bold ph-{{ p.flagIcon }}" style="font-size:12px"></i>{{ p.flag }}</span></sc-if>
+              </span>
+            </span>
+            <span>{{ p.role }}</span>
+            <span style="font-family:'IBM Plex Mono';font-weight:500;font-size:13px">{{ p.id }}</span>
+            <span style="font-family:'IBM Plex Mono';font-size:13px;color:#4B5157">{{ p.nfc }}</span>
+            <span style="color:#4B5157;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.dept }}</span>
+            <span style="display:flex;align-items:center;gap:4px;font-weight:700;color:#1E7B45"><i class="ph-bold ph-check-circle" style="font-size:14px"></i>Active</span>
+            <span style="display:flex;justify-content:flex-end;gap:16px;font-weight:700"><span style="color:#7B1113">Edit</span><span style="color:{{ p.actFg }}">{{ p.act }}</span></span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isQueue }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:42px;margin-top:42px">
+        <div style="display:flex;flex-direction:column;gap:16px;min-height:0">
+          <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px">Pending deactivation requests</span><span style="font-size:14px;color:#4B5157">Admin approval required</span></div>
+          <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;padding:26px;display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;gap:16px;align-items:flex-start">
+              <span style="flex:none;width:56px;height:56px;border-radius:3px;background:#EEF0F2;color:#4B5157;display:flex;align-items:center;justify-content:center;font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:18px">MV</span>
+              <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+                <span style="font-weight:700;font-size:20px">Mark Anthony L. Villanueva</span>
+                <span style="font-size:14px;color:#4B5157"><span style="font-family:'IBM Plex Mono';font-weight:500;color:#121416">2021-03350</span> · Student · BSEE · Person #58</span>
+              </div>
+              <span style="font-family:'IBM Plex Mono';font-size:12px;color:#4B5157">Sep 27, 2026</span>
+            </div>
+            <div style="display:grid;grid-template-columns:120px 1fr;row-gap:6px;font-size:14px;border-top:1px solid #D9DCDF;padding-top:16px">
+              <span style="color:#4B5157">Requested by</span><span style="font-family:'IBM Plex Mono';font-weight:500">saso.reyes <span style="font-family:'Atkinson Hyperlegible Next';color:#4B5157">· Liza M. Reyes</span></span>
+              <span style="color:#4B5157">Reason</span><span style="font-weight:700">transferred out</span>
+            </div>
+            <span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-size:14px;color:#8A9097">Note to requester (optional)</span>
+            <div style="display:flex;gap:10px">
+              <span style="height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700"><i class="ph-bold ph-check" style="font-size:16px"></i>Approve</span>
+              <span style="height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;border:1px solid #D9DCDF;display:flex;align-items:center;font-size:14px;font-weight:700;box-sizing:border-box">Reject</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:26px">
+            <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px">Last bulk import</span><span style="font-family:'IBM Plex Mono';font-size:12px;color:#4B5157">enrollees-2026-sem1.xlsx · Sep 26, 2026</span></div>
+            <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;overflow:hidden">
+              <sc-for list="{{ importRows }}" as="r" hint-placeholder-count="3">
+                <div style="display:grid;grid-template-columns:56px minmax(0,1fr) 170px;gap:10px;align-items:center;height:40px;padding:0 16px 0 13px;border-left:3px solid {{ r.bar }};border-bottom:1px solid #D9DCDF;font-size:14px">
+                  <span style="font-family:'IBM Plex Mono';font-size:12px;color:#4B5157">Row {{ r.row }}</span>
+                  <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><b>{{ r.name }}</b> <span style="color:#4B5157">{{ r.detail }}</span></span>
+                  <span style="display:flex;align-items:center;gap:4px;font-weight:700;color:{{ r.fg }}"><i class="ph-bold ph-{{ r.icon }}" style="font-size:14px"></i>{{ r.status }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:16px;min-height:0">
+          <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px">Lookalike pairs</span>
+          <div style="display:flex;flex-direction:column;border-top:1px solid #D9DCDF">
+            <sc-for list="{{ pairs }}" as="q" hint-placeholder-count="2">
+              <div style="display:flex;flex-direction:column;gap:6px;padding:16px 0;border-bottom:1px solid #D9DCDF">
+                <div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px"><span>{{ q.a }}</span><i class="ph-bold ph-arrows-left-right" style="font-size:16px;color:#4B5157"></i><span>{{ q.b }}</span></div>
+                <div style="display:flex;align-items:center;justify-content:space-between;font-size:14px;color:#4B5157"><span style="display:flex;align-items:center;gap:6px"><i class="ph ph-{{ q.icon }}" style="font-size:16px"></i>{{ q.src }} <span style="font-family:'IBM Plex Mono';font-weight:600;color:#121416">{{ q.val }}</span></span><span style="color:#C62828;font-weight:700">Remove</span></div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px;margin-top:26px">
+            <span style="font-weight:700;font-size:16px">Flag two people as a pair</span>
+            <span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:14px;color:#8A9097">Person A<i class="ph-bold ph-caret-down" style="font-size:14px;color:#121416"></i></span>
+            <span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:14px;color:#8A9097">Person B<i class="ph-bold ph-caret-down" style="font-size:14px;color:#121416"></i></span>
+            <span style="align-self:flex-start;height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;border:1px solid #D9DCDF;display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700;box-sizing:border-box"><i class="ph ph-users-three" style="font-size:16px"></i>Flag as lookalike pair</span>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isReports }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:42px;margin-top:26px;align-items:end">
+        <div style="display:flex;align-items:flex-end">
+          <div style="display:flex;flex-direction:column;gap:4px;padding-right:42px"><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">ENTRIES TODAY</span><span style="font-family:'Archivo';font-stretch:125%;font-weight:800;font-size:72px;line-height:0.85;letter-spacing:-0.02em">412</span></div>
+          <div style="display:flex;flex-direction:column;gap:6px;padding:0 26px 2px;border-left:1px solid #D9DCDF"><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#C62828">FAILED VERIFICATIONS</span><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:28px;line-height:1;color:#C62828">9</span></div>
+          <div style="display:flex;flex-direction:column;gap:6px;padding:0 26px 2px;border-left:1px solid #D9DCDF"><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">BUSIEST HOUR</span><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:28px;line-height:1">7:00 AM</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">ENTRIES BY METHOD</span>
+          <div style="display:flex;height:16px;gap:2px">
+            <sc-for list="{{ methodMix }}" as="s" hint-placeholder-count="3"><span style="flex:{{ s.n }};background:{{ s.c }}"></span></sc-for>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px">
+            <sc-for list="{{ methodLegend }}" as="s" hint-placeholder-count="4"><span style="display:flex;align-items:center;gap:6px;color:#4B5157"><span style="width:10px;height:10px;background:{{ s.c }}"></span>{{ s.label }} <span style="font-family:'IBM Plex Mono';font-weight:600;color:#121416">{{ s.n }}</span></span></sc-for>
+          </div>
+        </div>
+      </div>
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);grid-template-rows:minmax(0,1fr) minmax(0,1.15fr);gap:26px 42px;margin-top:42px">
+        <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;padding:16px 16px 10px;display:flex;flex-direction:column;gap:10px;min-height:0">
+          <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:16px">Busiest hours</span>
+          <div style="flex:1;min-height:0;display:flex;align-items:flex-end;gap:4px;border-bottom:1px solid #D9DCDF;background:repeating-linear-gradient(to top,#D9DCDF 0 1px,#FFFFFF 1px 25%)">
+            <sc-for list="{{ hours }}" as="h" hint-placeholder-count="24"><span style="flex:1;height:{{ h.pct }}%;background:{{ h.c }}"></span></sc-for>
+          </div>
+          <div style="display:flex;gap:4px;font-family:'IBM Plex Mono';font-size:11px;color:#4B5157">
+            <sc-for list="{{ hours }}" as="h" hint-placeholder-count="24"><span style="flex:1;text-align:center">{{ h.lab }}</span></sc-for>
+          </div>
+        </div>
+        <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;padding:16px 16px 10px;display:flex;flex-direction:column;gap:10px;min-height:0">
+          <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:16px">Entries per day</span>
+          <div style="flex:1;min-height:0;display:flex;align-items:flex-end;gap:10px;border-bottom:1px solid #D9DCDF">
+            <sc-for list="{{ days }}" as="d" hint-placeholder-count="7"><span style="flex:1;height:{{ d.pct }}%;background:{{ d.c }};position:relative"><span style="position:absolute;bottom:100%;left:50%;transform:translateX(-50%);padding-bottom:4px;font-family:'IBM Plex Mono';font-size:10px;color:#4B5157;white-space:nowrap">{{ d.n }}</span></span></sc-for>
+          </div>
+          <div style="display:flex;gap:10px;font-family:'IBM Plex Mono';font-size:11px;color:#4B5157">
+            <sc-for list="{{ days }}" as="d" hint-placeholder-count="7"><span style="flex:1;text-align:center">{{ d.lab }}</span></sc-for>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:26px;min-height:0;grid-column:1 / 3">
+          <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;padding:16px 16px 10px;display:flex;flex-direction:column;gap:10px;min-height:0">
+            <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:16px">Confidence score distribution</span>
+            <div style="flex:1;min-height:0;display:flex;align-items:flex-end;gap:2px;border-bottom:1px solid #D9DCDF">
+              <sc-for list="{{ conf }}" as="b" hint-placeholder-count="8"><span style="flex:1;height:{{ b.pct }}%;background:#7B1113"></span></sc-for>
+            </div>
+            <div style="display:flex;gap:2px;font-family:'IBM Plex Mono';font-size:11px;color:#4B5157">
+              <sc-for list="{{ conf }}" as="b" hint-placeholder-count="8"><span style="flex:1;text-align:center">{{ b.lab }}</span></sc-for>
+            </div>
+          </div>
+          <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;padding:16px 16px 10px;display:flex;flex-direction:column;gap:10px;min-height:0">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:16px">
+              <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:16px">False-accept / false-reject vs. threshold</span>
+              <div style="display:flex;gap:16px;font-size:12px;color:#4B5157"><span style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:3px;background:#7B1113"></span>False accept</span><span style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:3px;background:#4B5157"></span>False reject</span></div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:10px;background:#FBEFD9;border-radius:3px;padding:6px 10px;font-size:12px;line-height:1.4"><i class="ph-bold ph-warning" style="font-size:14px;color:#9A5B00;margin-top:1px"></i><span><b>Preliminary estimate.</b> Computed from enrolled photos, not an independent test set.</span></div>
+            <div style="flex:1;min-height:0;position:relative;border-bottom:1px solid #D9DCDF;border-left:1px solid #D9DCDF">
+              <svg viewBox="0 0 300 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">
+                <line x1="150" y1="0" x2="150" y2="100" stroke="#1D5FA8" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"></line>
+                <polyline points="{{ farPts }}" fill="none" stroke="#7B1113" stroke-width="2.5" vector-effect="non-scaling-stroke"></polyline>
+                <polyline points="{{ frrPts }}" fill="none" stroke="#4B5157" stroke-width="2.5" vector-effect="non-scaling-stroke"></polyline>
+              </svg>
+              <span style="position:absolute;left:50%;top:0;transform:translateX(6px);font-family:'IBM Plex Mono';font-size:11px;color:#1D5FA8;font-weight:600">current 0.45</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono';font-size:11px;color:#4B5157"><span>0.30</span><span>0.35</span><span>0.40</span><span>0.45</span><span>0.50</span><span>0.55</span><span>0.60</span></div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isAudit }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;display:flex;gap:16px;margin-top:42px">
+        <span style="height:40px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;gap:10px;font-family:'IBM Plex Mono';font-size:14px"><i class="ph ph-calendar-blank" style="font-size:16px;color:#4B5157"></i>Sep 22 – Sep 28, 2026</span>
+        <span style="height:40px;width:170px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:14px">All actors<i class="ph-bold ph-caret-down" style="font-size:14px"></i></span>
+        <span style="height:40px;width:200px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:14px">All actions<i class="ph-bold ph-caret-down" style="font-size:14px"></i></span>
+      </div>
+      <div style="flex:1;min-height:0;margin-top:16px;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:170px 140px minmax(0,1.3fr) minmax(0,1.6fr) minmax(0,1.6fr);gap:16px;align-items:center;height:36px;padding:0 16px;border-bottom:1px solid #D9DCDF;font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">
+          <span>TIMESTAMP</span><span>ACTOR</span><span>ACTION</span><span>TARGET</span><span>DETAIL</span>
+        </div>
+        <sc-for list="{{ audit }}" as="a" hint-placeholder-count="12">
+          <div style="display:grid;grid-template-columns:170px 140px minmax(0,1.3fr) minmax(0,1.6fr) minmax(0,1.6fr);gap:16px;align-items:center;height:40px;padding:0 16px 0 13px;border-left:3px solid {{ a.bar }};border-bottom:1px solid #D9DCDF;font-size:14px">
+            <span style="font-family:'IBM Plex Mono';font-weight:500;font-size:12px;color:#4B5157">{{ a.ts }}</span>
+            <span style="font-family:'IBM Plex Mono';font-weight:500;font-size:13px">{{ a.actor }}</span>
+            <span style="display:flex;align-items:center;gap:6px;font-weight:700;color:{{ a.fg }};white-space:nowrap"><i class="ph ph-{{ a.icon }}" style="font-size:16px"></i>{{ a.action }}</span>
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.target }}</span>
+            <span style="color:#4B5157;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.detail }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isAccounts }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:42px;margin-top:42px;align-items:start">
+        <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1.4fr) minmax(0,1.2fr) 96px 80px;gap:10px;align-items:center;height:36px;padding:0 16px;border-bottom:1px solid #D9DCDF;font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157"><span>USERNAME</span><span>NAME</span><span>ROLE</span><span>GATE</span><span>STATUS</span></div>
+          <sc-for list="{{ accounts }}" as="a" hint-placeholder-count="3">
+            <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1.4fr) minmax(0,1.2fr) 96px 80px;gap:10px;align-items:center;height:52px;padding:0 16px 0 13px;border-left:3px solid {{ a.bar }};background:{{ a.bg }};border-bottom:1px solid #D9DCDF;font-size:14px">
+              <span style="font-family:'IBM Plex Mono';font-weight:600">{{ a.user }}</span><span style="font-weight:700">{{ a.name }}</span><span>{{ a.role }}</span><span style="color:#4B5157">{{ a.gate }}</span>
+              <span style="display:flex;align-items:center;gap:4px;font-weight:700;color:#1E7B45"><i class="ph-bold ph-check-circle" style="font-size:14px"></i>Active</span>
+            </div>
+          </sc-for>
+        </div>
+        <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;padding:26px;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;flex-direction:column;gap:4px"><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">EDIT ACCOUNT</span><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px">guard.maingate</span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Username</span><span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-family:'IBM Plex Mono';font-size:14px">guard.maingate</span></label>
+            <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Full name</span><span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-size:14px">Noel B. Cortez</span></label>
+          </div>
+          <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Password</span><span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-size:14px;color:#8A9097">Leave blank to keep current password</span></label>
+          <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Role</span>
+            <div style="display:flex;flex-direction:column;border:1px solid #D9DCDF;border-radius:3px;font-size:14px">
+              <span style="display:flex;align-items:center;gap:10px;height:40px;padding:0 10px;border-bottom:1px solid #D9DCDF"><span style="width:16px;height:16px;border-radius:50%;border:1px solid #8A9097;box-sizing:border-box"></span>Admin</span>
+              <span style="display:flex;align-items:center;gap:10px;height:40px;padding:0 10px;border-bottom:1px solid #D9DCDF"><span style="width:16px;height:16px;border-radius:50%;border:1px solid #8A9097;box-sizing:border-box"></span>Security Manager (SASO)</span>
+              <span style="display:flex;align-items:center;gap:10px;height:40px;padding:0 10px;font-weight:700"><span style="width:16px;height:16px;border-radius:50%;border:5px solid #7B1113;box-sizing:border-box"></span>Security Officer</span>
+            </div>
+          </div>
+          <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Assigned gate</span><span style="font-size:12px;color:#4B5157">Security Officers only</span><span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:14px">Main Gate<i class="ph-bold ph-caret-down" style="font-size:14px"></i></span></label>
+          <span style="display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700"><span style="width:18px;height:18px;border-radius:3px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;justify-content:center"><i class="ph-bold ph-check" style="font-size:12px"></i></span>Active</span>
+          <div style="display:flex;gap:10px;padding-top:10px">
+            <span style="height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;font-size:14px;font-weight:700">Save changes</span>
+            <span style="height:40px;padding:0 16px;white-space:nowrap;display:flex;align-items:center;font-size:14px;font-weight:700;color:#7B1113">Cancel</span>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;display:flex;align-items:flex-start;gap:10px;margin-top:26px;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:10px 16px;font-size:14px;line-height:1.45;max-width:760px"><i class="ph-bold ph-lock-simple" style="font-size:20px"></i><span><b>Read-only for now.</b> These values come from the server config. To change one, edit the config and restart the server.</span></div>
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:26px 68px;margin-top:42px;align-content:start">
+        <div style="display:flex;flex-direction:column;gap:42px">
+          <sc-for list="{{ setLeft }}" as="g" hint-placeholder-count="4">
+            <div style="display:flex;flex-direction:column">
+              <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:16px;padding-bottom:10px;border-bottom:2px solid #121416">{{ g.title }}</span>
+              <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+                <div style="display:flex;justify-content:space-between;align-items:center;height:36px;border-bottom:1px solid #D9DCDF;font-size:14px"><span style="color:#4B5157">{{ r.k }}</span><span style="font-family:'IBM Plex Mono';font-weight:600">{{ r.v }}</span></div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:42px">
+          <sc-for list="{{ setRight }}" as="g" hint-placeholder-count="3">
+            <div style="display:flex;flex-direction:column">
+              <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:16px;padding-bottom:10px;border-bottom:2px solid #121416">{{ g.title }}</span>
+              <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+                <div style="display:flex;justify-content:space-between;align-items:center;height:36px;border-bottom:1px solid #D9DCDF;font-size:14px"><span style="color:#4B5157">{{ r.k }}</span><span style="font-family:'IBM Plex Mono';font-weight:600">{{ r.v }}</span></div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{ isDrawer }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;top:0;right:0;bottom:0;width:560px;background:#FFFFFF;box-shadow:-12px 0 40px rgba(18,20,22,0.18);display:flex;flex-direction:column">
+      <div style="flex:none;display:flex;align-items:flex-start;justify-content:space-between;padding:26px 26px 16px;border-bottom:1px solid #D9DCDF">
+        <div style="display:flex;flex-direction:column;gap:4px"><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">USER MANAGEMENT</span><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:28px;line-height:1">Add person</span></div>
+        <i class="ph ph-x" style="font-size:20px;color:#4B5157;padding:6px"></i>
+      </div>
+      <div style="flex:1;min-height:0;overflow:hidden;padding:16px 26px;display:flex;flex-direction:column;gap:16px">
+        <div style="display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:10px 16px">
+          <label style="display:flex;flex-direction:column;gap:4px;grid-column:1 / 3"><span style="font-size:14px;font-weight:700">Full name</span><span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-size:14px">Kristine Joy B. Ramos</span></label>
+          <label style="display:flex;flex-direction:column;gap:4px"><span style="font-size:14px;font-weight:700">Student/Employee ID</span><span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-family:'IBM Plex Mono';font-size:14px">2023-01288</span></label>
+          <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:14px;font-weight:700">Role</span>
+            <div style="display:grid;grid-template-columns:1fr 1fr;height:40px;border:1px solid #D9DCDF;border-radius:3px;overflow:hidden;font-size:14px;font-weight:700;box-sizing:border-box"><span style="display:flex;align-items:center;justify-content:center;background:#121416;color:#FFFFFF">Student</span><span style="display:flex;align-items:center;justify-content:center;color:#4B5157;border-left:1px solid #D9DCDF">Staff</span></div>
+          </div>
+          <label style="display:flex;flex-direction:column;gap:4px"><span style="font-size:14px;font-weight:700">Department/course</span><span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-size:14px">BSEd – Mathematics</span></label>
+          <label style="display:flex;flex-direction:column;gap:4px"><span style="font-size:14px;font-weight:700">NFC ID</span><span style="height:40px;box-sizing:border-box;border:1px dashed #8A9097;border-radius:3px;padding:0 10px;display:flex;align-items:center;gap:6px;font-size:14px;color:#4B5157"><i class="ph ph-identification-card" style="font-size:16px"></i>Tap a card to fill this in</span></label>
+        </div>
+        <div style="display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:start">
+          <div style="width:72px;height:72px;border:1px dashed #8A9097;border-radius:3px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#4B5157;font-size:11px;box-sizing:border-box"><i class="ph ph-image" style="font-size:20px"></i>Photo</div>
+          <label style="display:flex;flex-direction:column;gap:4px"><span style="font-size:14px;font-weight:700">Distinguishing note <span style="font-weight:400;color:#4B5157">(optional)</span></span><span style="height:40px;box-sizing:border-box;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-size:14px;color:#8A9097">e.g. mole on left cheek, wears glasses</span><span style="font-size:12px;color:#4B5157">Visible to security staff, never used for matching. Profile picture optional: JPEG/PNG/HEIC only.</span></label>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;border-top:1px solid #D9DCDF;padding-top:16px">
+          <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px">Face enrollment</span><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:14px">2 / 5 captured</span></div>
+          <div style="display:flex;gap:16px;font-size:14px;font-weight:700"><span style="padding-bottom:6px;border-bottom:3px solid #C89B3C">Guided 5-shot capture</span><span style="padding-bottom:6px;color:#4B5157;font-weight:400">Single-photo fallback</span></div>
+          <div style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr 1fr;gap:6px;align-items:end">
+            <sc-for list="{{ shots }}" as="s" hint-placeholder-count="5">
+              <div style="display:flex;flex-direction:column;gap:4px">
+                <div style="aspect-ratio:3/4;border-radius:3px;background:{{ s.bg }};border:{{ s.border }};box-sizing:border-box;display:flex;align-items:center;justify-content:center;color:{{ s.ic }};position:relative"><i class="ph ph-{{ s.icon }}" style="font-size:{{ s.isz }}px"></i>
+                  <sc-if value="{{ s.live }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:6px;left:6px;font-family:'Archivo';font-stretch:75%;font-weight:800;font-size:11px;letter-spacing:0.1em;color:#FFFFFF;display:flex;align-items:center;gap:4px"><span style="width:6px;height:6px;background:#C89B3C"></span>LIVE</span></sc-if>
+                </div>
+                <span style="font-size:12px;font-weight:700;line-height:1.2">{{ s.name }}</span>
+                <span style="font-size:11px;color:#4B5157;line-height:1.2">{{ s.hint }}</span>
+                <span style="display:flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:{{ s.qfg }};line-height:1.2"><i class="ph-bold ph-{{ s.qicon }}" style="font-size:12px"></i>{{ s.q }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;background:#FBE4E4;border-radius:3px;padding:6px 10px;font-size:12px;line-height:1.4"><i class="ph-bold ph-x-circle" style="font-size:14px;color:#C62828;margin-top:1px"></i><span><b>Slight left failed: too blurry.</b> Hold still and retake before continuing.</span></div>
+        </div>
+      </div>
+      <div style="flex:none;display:flex;justify-content:space-between;align-items:center;padding:16px 26px;border-top:1px solid #D9DCDF">
+        <span style="height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;border:1px solid #D9DCDF;display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700;box-sizing:border-box"><i class="ph ph-camera" style="font-size:16px"></i>Capture Slight right</span>
+        <div style="display:flex;gap:10px"><span style="height:40px;padding:0 16px;white-space:nowrap;display:flex;align-items:center;font-size:14px;font-weight:700;color:#7B1113">Cancel</span><span style="height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;background:#D9DCDF;color:#4B5157;display:flex;align-items:center;font-size:14px;font-weight:700">Save person</span></div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;screen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;users&quot;,&quot;drawer&quot;,&quot;queue&quot;,&quot;reports&quot;,&quot;audit&quot;,&quot;accounts&quot;,&quot;settings&quot;],&quot;default&quot;:&quot;users&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const C={i9:'#121416',i6:'#4B5157',i4:'#8A9097',line:'#D9DCDF',cv:'#EEF0F2',sf:'#FFFFFF',maroon:'#7B1113',md:'#4A0A0C',brass:'#C89B3C',v:'#1E7B45',c:'#9A5B00',ct:'#FBEFD9',d:'#C62828',p:'#1D5FA8',pt:'#E2ECF7'};
+const NAV=[['Live Monitoring','broadcast'],['Logs','list-bullets'],['User Management','users'],['Reports','chart-bar'],['Audit Log','clipboard-text'],['Accounts','user-gear'],['Settings','gear-six']];
+const PEOPLE=[
+  ['MS','Maria Clara D. Santos','Student','2021-00123','0A3F5C21','BSIT'],
+  ['JD','Juan Miguel R. Dela Cruz','Student','2022-04417','1B7E90D4','BSCE'],
+  ['KR','Kristine Joy B. Ramos','Student','2023-01288','3C21A7F0','BSEd – Mathematics'],
+  ['MV','Mark Anthony L. Villanueva','Student','2021-03350','4D88B2E1','BSEE','pending'],
+  ['RB','Rhea Mae C. Bacalso','Student','2024-00096','5E14C3A9','BSHM','single'],
+  ['PM','Paolo S. Mendoza','Student','2023-02210','8B41F0A2','BSIT','pair'],
+  ['PM','Paulo S. Mendoza','Student','2023-02211','8B41F0A3','BSIT','pair'],
+  ['AU','Angelica P. Uy','Staff','EMP-0412','6F02D8B7',"Registrar's Office"],
+  ['RA','Ramon T. Abad','Staff','EMP-0178','7A93E4C6','Security Office']
+];
+const FLAG={pending:['Pending deactivation',C.c,'clock'],single:['Single-photo enrollment · lower confidence',C.i6,'image'],pair:['Lookalike pair',C.i6,'users-three']};
+const AUDIT=[
+  ['Sep 28 · 07:35:20 AM','guard.maingate','Manual override logged','hand-pointing','2022-04417','checked physical school ID'],
+  ['Sep 27 · 04:12:09 PM','admin','Deactivation approved','check-circle','Person #58 (Mark Anthony L. Villanueva)','—'],
+  ['Sep 27 · 10:48:33 AM','saso.reyes','Deactivation requested','clock','Person #58 (Mark Anthony L. Villanueva)','reason: transferred out'],
+  ['Sep 26 · 03:20:14 PM','saso.reyes','Lookalike pair flagged','users-three','Juan Miguel R. Dela Cruz ↔ Mark Anthony L. Villanueva','manual'],
+  ['Sep 26 · 09:02:51 AM','admin','Account updated','user-gear','guard.maingate','Assigned gate: Main Gate'],
+  ['Sep 25 · 02:44:07 PM','admin','Deactivation rejected','x-circle','Person #41 (Rhea Mae C. Bacalso)','note: still enrolled this term'],
+  ['Sep 25 · 11:15:40 AM','admin','Person deleted permanently','trash','Person #12','duplicate record'],
+  ['Sep 24 · 08:30:02 AM','admin','Account created','user-plus','saso.reyes','Security Manager (SASO)'],
+  ['Sep 23 · 01:57:26 PM','saso.reyes','Lookalike pair removed','users-three','Kristine Joy B. Ramos ↔ Angelica P. Uy','not confusable']
+];
+const HOURS=[0,0,0,0,0,2,18,101,54,22,14,12,16,11,9,13,58,47,21,8,4,2,0,0];
+const DAYS=[['Tu 22',1184],['We 23',1236],['Th 24',1198],['Fr 25',1247],['Sa 26',1102],['Su 27',318],['Mo 28',412]];
+const CONF=[['55',6],['60',14],['65',29],['70',47],['75',68],['80',84],['85',91],['90',64]];
+const pts=f=>Array.from({length:13},(_,i)=>{const t=0.30+i*0.025;return `${(i*25).toFixed(1)},${(100-f(t)).toFixed(1)}`;}).join(' ');
+class Component extends DCLogic {
+  renderVals(){
+    const screen=this.props.screen??'users';
+    const act={users:2,drawer:2,queue:2,reports:3,audit:4,accounts:5,settings:6}[screen]??2;
+    const nav=NAV.map(([label,icon],i)=>({label,icon,bar:i===act?C.brass:C.md,bg:i===act?C.maroon:C.md,fg:i===act?C.sf:C.line,fw:i===act?700:400}));
+    const isUM=['users','drawer','queue'].includes(screen);
+    const tabIdx=screen==='queue'?1:0;
+    const tabs=[['People','9'],['Requests & pairs','1 · 2'],['Bulk import','']].map(([label,count],i)=>({label,count,bar:i===tabIdx?C.brass:C.cv,fg:i===tabIdx?C.i9:C.i6,fw:i===tabIdx?700:400}));
+    const people=PEOPLE.map(r=>{const f=FLAG[r[6]];return {ini:r[0],name:r[1],role:r[2],id:r[3],nfc:r[4],dept:r[5],flag:f?f[0]:null,flagFg:f?f[1]:C.i6,flagIcon:f?f[2]:'',act:r[6]==='pending'?'Pending…':'Deactivate',actFg:r[6]==='pending'?C.i6:C.d};});
+    const titles={users:['PEOPLE · ADMIN VIEW','User Management'],drawer:['PEOPLE · ADMIN VIEW','User Management'],queue:['REQUESTS & LOOKALIKE PAIRS','User Management'],reports:['TODAY · SEP 28, 2026','Reports'],audit:['ALL ACTORS · ADMIN VIEW','Audit Log'],accounts:['DASHBOARD SIGN-INS','Accounts'],settings:['SERVER CONFIGURATION','Settings']};
+    const t=titles[screen]||titles.users;
+    const hmax=Math.max(...HOURS),dmax=Math.max(...DAYS.map(d=>d[1])),cmax=Math.max(...CONF.map(c=>c[1]));
+    const shots=[
+      {name:'Front',hint:'Straight on',bg:C.cv,border:'1px solid #D9DCDF',icon:'user',isz:28,ic:C.i6,q:'Passed',qfg:C.v,qicon:'check-circle'},
+      {name:'Slight left',hint:'Turn a little',bg:C.cv,border:'2px solid #C62828',icon:'user',isz:22,ic:C.i6,q:'Too blurry',qfg:C.d,qicon:'x-circle'},
+      {name:'Slight right',hint:'Live preview',bg:C.i9,border:'2px solid #1D5FA8',icon:'user-focus',isz:28,ic:C.i4,q:'Capturing',qfg:C.p,qicon:'circle-notch',live:true},
+      {name:'Neutral',hint:'No expression',bg:C.sf,border:'1px dashed #8A9097',icon:'user',isz:20,ic:C.i4,q:'Waiting',qfg:C.i6,qicon:'circle'},
+      {name:'Smile',hint:'Natural smile',bg:C.sf,border:'1px dashed #8A9097',icon:'smiley',isz:20,ic:C.i4,q:'Waiting',qfg:C.i6,qicon:'circle'}
+    ];
+    // Reorder so live slot (Slight right) is the larger first column visually? keep capture order.
+    const set=(title,rows)=>({title,rows:rows.map(([k,v])=>({k,v}))});
+    return {
+      nav,page:{eyebrow:t[0],title:t[1]},isUM,tabs,showPeople:screen==='users'||screen==='drawer',isDrawer:screen==='drawer',isQueue:screen==='queue',
+      isReports:screen==='reports',isAudit:screen==='audit',isAccounts:screen==='accounts',isSettings:screen==='settings',
+      people,shots,
+      importRows:[
+        {row:2,name:'Kristine Joy B. Ramos',detail:'2023-01288',status:'Imported',fg:C.v,icon:'check-circle',bar:C.sf},
+        {row:3,name:'—',detail:'Missing Student/Employee ID',status:'Error',fg:C.d,icon:'x-circle',bar:C.d},
+        {row:4,name:'Paulo S. Mendoza',detail:'similar to Paolo S. Mendoza',status:'Lookalike warning',fg:C.c,icon:'users-three',bar:C.c}
+      ],
+      pairs:[
+        {a:'Paolo S. Mendoza',b:'Paulo S. Mendoza',src:'Auto-detected · similarity',val:'0.63',icon:'cpu'},
+        {a:'Juan Miguel R. Dela Cruz',b:'Mark Anthony L. Villanueva',src:'Flagged by',val:'saso.reyes',icon:'flag'}
+      ],
+      methodMix:[{n:312,c:C.maroon},{n:91,c:C.i6},{n:9,c:C.d}],
+      methodLegend:[{label:'Face',n:312,c:C.maroon},{label:'Face + card',n:91,c:C.i6},{label:'Failed',n:9,c:C.d},{label:'Occluded (historical only)',n:0,c:C.i4}],
+      hours:HOURS.map((n,i)=>({pct:(n/hmax*100).toFixed(1),c:n===hmax?C.maroon:C.i6,lab:i%3===0?String(i):''})),
+      days:DAYS.map(([lab,n],i)=>({lab,n:n.toLocaleString(),pct:(n/dmax*88).toFixed(1),c:i===6?C.maroon:C.i6})),
+      conf:CONF.map(([lab,n])=>({lab,pct:(n/cmax*100).toFixed(1)})),
+      farPts:pts(t=>Math.min(96,100*Math.exp(-(t-0.30)*16))),
+      frrPts:pts(t=>Math.min(96,3+100*Math.pow(Math.max(0,t-0.30)/0.30,2.4))),
+      audit:AUDIT.map(r=>{const bad=r[2].includes('deleted');const man=r[2].startsWith('Manual');return {ts:r[0],actor:r[1],action:r[2],icon:r[3],target:r[4],detail:r[5],fg:bad?C.d:C.i9,bar:man?C.brass:(bad?C.d:C.sf)};}),
+      accounts:[
+        {user:'admin',name:'System Administrator',role:'Admin',gate:'—',bar:C.sf,bg:C.sf},
+        {user:'saso.reyes',name:'Liza M. Reyes',role:'Security Manager (SASO)',gate:'—',bar:C.sf,bg:C.sf},
+        {user:'guard.maingate',name:'Noel B. Cortez',role:'Security Officer',gate:'Main Gate',bar:C.maroon,bg:C.cv}
+      ],
+      setLeft:[
+        set('Face matching',[['Match threshold','0.45'],['Tiebreak margin','0.05'],['Tiebreak timeout','10 s']]),
+        set('Voting window',[['Size','4'],['Agreement','2'],['Window','4 s']]),
+        set('Gate-scan quality',[['Detector size','480'],['Minimum blur','25.0'],['Edge margin','0.02'],['Max yaw','0.35']])
+      ],
+      setRight:[
+        set('Liveness',[['Score threshold','0.5']]),
+        set('Occlusion detection',[['Mode in effect','classifier'],['Classifier cutoff','0.5'],['Rule thresholds','0.73 / 0.40 / 0.65']]),
+        set('Cooldowns',[['Recognition','60 s'],['Unenrolled capture','30 s'],['Spoof capture','30 s']]),
+        set('Enrollment',[['Max photos','5 (8 for lookalike pairs)']])
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

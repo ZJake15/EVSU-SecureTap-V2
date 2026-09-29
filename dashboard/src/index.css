@@ -4,26 +4,84 @@
 
 body {
   margin: 0;
-  font-family: "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
-  background-color: #faf7f2;
-  color: #1c1917;
+  font-family: "Atkinson Hyperlegible Next", sans-serif;
+  background-color: #eef0f2;
+  color: #121416;
 }
 
 #root {
   min-height: 100vh;
 }
 
-/* Concentric-ring motif echoing the university seal's circular band - a
-   texture behind the page shell, never under text or table rows (it's on the
-   Layout wrapper, cards sit solid white on top of it). Anchored off the top
-   edge so it reads as one continuous texture rather than a logo repeated. */
-.shell-bg {
-  background-color: #faf7f2;
-  background-image: repeating-radial-gradient(
-    circle at 88% -12%,
-    rgba(123, 17, 19, 0.035) 0px,
-    rgba(123, 17, 19, 0.035) 1.5px,
-    transparent 1.5px,
-    transparent 44px
-  );
+/* Type roles - hierarchy comes from Archivo's width axis as much as its size:
+   condensed small caps for labels, semi-expanded for titles, expanded for the
+   one hero number per page. */
+@layer components {
+  .t-eyebrow {
+    @apply font-display stretch-condensed text-xs font-bold uppercase tracking-[0.08em] text-ink-600;
+  }
+  .t-title {
+    @apply font-display stretch-semi text-[44px] font-extrabold leading-none tracking-[-0.01em] text-ink;
+  }
+  .t-hero {
+    @apply font-display stretch-wide text-[72px] font-extrabold leading-[0.85] tracking-[-0.02em] text-ink;
+  }
+  .t-section {
+    @apply font-display stretch-semi text-xl font-bold text-ink;
+  }
+  .t-stat {
+    @apply font-display stretch-semi text-[28px] font-bold leading-none;
+  }
+
+  /* Surfaces */
+  .card {
+    @apply rounded-md border border-line bg-surface;
+  }
+
+  /* Form controls - 40px tall, 3px radius, prompt-blue focus ring. */
+  .field-label {
+    @apply text-sm font-bold text-ink;
+  }
+  .input {
+    @apply h-10 w-full rounded-sm border border-line bg-surface px-[10px] text-sm text-ink placeholder:text-ink-400 focus:border-prompt focus:outline-none focus:ring-1 focus:ring-prompt disabled:bg-canvas disabled:text-ink-400;
+  }
+  textarea.input {
+    @apply h-auto min-h-[84px] py-[9px] leading-snug;
+  }
+  .file-input {
+    @apply w-full text-sm text-ink-600 file:mr-s3 file:h-8 file:cursor-pointer file:rounded-sm file:border file:border-solid file:border-line file:bg-surface file:px-s3 file:text-sm file:font-bold file:text-ink hover:file:bg-canvas;
+  }
+
+  /* Buttons - 40px, 8px radius. One maroon primary per view. */
+  .btn {
+    @apply inline-flex h-10 items-center justify-center gap-s3 whitespace-nowrap rounded-md px-s4 text-sm font-bold transition-colors disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-maroon text-white hover:bg-maroon-deep disabled:bg-line disabled:text-ink-600;
+  }
+  .btn-secondary {
+    @apply btn border border-line bg-surface text-ink hover:bg-canvas disabled:text-ink-400;
+  }
+  .btn-ghost {
+    @apply btn px-s3 text-maroon hover:text-maroon-deep disabled:text-ink-400;
+  }
+  .btn-sm {
+    @apply h-8 px-s3;
+  }
+  .link-action {
+    @apply text-sm font-bold text-maroon hover:text-maroon-deep hover:underline disabled:cursor-not-allowed disabled:text-ink-400 disabled:no-underline;
+  }
+  .link-danger {
+    @apply text-sm font-bold text-danger hover:underline disabled:cursor-not-allowed disabled:text-ink-400 disabled:no-underline;
+  }
+
+  /* Table header - condensed eyebrows on a 36px row. */
+  .table-head {
+    @apply font-display stretch-condensed text-xs font-bold uppercase tracking-[0.08em] text-ink-600;
+  }
+
+  /* Inline notices - tint background, colored icon, ink text. */
+  .notice {
+    @apply flex items-start gap-s3 rounded-sm px-s4 py-s3 text-sm text-ink;
+  }
 }

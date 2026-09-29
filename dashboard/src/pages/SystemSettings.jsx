@@ -1,57 +1,94 @@
 import { useEffect, useState } from "react";
 import apiClient from "../api/client";
+import { Icon, Notice, PageHeader } from "../components/ui";
 
 // Every key SystemSettingsView returns, with a short human label - grouped
-// to match how they're actually used (face matching, liveness/anti-spoof,
-// the voting/cooldown grace-period system, gate-scan quality gates). Purely
-// a display mapping; unknown keys from the API still render (see the
-// fallback loop below) so this never silently hides a setting someone adds
-// later and forgets to list here.
-const GROUPS = [
+// to match how they're actually used. Purely a display mapping; unknown keys
+// from the API still render (see "Other" below) so this never silently hides
+// a setting someone adds later and forgets to list here. `unit: "s"` marks a
+// value in seconds.
+const LEFT_GROUPS = [
   {
     title: "Face matching",
     keys: {
-      face_match_similarity_threshold: "Match similarity threshold",
-      tiebreak_margin: "Tiebreak margin",
-      tiebreak_timeout_seconds: "Tiebreak timeout (seconds)",
+      face_match_similarity_threshold: { label: "Match threshold" },
+      confusable_similarity_threshold: { label: "Lookalike similarity threshold" },
+      tiebreak_margin: { label: "Tiebreak margin" },
+      tiebreak_timeout_seconds: { label: "Tiebreak timeout", unit: "s" },
     },
   },
   {
-    title: "Liveness (anti-spoofing)",
+    title: "Voting window",
     keys: {
-      liveness_score_threshold: "Liveness score threshold",
+      vote_window_size: { label: "Size (attempts)" },
+      vote_required_agreement: { label: "Required agreement" },
+      vote_window_seconds: { label: "Window", unit: "s" },
     },
   },
   {
-    title: "Voting / confirmation window",
+    title: "Gate-scan quality",
     keys: {
-      vote_window_size: "Vote window size (attempts)",
-      vote_required_agreement: "Required agreement",
-      vote_window_seconds: "Vote window (seconds)",
+      gate_scan_det_size: { label: "Detector size" },
+      gate_scan_min_blur_variance: { label: "Minimum blur variance" },
+      face_edge_margin_ratio: { label: "Edge margin" },
+      face_max_yaw_ratio: { label: "Max yaw (turn-away)" },
+    },
+  },
+];
+
+const RIGHT_GROUPS = [
+  {
+    title: "Liveness",
+    keys: {
+      liveness_score_threshold: { label: "Score threshold" },
     },
   },
   {
-    title: "Gate-scan quality gates",
+    title: "Occlusion detection",
     keys: {
-      gate_scan_det_size: "Detector input size",
-      gate_scan_min_blur_variance: "Minimum blur variance",
-      face_edge_margin_ratio: "Edge margin ratio",
-      face_max_yaw_ratio: "Max yaw (turn-away) ratio",
-      face_min_mouth_visibility_ratio: "Min mouth visibility ratio",
-      face_max_mouth_texture_ratio: "Max mouth texture ratio",
-      face_min_det_score_unoccluded: "Min detection score (unoccluded)",
+      face_min_mouth_visibility_ratio: { label: "Min mouth visibility" },
+      face_max_mouth_texture_ratio: { label: "Mouth texture ratio" },
+      face_min_det_score_unoccluded: { label: "Min detection score" },
     },
   },
   {
     title: "Cooldowns",
     keys: {
-      recognition_cooldown_seconds: "Recognition cooldown (seconds)",
-      unenrolled_capture_cooldown_seconds: "Unenrolled capture cooldown (seconds)",
-      spoof_capture_cooldown_seconds: "Spoof capture cooldown (seconds)",
-      occlusion_capture_cooldown_seconds: "Occlusion capture cooldown (seconds)",
+      recognition_cooldown_seconds: { label: "Recognition", unit: "s" },
+      unenrolled_capture_cooldown_seconds: { label: "Unenrolled capture", unit: "s" },
+      spoof_capture_cooldown_seconds: { label: "Spoof capture", unit: "s" },
+      occlusion_capture_cooldown_seconds: { label: "Covered-face capture", unit: "s" },
+    },
+  },
+  {
+    title: "Enrollment",
+    keys: {
+      max_embeddings_per_person: { label: "Max photos" },
+      max_embeddings_per_confusable_person: { label: "Max photos · lookalike pair" },
     },
   },
 ];
+
+function formatValue(value, unit) {
+  if (value === undefined || value === null) return "—";
+  return unit ? `${value} ${unit}` : String(value);
+}
+
+function Group({ title, rows }) {
+  return (
+    <div className="flex flex-col">
+      <span className="border-b-2 border-ink pb-s3 font-display stretch-semi text-base font-bold">{title}</span>
+      {rows.map(({ key, label, value }) => (
+        <div key={key} className="flex h-9 items-center justify-between gap-s4 border-b border-line text-sm">
+          <span className="truncate text-ink-600" title={key}>
+            {label}
+          </span>
+          <span className="font-mono font-semibold">{value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function SystemSettings() {
   const [settings, setSettings] = useState(null);
@@ -64,60 +101,54 @@ export default function SystemSettings() {
       .catch(() => setError("Could not load system settings. Try refreshing the page."));
   }, []);
 
-  const knownKeys = new Set(GROUPS.flatMap((group) => Object.keys(group.keys)));
-  const otherEntries = settings
-    ? Object.entries(settings).filter(([key]) => !knownKeys.has(key) && key !== "editable" && key !== "note")
+  const groupRows = (group) =>
+    Object.entries(group.keys).map(([key, { label, unit }]) => ({
+      key,
+      label,
+      value: formatValue(settings[key], unit),
+    }));
+
+  const knownKeys = new Set([...LEFT_GROUPS, ...RIGHT_GROUPS].flatMap((group) => Object.keys(group.keys)));
+  const otherRows = settings
+    ? Object.entries(settings)
+        .filter(([key]) => !knownKeys.has(key) && key !== "editable" && key !== "note")
+        .map(([key, value]) => ({ key, label: key, value: formatValue(value) }))
     : [];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold text-ink-900">System Settings</h1>
-        <p className="mt-1 text-sm text-ink-500">
-          The thresholds and configuration values the gate scan currently runs with.
-        </p>
-      </div>
+    <div className="flex flex-col">
+      <PageHeader eyebrow="Server configuration" title="Settings" />
 
-      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {error && (
+        <Notice tone="danger" className="mt-s5">
+          {error}
+        </Notice>
+      )}
 
       {settings && (
         <>
           {settings.editable === false && (
-            <div className="rounded-xl border border-gold-500/30 bg-gold-500/5 p-4 text-sm text-ink-700">
-              <p className="font-semibold text-ink-900">Read-only, for now</p>
-              <p className="mt-1">{settings.note}</p>
+            <div className="notice mt-s5 max-w-[760px] border border-line bg-surface leading-snug">
+              <Icon name="lock-simple" bold size={20} />
+              <span>
+                <b>Read-only for now.</b> {settings.note}
+              </span>
             </div>
           )}
 
-          {GROUPS.map((group) => (
-            <div key={group.title} className="rounded-xl border border-ink-900/10 bg-white p-6 shadow-sm">
-              <h2 className="font-display text-lg font-semibold text-ink-900">{group.title}</h2>
-              <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-                {Object.entries(group.keys).map(([key, label]) => (
-                  <div key={key} className="flex items-center justify-between border-b border-ink-900/5 pb-2">
-                    <dt className="text-sm text-ink-600">{label}</dt>
-                    <dd className="font-mono text-sm font-semibold text-ink-900">
-                      {settings[key] !== undefined ? String(settings[key]) : "—"}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+          <div className="mt-s6 grid grid-cols-1 content-start gap-x-s7 gap-y-s6 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+            <div className="flex flex-col gap-s6">
+              {LEFT_GROUPS.map((group) => (
+                <Group key={group.title} title={group.title} rows={groupRows(group)} />
+              ))}
             </div>
-          ))}
-
-          {otherEntries.length > 0 && (
-            <div className="rounded-xl border border-ink-900/10 bg-white p-6 shadow-sm">
-              <h2 className="font-display text-lg font-semibold text-ink-900">Other</h2>
-              <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-                {otherEntries.map(([key, value]) => (
-                  <div key={key} className="flex items-center justify-between border-b border-ink-900/5 pb-2">
-                    <dt className="text-sm text-ink-600">{key}</dt>
-                    <dd className="font-mono text-sm font-semibold text-ink-900">{String(value)}</dd>
-                  </div>
-                ))}
-              </dl>
+            <div className="flex flex-col gap-s6">
+              {RIGHT_GROUPS.map((group) => (
+                <Group key={group.title} title={group.title} rows={groupRows(group)} />
+              ))}
+              {otherRows.length > 0 && <Group title="Other" rows={otherRows} />}
             </div>
-          )}
+          </div>
         </>
       )}
     </div>

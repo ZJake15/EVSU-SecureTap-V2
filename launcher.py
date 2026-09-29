@@ -37,7 +37,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 import requests
 from dotenv import dotenv_values
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
 
@@ -46,23 +46,31 @@ ROOT = Path(__file__).resolve().parent
 # like two different products - they're one system with one look.
 sys.path.insert(0, str(ROOT / "entry-agent"))
 from ui import (  # noqa: E402
-    BG,
-    BORDER,
-    CARD_BG,
+    BRASS,
+    CANVAS,
+    CAUTION,
+    CAUTION_TINT,
+    COND_BOLD,
     DANGER,
+    DANGER_TINT,
     FONT,
+    FONT_MONO,
+    ICON_FONT,
+    ICON_FONT_BOLD,
     ICON_PATH,
+    INK,
+    INK_400,
+    INK_600,
+    LINE,
     MAROON,
-    MAROON_DARK,
-    MAROON_LIGHT,
-    SUCCESS,
-    TEXT_MUTED,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    WARNING,
-    HeaderBar,
+    MAROON_DEEP,
+    PROMPT,
+    SEMI_HEAVY,
+    SURFACE,
+    VERIFIED,
+    WIDE_BLACK,
     _apply_icon,
-    _HoverAnimator,
+    _icon,
     set_app_user_model_id,
 )
 
@@ -83,19 +91,19 @@ LOG_REFRESH_MS = 700
 
 # Everything below the header lives in a content column capped at this width
 # and centered - past this, the window just grows background, not widgets.
-# Chosen to comfortably fit two side-by-side cards without either reading as
-# oversized on a normal desktop monitor.
 CONTENT_MAX_WIDTH = 960
-# Content width (not raw window width) above which the two choice cards sit
-# side by side instead of stacked - picked so each card still has enough
-# room for its title+subtitle without wrapping awkwardly right at the edge.
-CARDS_SIDE_BY_SIDE_BREAKPOINT = 700
+# Side gutter (logical px) when the window is narrower than the cap.
+CONTENT_GUTTER = 26
+# The two choice cards sit side by side once each can be at least this wide
+# (plus the gap between them) - the redesign's auto-fit minmax(360px, 1fr).
+CARD_MIN_WIDTH = 360
+CARD_GAP = 16
 DEFAULT_WINDOW_WIDTH = 560
-# Taller than before (was 680) - the entry-agent settings panel and the
-# last-session/unsynced-queue notices both add content above the log panel,
-# and this keeps the restored window from opening with the log toggle
-# pushed hard against the bottom edge.
 DEFAULT_WINDOW_HEIGHT = 760
+# At or above this logical window width (i.e. maximized on a desktop) the
+# header grows and the sections get more breathing room, per the redesign's
+# maximized frame.
+LARGE_LAYOUT_MIN_WIDTH = 900
 
 # The entry-agent takes a real few seconds to appear: importing cv2, opening
 # the webcam through DirectShow, then building the Tk window. Rather than
@@ -105,71 +113,43 @@ DEFAULT_WINDOW_HEIGHT = 760
 # says it should be. Keep in sync with entry-agent/main.py.
 ENTRY_AGENT_READY_MARKER = "SECURETAP_ENTRY_AGENT_READY"
 
-# A pulse rather than a rotating glyph: ● and · are already used elsewhere in
-# this UI and are known to render in Segoe UI, where braille/arc spinner
-# characters are a gamble.
-SPINNER_FRAMES = ("●  ·  ·", "·  ●  ·", "·  ·  ●", "·  ●  ·")
+# How often a "starting" card checks whether it has waited too long - the
+# visible motion is the card's indeterminate progress bar.
 SPINNER_INTERVAL_MS = 200
 # If a service never signals ready, stop spinning and say so - a spinner that
 # never stops is worse than an error message.
 STARTUP_TIMEOUT_MS = 45000
 
-# Resting descriptions for the two choice cards. Kept as constants because the
-# subtitles double as live status text while something starts, and have to be
-# restorable once it stops.
-DASHBOARD_IDLE_SUBTITLE = "Web app - register users, live monitoring, logs, reports"
-ENTRY_AGENT_IDLE_SUBTITLE = "Gate monitor - camera face recognition + NFC card reader"
+# Descriptions for the two choice cards.
+DASHBOARD_DESCRIPTION = "Web app — register users, live monitoring, logs, reports"
+ENTRY_AGENT_DESCRIPTION = "Gate monitor — camera face recognition + NFC card reader"
 
 # Keeps a child's own console window from flashing up alongside ours. The
 # entry-agent's Tk windows are unaffected - this suppresses the console, not
 # the GUI.
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
-# The header behind the top of the window is solid maroon; without a
-# transition the flat light-gray body underneath it just abuts that block
-# with no depth. This is how far down (in logical px) the tint fades back to
-# the plain page background - past this the window is flat BG, same as
-# before.
-BACKGROUND_GRADIENT_HEIGHT = 220
-_BACKGROUND_BASE_RGB = (0xF5, 0xF5, 0xF7)  # BG, as RGB
-_BACKGROUND_TINT_RGB = (0xF8, 0xEC, 0xEC)  # a barely-there warm maroon tint
+# How each service reads in the status bar: word, color, icon.
+SERVICE_STATES = {
+    "ready": ("Ready", VERIFIED, "check-circle"),
+    "running": ("Running", VERIFIED, "check-circle"),
+    "starting": ("Starting…", PROMPT, "circle-notch"),
+    # Ink, not grey - "not running" is a plain fact the guard needs to read,
+    # and the lighter grey was too faint on the white bar.
+    "off": ("Not running", INK, "circle"),
+    "failed": ("Failed", DANGER, "x-circle"),
+    "stopped": ("Stopped", DANGER, "x-circle"),
+}
 
-
-def _make_dashboard_icon(size=26, color="white"):
-    """A small 2x2 tile glyph for the Dashboard card, drawn with PIL rather
-    than an emoji character - Segoe UI Emoji renders full-color glyphs that
-    would clash with this app's flat maroon/white palette everywhere else."""
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    gap = max(2, size // 9)
-    tile = (size - 3 * gap) // 2
-    for row in range(2):
-        for col in range(2):
-            x0 = gap + col * (tile + gap)
-            y0 = gap + row * (tile + gap)
-            draw.rounded_rectangle(
-                [x0, y0, x0 + tile, y0 + tile], radius=max(2, tile // 4), fill=color
-            )
-    return image
-
-
-def _make_camera_icon(size=26, color="white", accent=MAROON):
-    """A simple camera-body-and-lens glyph for the Entry Agent card, drawn
-    the same way as the dashboard icon above for a consistent look."""
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    body_top = size * 0.3
-    body_bottom = size * 0.84
-    draw.rounded_rectangle([size * 0.06, body_top, size * 0.94, body_bottom], radius=size * 0.12, fill=color)
-    draw.rounded_rectangle(
-        [size * 0.36, size * 0.12, size * 0.68, body_top + 2], radius=size * 0.05, fill=color
-    )
-    lens_r = size * 0.19
-    cx, cy = size * 0.5, (body_top + body_bottom) / 2
-    draw.ellipse([cx - lens_r, cy - lens_r, cx + lens_r, cy + lens_r], fill=accent)
-    inner_r = lens_r * 0.5
-    draw.ellipse([cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r], fill=color)
-    return image
+# The strip under a choice card while its service starts, runs or fails:
+# text color, background, icon. "slow" is the 45-second timeout - not a
+# confirmed failure, so caution rather than danger.
+CARD_STATES = {
+    "starting": (PROMPT, SURFACE, "circle-notch"),
+    "running": (VERIFIED, SURFACE, "check-circle"),
+    "failed": (DANGER, DANGER_TINT, "x-circle"),
+    "slow": (CAUTION, CAUTION_TINT, "warning"),
+}
 
 
 def venv_python():
@@ -302,6 +282,8 @@ def _read_last_session_summary():
 
 
 def _format_last_session_line(summary):
+    """The detail half of the "Last session" notice (the bold "Last session"
+    label is drawn separately)."""
     if not summary:
         return None
     try:
@@ -309,9 +291,9 @@ def _format_last_session_line(summary):
     except (KeyError, ValueError):
         ended = "an unknown time"
     return (
-        f"Last session - {summary.get('gate_location', '?')} ({summary.get('direction', '?')}): "
+        f"{summary.get('gate_location', '?')} ({summary.get('direction', '?')}): "
         f"{summary.get('entries', 0)} entries, {summary.get('exits', 0)} exits, "
-        f"{summary.get('unknown', 0)} unknown - ended {ended}"
+        f"{summary.get('unknown', 0)} unknown — ended {ended}"
     )
 
 
@@ -407,12 +389,24 @@ class ManagedProcess:
             self.process.kill()
 
 
+def _hairline(parent, **pack_kwargs):
+    """A 1px LINE rule. A plain tk.Frame, since a CTkFrame this thin draws
+    nothing at all."""
+    rule = tk.Frame(parent, bg=LINE, height=1)
+    rule.pack(fill="x", **pack_kwargs)
+    return rule
+
+
+def _icon_label(parent, name, size, color, bold=True, **kwargs):
+    family = ICON_FONT_BOLD if bold else ICON_FONT
+    return ctk.CTkLabel(parent, text=_icon(name, bold), font=(family or FONT, size), text_color=color, **kwargs)
+
+
 class LauncherWindow:
     def __init__(self):
         self._log = deque(maxlen=LOG_MAX_LINES)
         self._log_dirty = False
         self._log_lock = threading.Lock()
-        self._hover_animators = []
         self._dashboard_url = None
         self._browser_opened = False
         self._backend_ok = False
@@ -424,8 +418,8 @@ class LauncherWindow:
         # Set by the entry-agent's output-reader thread, acted on by the Tk
         # main thread in _flush_log - same rule as the Vite URL above.
         self._entry_agent_ready = False
-        # "Did we start it and see it run", so the card's subtitle can be reset
-        # once it stops instead of describing a window that's already closed.
+        # "Did we start it and see it run", so the card's state strip can be
+        # cleared once it stops instead of describing a window that's closed.
         self._entry_agent_started = False
         self._dashboard_started = False
 
@@ -438,49 +432,27 @@ class LauncherWindow:
 
         self.root = ctk.CTk()
         self.root.title("EVSU SecureTap")
-        self.root.configure(fg_color=BG)
+        self.root.configure(fg_color=CANVAS)
         self.root.geometry(f"{DEFAULT_WINDOW_WIDTH}x{DEFAULT_WINDOW_HEIGHT}")
         self.root.minsize(520, 680)
         self.root.protocol("WM_DELETE_WINDOW", self._handle_quit)
         _apply_icon(self.root)
+        self._scale = ctk.ScalingTracker.get_widget_scaling(self.root)
 
-        self._build_background()
+        # Layout state, recomputed on every resize by _apply_responsive_layout.
+        self._side_padding = None
+        self._large = None
+        self._cards_side_by_side = None
+        self._wrap_labels = []  # (label, px reserved beside it) - re-wrapped to the content width
 
-        HeaderBar(
-            self.root, "EVSU SecureTap", "Choose what to open",
-            center=True, logo_path=ICON_PATH,
-        ).pack(fill="x")
-
-        # Everything below the header lives in this column instead of packing
-        # straight onto self.root - a maximized 1920px window used to just
-        # stretch every widget with it (absurdly wide card bars, a big dead
-        # gap down the middle). pack_propagate(False) is what lets a plain
-        # pack() width configuration actually stick instead of shrinking back
-        # to fit whatever's inside it; _apply_responsive_layout (bound to
-        # <Configure> below) is what keeps that width capped and re-picks the
-        # card layout as the window is resized.
-        self._cards_side_by_side = None  # None forces the first relayout call to actually apply
-        self.content = ctk.CTkFrame(self.root, fg_color="transparent")
-        self.content.pack(fill="y", expand=True)
-        self.content.pack_propagate(False)
-
-        self._build_status_row()
-        ctk.CTkFrame(self.content, fg_color=BORDER, height=1).pack(fill="x")
-        self._build_buttons()
-        self._build_notices()
-        self._build_entry_agent_settings()
-        self._build_log_panel()
-        self._build_footer()
+        self._build_header()
+        self._build_footer()  # packed before the body so the body takes what's left
+        self._build_body()
 
         self.root.bind("<Configure>", self._on_root_configure)
-        # Paints the correct width/card layout immediately, before the first
-        # real <Configure> event fires - otherwise the content frame sits at
-        # its just-created (~1px) width for a visible instant. Uses the same
-        # width just requested via geometry() above, not winfo_reqwidth()
-        # (unreliable before the window's first draw - often reports 1,
-        # which "or 560"-style fallbacks wouldn't catch since 1 is truthy).
+        # Paints the correct layout immediately, before the first real
+        # <Configure> event fires, using the width just requested above.
         self._apply_responsive_layout(DEFAULT_WINDOW_WIDTH)
-        self._draw_background(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
 
         self._start_backend()
         self.root.after(500, self._poll_health)
@@ -489,368 +461,562 @@ class LauncherWindow:
         if self.settings.get("auto_launch_entry_agent"):
             # Deferred rather than called immediately - lets the window
             # actually paint first, so "auto-launch" doesn't look like the
-            # launcher hanging on a blank frame before the gate monitor's own
-            # (separately spinner-covered) startup begins.
+            # launcher hanging on a blank frame.
             self.root.after(1200, self._open_entry_agent)
 
-    # ---- responsive layout ------------------------------------------------
+    # ---- layout -----------------------------------------------------------
 
-    def _on_root_configure(self, event):
-        # <Configure> also fires for every child widget's own size/position
-        # changes, not just the root window's - without this guard, a status
-        # chip repainting would trigger the same expensive relayout logic.
-        if event.widget is not self.root:
+    def _build_header(self):
+        """Maroon header with the brass rule: seal, EVSU / SecureTap wordmark
+        and "Choose what to open". Grows when the window is maximized."""
+        self.header = ctk.CTkFrame(self.root, fg_color=MAROON_DEEP, corner_radius=0, height=76)
+        self.header.pack(fill="x")
+        self.header.pack_propagate(False)
+        ctk.CTkFrame(self.root, fg_color=BRASS, corner_radius=0, height=3).pack(fill="x")
+
+        self.header_inner = ctk.CTkFrame(self.header, fg_color="transparent")
+        self.header_inner.pack(fill="both", expand=True, padx=CONTENT_GUTTER)
+        self._seal_image = None
+        try:
+            seal = Image.open(ICON_PATH).convert("RGBA")
+            self._seal_image = ctk.CTkImage(light_image=seal, dark_image=seal, size=(48, 48))
+            ctk.CTkLabel(self.header_inner, image=self._seal_image, text="").pack(side="left", padx=(0, 20))
+        except Exception:
+            pass  # a missing seal asset shouldn't stop the launcher from opening
+
+        text = ctk.CTkFrame(self.header_inner, fg_color="transparent")
+        text.pack(side="left")
+        wordmark = ctk.CTkFrame(text, fg_color="transparent")
+        wordmark.pack(anchor="w")
+        ctk.CTkLabel(wordmark, text="EVSU", font=(WIDE_BLACK, 28), text_color="white", height=30).pack(
+            side="left", anchor="s", padx=(0, 10)
+        )
+        ctk.CTkLabel(wordmark, text="SecureTap", font=(SEMI_HEAVY, 28), text_color="white", height=30).pack(
+            side="left", anchor="s"
+        )
+        ctk.CTkLabel(text, text="Choose what to open", font=(FONT, 16), text_color="white", height=22).pack(
+            anchor="w", pady=(4, 0)
+        )
+
+    def _build_body(self):
+        """The scrollable middle: services bar, the two choice cards, the
+        read-once notices, and the settings + log card. Scrolls rather than
+        clipping when Entry Agent settings or the log are open in a short
+        window."""
+        self.body = ctk.CTkScrollableFrame(
+            self.root, fg_color=CANVAS, corner_radius=0,
+            scrollbar_button_color=LINE, scrollbar_button_hover_color=INK_400,
+        )
+        self.body.pack(fill="both", expand=True)
+        self.content = ctk.CTkFrame(self.body, fg_color="transparent")
+        self.content.pack(fill="x", padx=CONTENT_GUTTER, pady=(16, 16))
+
+        self._sections = []
+        self._build_services()
+        self._build_cards()
+        self._build_notices()
+        self._build_settings_card()
+
+    def _section(self):
+        """A full-width block in the content column; the gap between blocks
+        widens in the maximized layout (see _apply_responsive_layout)."""
+        frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        frame.pack(fill="x", pady=(0, 12))
+        self._sections.append(frame)
+        return frame
+
+    def _build_services(self):
+        """One white bar with a cell per service - its name in condensed caps
+        and its state as an icon + word in the state's color. The name and
+        the state share one line when the cell is wide enough, and stack
+        (state under name) when it isn't - see _fit_services."""
+        section = self._section()
+        bar = ctk.CTkFrame(section, fg_color=SURFACE, corner_radius=8, border_width=1, border_color=LINE)
+        bar.pack(fill="x")
+        self.status_widgets = {}
+        self._service_cells = []
+        services = (("backend", "BACKEND"), ("dashboard", "DASHBOARD"), ("entry-agent", "ENTRY AGENT"))
+        for index, (key, name) in enumerate(services):
+            if index:
+                tk.Frame(bar, bg=LINE, width=1).grid(row=0, column=index * 2 - 1, sticky="ns", pady=1)
+            bar.grid_columnconfigure(index * 2, weight=1, uniform="service")
+            cell = ctk.CTkFrame(bar, fg_color="transparent", height=40)
+            cell.grid(row=0, column=index * 2, sticky="ew", padx=(12, 12), pady=1)
+            cell.pack_propagate(False)
+            name_label = ctk.CTkLabel(cell, text=name, font=(COND_BOLD, 12), text_color=INK_600, height=18)
+            # Icon and word live in one frame so they always move together -
+            # packed separately, a narrow cell squeezed the icon over the name.
+            status = ctk.CTkFrame(cell, fg_color="transparent")
+            icon = _icon_label(status, "circle", 16, INK, height=18)
+            icon.pack(side="left", padx=(0, 4))
+            word = ctk.CTkLabel(status, text="", font=(FONT, 13, "bold"), text_color=INK, height=18)
+            word.pack(side="left")
+            self.status_widgets[key] = (icon, word)
+            self._service_cells.append((cell, name_label, status))
+
+        self._services_stacked = None
+        self._layout_services(stacked=False)
+        for key in self.status_widgets:
+            self._set_status(key, "off")
+        # On the cells, not the bar - the bar's <Configure> fires before the
+        # grid has resized the cells inside it, so it would measure stale widths.
+        for cell, _name, _status in self._service_cells:
+            cell.bind("<Configure>", lambda _event: self._fit_services(), add="+")
+
+        self.status_message = ctk.CTkLabel(
+            section, text="", font=(FONT, 14), text_color=INK_600, anchor="w", justify="left"
+        )
+        self._wrap_labels.append((self.status_message, 4))
+
+    def _fit_services(self):
+        """Stacks every service cell's state under its name when the
+        narrowest cell can't fit both on one line (the default 560px window
+        with "ENTRY AGENT" + "Not running"), and puts them back side by side
+        once there's room - measured from the labels' real widths, so it
+        stays right as the state words change."""
+        cells = self._service_cells
+        width = min(cell.winfo_width() for cell, _name, _status in cells)
+        if width <= 1:
+            return  # not laid out yet
+        needed = max(name.winfo_reqwidth() + status.winfo_reqwidth() for _cell, name, status in cells)
+        self._layout_services(stacked=width < needed + round(12 * self._scale))
+
+    def _layout_services(self, stacked):
+        if stacked == self._services_stacked:
             return
-        self._apply_responsive_layout(event.width)
-        self._draw_background(event.width, event.height)
+        self._services_stacked = stacked
+        for cell, name, status in self._service_cells:
+            name.pack_forget()
+            status.pack_forget()
+            if stacked:
+                cell.configure(height=52)
+                name.pack(anchor="w", pady=(7, 0))
+                status.pack(anchor="w")
+            else:
+                cell.configure(height=40)
+                name.pack(side="left")
+                status.pack(side="right")
 
-    def _apply_responsive_layout(self, window_width):
-        target_width = max(360, min(window_width, CONTENT_MAX_WIDTH))
-        self.content.configure(width=target_width)
-
-        should_be_side_by_side = target_width >= CARDS_SIDE_BY_SIDE_BREAKPOINT
-        if should_be_side_by_side != self._cards_side_by_side:
-            self._cards_side_by_side = should_be_side_by_side
-            self._relayout_buttons(should_be_side_by_side)
-
-    def _build_background(self):
-        """A plain tk.Canvas placed under every other widget, painted with a
-        soft gradient instead of a flat fill - see BACKGROUND_GRADIENT_HEIGHT
-        above for why. place()d rather than pack()ed so it doesn't take part
-        in the packer's layout at all; lower() puts it behind the widgets
-        that ARE pack()ed onto root, which is what makes it a backdrop rather
-        than something covering them."""
-        self.background_canvas = tk.Canvas(self.root, highlightthickness=0, bd=0, bg=BG)
-        self.background_canvas.place(x=0, y=0, relwidth=1, relheight=1)
-        # Canvas.lower() is shadowed by the canvas-ITEM stacking API (it wants
-        # a tag argument), so the general widget-stacking command has to be
-        # called directly rather than through that method. Being created
-        # first already puts this behind every widget built after it, so
-        # this is belt-and-suspenders rather than load-bearing.
-        self.background_canvas.tk.call("lower", self.background_canvas._w)
-        self._background_image = None  # keeps the PhotoImage alive; Tk drops unreferenced ones
-        self._background_size = None
-
-    def _draw_background(self, width, height):
-        if width <= 1 or height <= 1:
-            return
-        if self._background_size == (width, height):
-            return  # skip repainting on every keystroke-sized <Configure> no-op
-        self._background_size = (width, height)
-
-        fade_height = min(BACKGROUND_GRADIENT_HEIGHT, height)
-        column = Image.new("RGB", (1, height), _BACKGROUND_BASE_RGB)
-        for y in range(fade_height):
-            t = y / max(fade_height - 1, 1)
-            rgb = tuple(
-                round(_BACKGROUND_TINT_RGB[i] + (_BACKGROUND_BASE_RGB[i] - _BACKGROUND_TINT_RGB[i]) * t)
-                for i in range(3)
-            )
-            column.putpixel((0, y), rgb)
-        gradient = column.resize((width, height))
-
-        self._background_image = ImageTk.PhotoImage(gradient)
-        self.background_canvas.delete("all")
-        self.background_canvas.create_image(0, 0, anchor="nw", image=self._background_image)
-
-    # ---- layout ---------------------------------------------------------
-
-    # One glyph per state so a status reads at a glance even before the color
-    # registers - useful for a guard/panel member who might not clock a
-    # muted-vs-bright color difference across a room, and it's how the gate
-    # monitor's own status bar already communicates "camera ok" vs not.
-    STATUS_GLYPHS = {"idle": "○", "starting": "◐", "ok": "●", "failed": "✕"}
-
-    def _build_status_row(self):
-        wrap = ctk.CTkFrame(self.content, fg_color="transparent")
-        wrap.pack(fill="x")
-        row = ctk.CTkFrame(wrap, fg_color="transparent")
-        row.pack(pady=16)
-
-        self.status_labels = {}
-        for key, label in (("backend", "Backend"), ("dashboard", "Dashboard"), ("entry-agent", "Entry agent")):
-            # Same pill construction as the gate monitor's status-bar chips
-            # (CARD_BG fill, rounded, padded text) - one visual language
-            # across the whole app rather than plain unstyled text here.
-            item = ctk.CTkLabel(
-                row, text=self._pad(f"{self.STATUS_GLYPHS['idle']}  {label}"), font=(FONT, 11),
-                text_color=TEXT_MUTED, fg_color=CARD_BG, corner_radius=9, height=26,
-            )
-            item.pack(side="left", padx=6)
-            self.status_labels[key] = (item, label)
-
-    @staticmethod
-    def _pad(text):
-        """Pill-style CTkLabels get their horizontal breathing room from the
-        text itself, matching the identical helper in entry-agent/ui.py."""
-        return f"  {text}  "
-
-    def _build_buttons(self):
-        # grid, not pack, for the two cards specifically - _relayout_buttons
-        # switches them between stacked (one column) and side-by-side (two
-        # equal columns) by re-gridding these same two widgets, not rebuilding
-        # them, so their hover-animator bindings/spinner state stay intact
-        # across a resize.
-        self.buttons_frame = ctk.CTkFrame(self.content, fg_color="transparent")
-        self.buttons_frame.pack(fill="x", padx=28, pady=(24, 8))
-
-        # Keep references alive - CTkImage/ImageTk objects are garbage
-        # collected the moment nothing in Python still points at them, even
-        # while a widget is actively displaying one.
-        self._card_icon_images = [
-            ctk.CTkImage(light_image=_make_dashboard_icon(), size=(26, 26)),
-            ctk.CTkImage(light_image=_make_camera_icon(), size=(26, 26)),
-        ]
-
-        self.dashboard_button, self.dashboard_subtitle = self._choice_button(
-            self.buttons_frame, "Dashboard", DASHBOARD_IDLE_SUBTITLE, self._open_dashboard,
-            self._card_icon_images[0],
+    def _build_cards(self):
+        section = self._section()
+        self.cards_frame = ctk.CTkFrame(section, fg_color="transparent")
+        self.cards_frame.pack(fill="x")
+        self._cards = {}
+        self._cards["dashboard"] = self._choice_card(
+            "Dashboard", DASHBOARD_DESCRIPTION, "squares-four", self._open_dashboard
         )
-        self.entry_agent_button, self.entry_agent_subtitle = self._choice_button(
-            self.buttons_frame, "Entry Agent", ENTRY_AGENT_IDLE_SUBTITLE, self._open_entry_agent,
-            self._card_icon_images[1],
+        self._cards["entry-agent"] = self._choice_card(
+            "Entry Agent", ENTRY_AGENT_DESCRIPTION, "video-camera", self._open_entry_agent
         )
-        self._relayout_buttons(side_by_side=False)
 
-    def _relayout_buttons(self, side_by_side):
-        self.dashboard_button.grid_forget()
-        self.entry_agent_button.grid_forget()
-        if side_by_side:
-            self.buttons_frame.grid_columnconfigure(0, weight=1, uniform="card")
-            self.buttons_frame.grid_columnconfigure(1, weight=1, uniform="card")
-            self.dashboard_button.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-            self.entry_agent_button.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        else:
-            self.buttons_frame.grid_columnconfigure(0, weight=1, uniform="")
-            self.buttons_frame.grid_columnconfigure(1, weight=0, uniform="")
-            self.dashboard_button.grid(row=0, column=0, sticky="ew", pady=(0, 16))
-            self.entry_agent_button.grid(row=1, column=0, sticky="ew")
+    def _choice_card(self, title, description, icon_name, command):
+        """A clickable white card: maroon icon tile, title, description and a
+        caret, plus a state strip underneath (starting / running / failed)
+        that only shows while there's something to say. A CTkFrame with a
+        click binding on every part rather than a CTkButton, since a button
+        can't hold a title, a wrapped description and an icon tile."""
+        card = ctk.CTkFrame(self.cards_frame, fg_color=SURFACE, corner_radius=8, border_width=1,
+                            border_color=LINE, cursor="hand2")
+        top = ctk.CTkFrame(card, fg_color="transparent", cursor="hand2")
+        top.pack(fill="x", padx=16, pady=12)
 
-    def _choice_button(self, parent, title, subtitle, command, icon_image):
-        """A clickable maroon card - a plain CTkFrame with a click binding
-        rather than CTkButton, since CTkButton's single `text` can't render a
-        bold title above a lighter subtitle. Same construction as the gate
-        monitor's launcher card, so the two read as one app."""
-        card = ctk.CTkFrame(parent, fg_color=MAROON, corner_radius=16, cursor="hand2")
-        inner = ctk.CTkFrame(card, fg_color="transparent", cursor="hand2")
-        inner.pack(fill="both", expand=True, padx=24, pady=18)
+        tile = ctk.CTkFrame(top, fg_color=MAROON, corner_radius=8, width=44, height=44, cursor="hand2")
+        tile.pack(side="left", anchor="n")
+        tile.pack_propagate(False)
+        tile_icon = _icon_label(tile, icon_name, 24, "white", bold=False, cursor="hand2")
+        tile_icon.place(relx=0.5, rely=0.5, anchor="center")
 
-        header_row = ctk.CTkFrame(inner, fg_color="transparent", cursor="hand2")
-        header_row.pack(fill="x")
-        icon_label = ctk.CTkLabel(header_row, image=icon_image, text="", cursor="hand2")
-        icon_label.pack(side="left", padx=(0, 10))
-        title_label = ctk.CTkLabel(
-            header_row, text=title, font=(FONT, 18, "bold"), text_color="white", anchor="w", cursor="hand2"
+        caret = _icon_label(top, "caret-right", 20, MAROON, cursor="hand2")
+        caret.pack(side="right", anchor="n", pady=(10, 0))
+
+        text = ctk.CTkFrame(top, fg_color="transparent", cursor="hand2")
+        text.pack(side="left", fill="x", expand=True, padx=(16, 10))
+        title_label = ctk.CTkLabel(text, text=title, font=(SEMI_HEAVY, 20), text_color=INK, anchor="w",
+                                   height=24, cursor="hand2")
+        title_label.pack(fill="x")
+        description_label = ctk.CTkLabel(text, text=description, font=(FONT, 14), text_color=INK_600, anchor="w",
+                                         justify="left", wraplength=240, cursor="hand2")
+        description_label.pack(fill="x", pady=(4, 0))
+        # Re-wrap to the text column's real width on every resize. <Configure>
+        # reports real pixels; CTk's wraplength is logical.
+        text.bind(
+            "<Configure>",
+            lambda event: description_label.configure(wraplength=max(120, event.width / self._scale - 4)),
+            add="+",
         )
-        title_label.pack(side="left", fill="x", expand=True)
-        # A plain "opens something" affordance hint, not a functional control
-        # of its own - the whole card is already clickable.
-        chevron_label = ctk.CTkLabel(
-            header_row, text="›", font=(FONT, 20, "bold"), text_color=MAROON_LIGHT, cursor="hand2"
-        )
-        chevron_label.pack(side="right")
 
-        subtitle_label = ctk.CTkLabel(
-            inner, text=subtitle, font=(FONT, 12), text_color=MAROON_LIGHT,
-            anchor="w", cursor="hand2", justify="left",
-            # Fixed rather than recomputed per resize - a card is never
-            # narrower than roughly this in either the stacked or side-by-
-            # side layout, and wrapping a bit early in the wide stacked case
-            # is a harmless cosmetic tradeoff for not overflowing the
-            # narrowest side-by-side case.
-            wraplength=280,
-        )
-        subtitle_label.pack(fill="x", pady=(10, 0))
+        # State strip under a hairline. Square, but inset from the card's
+        # edge (see _set_card_state) far enough to clear its rounded corners.
+        rule = tk.Frame(card, bg=LINE, height=1, cursor="hand2")
+        strip = ctk.CTkFrame(card, fg_color=SURFACE, corner_radius=0, height=36, cursor="hand2")
+        strip.pack_propagate(False)
+        strip_content = ctk.CTkFrame(strip, fg_color=SURFACE, corner_radius=0, cursor="hand2")
+        strip_content.pack(fill="x", padx=14, pady=(8, 0))
+        state_row = ctk.CTkFrame(strip_content, fg_color=SURFACE, corner_radius=0, cursor="hand2")
+        state_row.pack(fill="x")
+        state_icon = _icon_label(state_row, "circle-notch", 16, PROMPT, cursor="hand2")
+        state_icon.pack(side="left", padx=(0, 6))
+        state_text = ctk.CTkLabel(state_row, text="", font=(FONT, 14, "bold"), text_color=PROMPT, anchor="w",
+                                  cursor="hand2")
+        state_text.pack(side="left", fill="x", expand=True)
+        progress = ctk.CTkProgressBar(strip_content, height=4, corner_radius=2, mode="indeterminate",
+                                      fg_color=LINE, progress_color=PROMPT)
 
-        animator = _HoverAnimator(card, MAROON, MAROON_DARK)
-        self._hover_animators.append(animator)  # keep a reference alive
+        parts = {
+            "card": card, "rule": rule, "strip": strip, "content": strip_content, "row": state_row,
+            "icon": state_icon, "text": state_text, "progress": progress, "state": None,
+        }
 
-        for widget in (card, inner, header_row, icon_label, title_label, chevron_label, subtitle_label):
+        clickable = (card, top, tile, tile_icon, caret, text, title_label, description_label, rule, strip,
+                     strip_content, state_row, state_icon, state_text)
+
+        # Hover marks the whole card with a maroon border - an outline change
+        # rather than a fill change, since CTk only pushes a new fill color
+        # one level down and the card's nested frames would lag behind.
+        def on_enter(_event):
+            card.configure(border_color=MAROON)
+
+        def on_leave(_event):
+            card.configure(border_color=LINE)
+
+        for widget in clickable:
             widget.bind("<Button-1>", lambda _event: command())
-            widget.bind("<Enter>", animator.enter)
-            widget.bind("<Leave>", animator.leave)
-        return card, subtitle_label
+            widget.bind("<Enter>", on_enter)
+            widget.bind("<Leave>", on_leave)
+        return parts
+
+    def _set_card_state(self, key, kind, text=None):
+        """Shows (or, with kind=None, hides) the strip under a choice card -
+        see CARD_STATES."""
+        parts = self._cards[key]
+        if kind is None:
+            parts["progress"].stop()
+            parts["progress"].pack_forget()
+            parts["strip"].pack_forget()
+            parts["rule"].pack_forget()
+            parts["state"] = None
+            return
+        color, background, icon_name = CARD_STATES[kind]
+        for name in ("strip", "content", "row"):
+            parts[name].configure(fg_color=background)
+        parts["icon"].configure(text=_icon(icon_name), text_color=color, fg_color=background)
+        parts["text"].configure(text=text or "", text_color=color, fg_color=background)
+        if kind == "starting":
+            parts["progress"].pack(fill="x", pady=(6, 0))
+            parts["progress"].start()
+            parts["strip"].configure(height=46)
+        else:
+            parts["progress"].stop()
+            parts["progress"].pack_forget()
+            parts["strip"].configure(height=36)
+        if parts["state"] is None:
+            parts["rule"].pack(fill="x", padx=1)
+            # Inset 3px so the strip's square corners can't paint over the
+            # card's rounded bottom corners or its 1px border.
+            parts["strip"].pack(fill="x", padx=3, pady=(0, 3))
+        parts["state"] = kind
+
+    def _relayout_cards(self, side_by_side):
+        dashboard, entry_agent = self._cards["dashboard"]["card"], self._cards["entry-agent"]["card"]
+        dashboard.grid_forget()
+        entry_agent.grid_forget()
+        if side_by_side:
+            self.cards_frame.grid_columnconfigure(0, weight=1, uniform="card")
+            self.cards_frame.grid_columnconfigure(1, weight=1, uniform="card")
+            dashboard.grid(row=0, column=0, sticky="nsew", padx=(0, CARD_GAP // 2))
+            entry_agent.grid(row=0, column=1, sticky="nsew", padx=(CARD_GAP // 2, 0))
+        else:
+            self.cards_frame.grid_columnconfigure(0, weight=1, uniform="")
+            self.cards_frame.grid_columnconfigure(1, weight=0, uniform="")
+            dashboard.grid(row=0, column=0, sticky="ew", pady=(0, CARD_GAP))
+            entry_agent.grid(row=1, column=0, sticky="ew")
 
     def _build_notices(self):
         """Startup-only, read-once information: what happened last time the
         gate monitor ran, and whether any NFC taps are still waiting to sync.
         Both come from files the entry-agent itself wrote, not from anything
         this launcher is tracking live - only shown if there's actually
-        something to say, so a normal day-to-day launch (no queue backlog,
-        first run of the day) doesn't grow an empty box."""
-        lines = []
+        something to say, so a normal launch doesn't grow an empty box."""
         last_session_line = _format_last_session_line(_read_last_session_summary())
-        if last_session_line:
-            lines.append((last_session_line, TEXT_MUTED))
-
         pending = _offline_queue_pending_count()
-        if pending:
-            noun = "tap" if pending == 1 else "taps"
-            lines.append((
-                f"⚠ {pending} NFC {noun} haven't synced to the server yet - "
-                "they'll retry automatically once the entry-agent is running and online.",
-                WARNING,
-            ))
-
-        if not lines:
+        if not last_session_line and not pending:
             return
-        wrap = ctk.CTkFrame(self.content, fg_color="transparent")
-        wrap.pack(fill="x", padx=28, pady=(0, 8))
-        for text, color in lines:
-            ctk.CTkLabel(
-                wrap, text=text, font=(FONT, 11), text_color=color,
-                anchor="w", justify="left", wraplength=CONTENT_MAX_WIDTH - 56,
-            ).pack(fill="x", anchor="w", pady=(2, 0))
+        section = self._section()
 
-    def _build_entry_agent_settings(self):
-        """Gate, direction, and guard display name for the NEXT entry-agent
-        launch - collapsed by default (same "Show X" convention as the log
-        panel below) since most launches just reuse what was picked last
-        time and don't need this open. Deliberately its own section rather
-        than living inside the Entry Agent card itself: that card's whole
-        surface is a single click target for opening it, and a text field or
-        dropdown inside it would either eat clicks meant for the card or
-        immediately trigger the card's own click handler - see _choice_button
-        above, where every child widget is bound to the same "open" command."""
-        wrap = ctk.CTkFrame(self.content, fg_color="transparent")
-        wrap.pack(fill="x", padx=28, pady=(0, 8))
+        if last_session_line:
+            row = ctk.CTkFrame(section, fg_color="transparent")
+            row.pack(fill="x", padx=2)
+            _icon_label(row, "clock-counter-clockwise", 18, INK_600, bold=False).pack(side="left", anchor="n")
+            text = ctk.CTkFrame(row, fg_color="transparent")
+            text.pack(side="left", fill="x", expand=True, padx=(10, 0))
+            ctk.CTkLabel(text, text="Last session", font=(FONT, 14, "bold"), text_color=INK, anchor="w",
+                         height=20).pack(fill="x")
+            detail = ctk.CTkLabel(text, text=last_session_line, font=(FONT, 14), text_color=INK, anchor="w",
+                                  justify="left")
+            detail.pack(fill="x")
+            self._wrap_labels.append((detail, 34))
 
-        header = ctk.CTkFrame(wrap, fg_color="transparent")
-        header.pack(fill="x")
-        self.settings_toggle = ctk.CTkButton(
-            header, text="Entry Agent settings ▾", width=170, height=26, font=(FONT, 11),
-            fg_color=CARD_BG, hover_color=BORDER, text_color=TEXT_SECONDARY,
-            border_width=1, border_color=BORDER, command=self._toggle_settings_panel,
+        if pending:
+            noun = "tap hasn't" if pending == 1 else "taps haven't"
+            box = ctk.CTkFrame(section, fg_color=CAUTION_TINT, corner_radius=3)
+            box.pack(fill="x", pady=(10 if last_session_line else 0, 0))
+            inner = ctk.CTkFrame(box, fg_color="transparent")
+            inner.pack(fill="x", padx=16, pady=10)
+            _icon_label(inner, "cloud-slash", 18, CAUTION).pack(side="left", anchor="n")
+            text = ctk.CTkFrame(inner, fg_color="transparent")
+            text.pack(side="left", fill="x", expand=True, padx=(10, 0))
+            headline = ctk.CTkLabel(text, text=f"{pending} NFC {noun} synced to the server yet",
+                                    font=(FONT, 14, "bold"), text_color=INK, anchor="w", justify="left")
+            headline.pack(fill="x")
+            detail = ctk.CTkLabel(
+                text, text="They'll retry automatically once the entry agent is running and online.",
+                font=(FONT, 14), text_color=INK, anchor="w", justify="left",
+            )
+            detail.pack(fill="x")
+            self._wrap_labels.extend(((headline, 66), (detail, 66)))
+
+    def _build_settings_card(self):
+        """Entry Agent settings and the log, as two expandable rows of one
+        white card. Settings = gate, direction and guard display name for the
+        NEXT entry-agent launch - collapsed by default since most launches
+        reuse what was picked last time. Deliberately not inside the Entry
+        Agent card: that card's whole surface is a click target for opening
+        it, and a text field inside it would eat or trigger those clicks."""
+        section = self._section()
+        card = ctk.CTkFrame(section, fg_color=SURFACE, corner_radius=8, border_width=1, border_color=LINE)
+        card.pack(fill="x")
+
+        # -- settings row ----------------------------------------------------
+        self.settings_caret, self.settings_summary = self._accordion_row(
+            card, "Entry Agent settings", self._toggle_settings_panel
         )
-        self.settings_toggle.pack(side="left")
-
-        self.settings_panel = ctk.CTkFrame(wrap, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=BORDER)
+        self.settings_rule = tk.Frame(card, bg=LINE, height=1)
+        self.settings_panel = ctk.CTkFrame(card, fg_color="transparent")
         self._settings_panel_visible = False
 
         grid = ctk.CTkFrame(self.settings_panel, fg_color="transparent")
-        grid.pack(fill="x", padx=16, pady=14)
-        grid.grid_columnconfigure(1, weight=1)
+        grid.pack(fill="x", padx=16, pady=16)
+        grid.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(grid, text="Gate", font=(FONT, 11), text_color=TEXT_SECONDARY).grid(
-            row=0, column=0, sticky="w", pady=(0, 10)
+        ctk.CTkLabel(grid, text="Gate", font=(FONT, 14, "bold"), text_color=INK, anchor="w", height=20).grid(
+            row=0, column=0, sticky="w"
         )
-        self.gate_entry = ctk.CTkEntry(
-            grid, font=(FONT, 12), fg_color=BG, border_color=BORDER, text_color=TEXT_PRIMARY,
-        )
+        self.gate_entry = self._entry(grid)
         self.gate_entry.insert(0, self.settings.get("gate_location", DEFAULT_GATE_LOCATION))
-        self.gate_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0), pady=(0, 10))
+        self.gate_entry.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         self.gate_entry.bind("<FocusOut>", lambda _e: self._save_current_settings())
 
-        ctk.CTkLabel(grid, text="Direction", font=(FONT, 11), text_color=TEXT_SECONDARY).grid(
-            row=1, column=0, sticky="w", pady=(0, 10)
+        ctk.CTkLabel(grid, text="Direction", font=(FONT, 14, "bold"), text_color=INK, anchor="w", height=20).grid(
+            row=0, column=1, sticky="w", padx=(16, 0)
         )
-        self.direction_selector = ctk.CTkSegmentedButton(
-            grid, values=["Entry", "Exit"], font=(FONT, 11),
-            selected_color=MAROON, selected_hover_color=MAROON_DARK,
-            unselected_color=BG, text_color=TEXT_PRIMARY,
-            command=lambda _value: self._save_current_settings(),
-        )
-        self.direction_selector.set(
-            "Exit" if self.settings.get("direction", DEFAULT_DIRECTION) == "exit" else "Entry"
-        )
-        self.direction_selector.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(0, 10))
+        self._direction = "exit" if self.settings.get("direction", DEFAULT_DIRECTION) == "exit" else "entry"
+        self.direction_selector = self._direction_toggle(grid)
+        self.direction_selector.grid(row=1, column=1, sticky="w", padx=(16, 0), pady=(6, 0))
 
-        ctk.CTkLabel(grid, text="Guard name", font=(FONT, 11), text_color=TEXT_SECONDARY).grid(
-            row=2, column=0, sticky="w", pady=(0, 10)
+        guard_label = ctk.CTkFrame(grid, fg_color="transparent")
+        guard_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        ctk.CTkLabel(guard_label, text="Guard name", font=(FONT, 14, "bold"), text_color=INK, height=20).pack(
+            side="left"
         )
-        self.guard_name_entry = ctk.CTkEntry(
-            grid, font=(FONT, 12), fg_color=BG, border_color=BORDER, text_color=TEXT_PRIMARY,
-            placeholder_text="Optional - shown on the gate monitor screen only",
+        ctk.CTkLabel(guard_label, text="(optional)", font=(FONT, 14), text_color=INK_600, height=20).pack(
+            side="left", padx=(4, 0)
         )
-        self.guard_name_entry.insert(0, self.settings.get("officer_name", ""))
-        self.guard_name_entry.grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(0, 10))
+        self.guard_name_entry = self._entry(grid, placeholder="Shown on the gate monitor screen only")
+        # Only pre-filled when there's a saved name - inserting even an empty
+        # string makes CTkEntry drop its placeholder text.
+        if self.settings.get("officer_name"):
+            self.guard_name_entry.insert(0, self.settings["officer_name"])
+        self.guard_name_entry.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         self.guard_name_entry.bind("<FocusOut>", lambda _e: self._save_current_settings())
 
         self.auto_launch_var = tk.BooleanVar(value=bool(self.settings.get("auto_launch_entry_agent", False)))
         ctk.CTkCheckBox(
             grid, text="Automatically open the gate monitor when this launcher starts",
-            font=(FONT, 11), text_color=TEXT_SECONDARY, variable=self.auto_launch_var,
-            fg_color=MAROON, hover_color=MAROON_DARK,
-            command=self._save_current_settings,
-        ).grid(row=3, column=0, columnspan=2, sticky="w")
+            font=(FONT, 14), text_color=INK, variable=self.auto_launch_var,
+            fg_color=MAROON, hover_color=MAROON_DEEP, border_color=INK_400, corner_radius=3,
+            checkbox_width=20, checkbox_height=20, command=self._save_current_settings,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        self._update_settings_summary()
 
-    def _toggle_settings_panel(self):
-        if self._settings_panel_visible:
-            self.settings_panel.pack_forget()
-            self.settings_toggle.configure(text="Entry Agent settings ▾")
-        else:
-            self.settings_panel.pack(fill="x", pady=(8, 0))
-            self.settings_toggle.configure(text="Entry Agent settings ▴")
-        self._settings_panel_visible = not self._settings_panel_visible
-
-    def _current_entry_agent_settings(self):
-        """Reads the settings widgets directly rather than trusting whatever
-        was last saved - covers the case where a field was edited but never
-        blurred (no <FocusOut> fired yet) before "Entry Agent" was clicked."""
-        return {
-            "gate_location": self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION,
-            "direction": "exit" if self.direction_selector.get() == "Exit" else "entry",
-            "officer_name": self.guard_name_entry.get().strip(),
-            "auto_launch_entry_agent": bool(self.auto_launch_var.get()),
-        }
-
-    def _save_current_settings(self):
-        self.settings = self._current_entry_agent_settings()
-        _save_settings(self.settings)
-
-    def _build_log_panel(self):
-        wrap = ctk.CTkFrame(self.content, fg_color="transparent")
-        wrap.pack(fill="both", expand=True, padx=28, pady=(16, 0))
-
-        header = ctk.CTkFrame(wrap, fg_color="transparent")
-        header.pack(fill="x")
-        self.log_toggle = ctk.CTkButton(
-            header, text="Show log ▾", width=90, height=26, font=(FONT, 11),
-            fg_color=CARD_BG, hover_color=BORDER, text_color=TEXT_SECONDARY,
-            border_width=1, border_color=BORDER, command=self._toggle_log,
-        )
-        self.log_toggle.pack(side="left")
-        self.hint_label = ctk.CTkLabel(header, text="", font=(FONT, 11), text_color=TEXT_MUTED)
-        self.hint_label.pack(side="left", padx=(12, 0))
-
+        # -- log row -----------------------------------------------------------
+        self.log_rule = tk.Frame(card, bg=LINE, height=1)
+        self.log_rule.pack(fill="x", padx=1)
+        self.log_caret, self.log_hint = self._accordion_row(card, "Show log", self._toggle_log)
         self.log_box = ctk.CTkTextbox(
-            wrap, font=("Consolas", 10), fg_color=CARD_BG, text_color=TEXT_SECONDARY,
-            border_width=1, border_color=BORDER, wrap="none",
+            card, font=(FONT_MONO, 12), fg_color=CANVAS, text_color=INK_600, corner_radius=3,
+            border_width=0, wrap="none", height=220,
         )
         self._log_visible = False
 
-    def _build_footer(self):
-        ctk.CTkFrame(self.content, fg_color=BORDER, height=1).pack(fill="x", pady=(16, 0))
-        footer = ctk.CTkFrame(self.content, fg_color="transparent")
-        footer.pack(fill="x", padx=28, pady=14)
-        ctk.CTkLabel(
-            footer, text=f"Quitting stops everything this window started.  ·  {self.app_version}",
-            font=(FONT, 10), text_color=TEXT_MUTED,
-        ).pack(side="left")
-        ctk.CTkButton(
-            footer, text="Quit", width=80, height=30, font=(FONT, 12),
-            fg_color=CARD_BG, hover_color=BORDER, text_color=TEXT_PRIMARY,
-            border_width=1, border_color=BORDER, command=self._handle_quit,
-        ).pack(side="right")
+    def _accordion_row(self, parent, title, command):
+        """A 44px clickable row: caret, bold title, and a mono hint on the
+        right. Returns (caret label, hint label)."""
+        row = ctk.CTkFrame(parent, fg_color="transparent", height=44, cursor="hand2")
+        row.pack(fill="x", padx=16, pady=1)
+        row.pack_propagate(False)
+        caret = _icon_label(row, "caret-right", 14, INK, cursor="hand2")
+        caret.pack(side="left", padx=(0, 10))
+        title_label = ctk.CTkLabel(row, text=title, font=(FONT, 14, "bold"), text_color=INK, cursor="hand2")
+        title_label.pack(side="left")
+        hint = ctk.CTkLabel(row, text="", font=(FONT_MONO, 12), text_color=INK_600, cursor="hand2")
+        hint.pack(side="right")
+        for widget in (row, caret, title_label, hint):
+            widget.bind("<Button-1>", lambda _event: command())
+        return caret, hint
 
-    # ---- services -------------------------------------------------------
+    @staticmethod
+    def _entry(parent, placeholder=None):
+        return ctk.CTkEntry(
+            parent, height=44, corner_radius=3, border_width=1, border_color=LINE, fg_color=SURFACE,
+            text_color=INK, font=(FONT, 14), placeholder_text=placeholder, placeholder_text_color=INK_400,
+        )
+
+    def _direction_toggle(self, parent):
+        """Entry | Exit segmented control - the selected half solid ink, as in
+        the dashboard's own toggles. Built from frames rather than
+        CTkSegmentedButton, which uses one text color for both states."""
+        frame = ctk.CTkFrame(parent, fg_color=SURFACE, corner_radius=3, border_width=1, border_color=LINE,
+                             width=200, height=44)
+        frame.grid_propagate(False)
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure((0, 2), weight=1, uniform="direction")
+        self._direction_halves = {}
+        options = (("entry", "Entry", "sign-in"), ("exit", "Exit", "sign-out"))
+        for column, (value, label, icon_name) in enumerate(options):
+            if column:
+                tk.Frame(frame, bg=LINE, width=1).grid(row=0, column=1, sticky="ns", pady=1)
+            half = ctk.CTkFrame(frame, fg_color=SURFACE, corner_radius=0, cursor="hand2")
+            half.grid(row=0, column=column * 2, sticky="nsew", padx=1, pady=1)
+            inner = ctk.CTkFrame(half, fg_color="transparent", cursor="hand2")
+            inner.place(relx=0.5, rely=0.5, anchor="center")
+            icon = _icon_label(inner, icon_name, 16, INK_600, cursor="hand2")
+            icon.pack(side="left", padx=(0, 6))
+            text = ctk.CTkLabel(inner, text=label, font=(FONT, 14, "bold"), text_color=INK_600, cursor="hand2")
+            text.pack(side="left")
+            for widget in (half, inner, icon, text):
+                widget.bind("<Button-1>", lambda _event, v=value: self._set_direction(v))
+            self._direction_halves[value] = (half, inner, icon, text)
+        self._render_direction()
+        return frame
+
+    def _set_direction(self, value):
+        self._direction = value
+        self._render_direction()
+        self._save_current_settings()
+
+    def _render_direction(self):
+        for value, (half, inner, icon, text) in self._direction_halves.items():
+            selected = value == self._direction
+            background = INK if selected else SURFACE
+            color = "white" if selected else INK_600
+            half.configure(fg_color=background)
+            inner.configure(fg_color=background)
+            icon.configure(text_color=color, fg_color=background)
+            text.configure(text_color=color, fg_color=background)
+
+    def _build_footer(self):
+        footer = ctk.CTkFrame(self.root, fg_color=SURFACE, corner_radius=0)
+        footer.pack(side="bottom", fill="x")
+        tk.Frame(self.root, bg=LINE, height=1).pack(side="bottom", fill="x")
+        self.footer_inner = ctk.CTkFrame(footer, fg_color="transparent")
+        self.footer_inner.pack(fill="x", padx=CONTENT_GUTTER, pady=10)
+        ctk.CTkLabel(
+            self.footer_inner, text=f"Quitting stops everything this window started. · {self.app_version}",
+            font=(FONT, 12), text_color=INK_600,
+        ).pack(side="left")
+
+        # Outlined in danger red - quitting stops every service at once.
+        quit_button = ctk.CTkFrame(self.footer_inner, fg_color=SURFACE, corner_radius=8, border_width=1,
+                                   border_color=DANGER, cursor="hand2")
+        quit_button.pack(side="right")
+        inner = ctk.CTkFrame(quit_button, fg_color="transparent", cursor="hand2")
+        inner.pack(padx=20, pady=10)
+        icon = _icon_label(inner, "power", 16, DANGER, cursor="hand2", height=20)
+        icon.pack(side="left", padx=(0, 6))
+        text = ctk.CTkLabel(inner, text="Quit", font=(FONT, 14, "bold"), text_color=DANGER, cursor="hand2", height=20)
+        text.pack(side="left")
+
+        def paint(color):
+            quit_button.configure(fg_color=color)
+            inner.configure(fg_color=color)
+            icon.configure(fg_color=color)
+            text.configure(fg_color=color)
+
+        for widget in (quit_button, inner, icon, text):
+            widget.bind("<Button-1>", lambda _event: self._handle_quit())
+            widget.bind("<Enter>", lambda _event: paint(DANGER_TINT))
+            widget.bind("<Leave>", lambda _event: paint(SURFACE))
+
+    # ---- responsive layout ------------------------------------------------
+
+    def _on_root_configure(self, event):
+        # <Configure> also fires for every child widget's own size/position
+        # changes, not just the root window's.
+        if event.widget is not self.root:
+            return
+        self._apply_responsive_layout(event.width / self._scale)
+
+    def _apply_responsive_layout(self, window_width):
+        """window_width is logical px. Caps the content column at
+        CONTENT_MAX_WIDTH and centers it (header, body and footer share the
+        same side padding so their edges line up), picks stacked vs side-by-
+        side cards, and switches between the compact and maximized header."""
+        side = max(CONTENT_GUTTER, round((window_width - CONTENT_MAX_WIDTH) / 2))
+        if side != self._side_padding:
+            self._side_padding = side
+            self.header_inner.pack_configure(padx=side)
+            self.footer_inner.pack_configure(padx=side)
+            self.content.pack_configure(padx=side)
+        # The body's scrollbar takes ~16px of the width on the right.
+        content_width = window_width - 2 * side - 16
+
+        side_by_side = content_width >= 2 * CARD_MIN_WIDTH + CARD_GAP
+        if side_by_side != self._cards_side_by_side:
+            self._cards_side_by_side = side_by_side
+            self._relayout_cards(side_by_side)
+
+        large = window_width >= LARGE_LAYOUT_MIN_WIDTH
+        if large != self._large:
+            self._large = large
+            self.header.configure(height=120 if large else 76)
+            if self._seal_image is not None:
+                self._seal_image.configure(size=(64, 64) if large else (48, 48))
+            gap = 26 if large else 12
+            for section in self._sections:
+                section.pack_configure(pady=(0, gap))
+
+        for label, reserved in self._wrap_labels:
+            label.configure(wraplength=max(160, content_width - reserved))
+
+    # ---- services ---------------------------------------------------------
+
+    def _set_status_message(self, text):
+        """The one-line note under the services bar (an adopted backend, a
+        backend that stopped) - hidden when there's nothing to say."""
+        if text:
+            self.status_message.configure(text=text)
+            if not self.status_message.winfo_ismapped():
+                self.status_message.pack(fill="x", padx=2, pady=(10, 0))
+        else:
+            self.status_message.pack_forget()
 
     def _start_backend(self):
         python = venv_python()
         if service_responds(HEALTH_URL):
             self._backend_external = True
             self._append_log("[launcher] a backend is already running on port 8000 - using that one")
-            self.hint_label.configure(text="Using a backend that was already running.")
+            self._set_status_message("Using a backend that was already running.")
             return
         if not (BACKEND_DIR / "manage.py").exists():
             self._append_log(f"[launcher] backend not found at {BACKEND_DIR}")
-            self._set_status("backend", "failed", "Backend missing")
+            self._set_status("backend", "failed")
+            self._set_status_message(f"Backend not found at {BACKEND_DIR}.")
             return
         self._append_log(f"[launcher] starting backend with {python}")
         # -u so Django's output reaches the log panel as it happens rather than
         # sitting in a pipe buffer until the process exits.
         self.backend.start([python, "-u", "manage.py", "runserver"], BACKEND_DIR)
-        self._set_status("backend", "starting", "Backend starting")
+        self._set_status("backend", "starting")
 
     def _open_dashboard(self):
         if self.dashboard.is_running():
@@ -887,12 +1053,8 @@ class LauncherWindow:
         self._browser_opened = False
         self._dashboard_started = True
         self.dashboard.start([npm, "run", "dev"], DASHBOARD_DIR)
-        self._set_status("dashboard", "starting", "Dashboard starting")
-        # Same wait, same treatment as the entry-agent - the dev server's first
-        # start is several seconds too.
-        self._start_spinner(
-            "dashboard", self.dashboard_subtitle, "Starting the dev server, your browser will open shortly..."
-        )
+        self._set_status("dashboard", "starting")
+        self._start_spinner("dashboard", "Starting the dashboard… your browser will open shortly")
         # If Vite never prints a URL we can parse, open the conventional one
         # anyway rather than leaving the user staring at a button.
         self.root.after(20000, self._launch_browser_fallback)
@@ -917,11 +1079,8 @@ class LauncherWindow:
         url = self._dashboard_url or FALLBACK_DASHBOARD_URL
         self._browser_opened = True
         self._append_log(f"[launcher] opening {url}")
-        # Stopping the spinner also writes the final subtitle, so this is the
-        # one place the card's text settles.
-        self._stop_spinner("dashboard", f"Running at {url} - click to reopen in your browser")
-        if not self._spinning("dashboard"):
-            self.dashboard_subtitle.configure(text=f"Running at {url} - click to reopen in your browser")
+        self._stop_spinner("dashboard")
+        self._set_card_state("dashboard", "running", f"Running at {url.split('://', 1)[-1]} — click to open")
         webbrowser.open(url)
 
     def _open_entry_agent(self):
@@ -933,7 +1092,9 @@ class LauncherWindow:
             return
 
         self._save_current_settings()
-        self._run_entry_agent_preflight_checks()
+        if not self._run_entry_agent_preflight_checks():
+            self._append_log("[launcher] opening the gate monitor was cancelled at the pre-flight warning")
+            return
 
         self._append_log(
             f"[launcher] starting entry-agent (gate={self.settings['gate_location']!r}, "
@@ -955,37 +1116,97 @@ class LauncherWindow:
         if self.settings.get("officer_name"):
             env_overrides["OFFICER_NAME"] = self.settings["officer_name"]
         self.entry_agent.start([venv_python(), "-u", "main.py"], ENTRY_AGENT_DIR, env_overrides=env_overrides)
-        self._set_status("entry-agent", "starting", "Entry agent starting")
+        self._set_status("entry-agent", "starting")
         # Names what's actually taking the time, so the wait reads as work
         # rather than as the button having missed the click.
-        self._start_spinner(
-            "entry-agent", self.entry_agent_subtitle, "Starting the camera and opening the gate monitor..."
-        )
+        self._start_spinner("entry-agent", "Starting the camera and opening the gate monitor…")
 
     def _run_entry_agent_preflight_checks(self):
-        """Fast, best-effort checks before opening the gate monitor -
-        deliberately never blocks opening it: a false negative here (backend
-        slow to answer, the NFC check itself failing) should never be able to
-        stop a live demo. Camera presence is NOT checked here on purpose -
-        the gate monitor already handles "no camera" gracefully on its own
+        """Fast, best-effort checks before opening the gate monitor. Returns
+        whether to go ahead. A warning never *stops* it on its own - a false
+        negative here (backend slow to answer, the NFC check itself failing)
+        mustn't be able to block a live demo - it just gives the guard the
+        choice. Camera presence is NOT checked here on purpose: the gate
+        monitor already handles "no camera" gracefully on its own
         (placeholder + camera picker + hot-plug reconnect, see ui.py), and
-        duplicating that check would mean importing cv2 into the launcher's
-        own process just for this, adding a real startup-time cost for a
-        case that's already covered downstream."""
+        checking here would mean importing cv2 into the launcher's own
+        process just for this."""
         warnings = []
         if not service_responds(HEALTH_URL, timeout=1.5):
-            warnings.append("The backend isn't responding yet - entry/exit logging won't work until it is.")
+            warnings.append(("plugs", "The backend isn't responding yet — entry/exit logging won't work until it is."))
         if _detect_acr122u_reader() is False:
-            warnings.append(
-                "No ACR122U NFC reader was detected (best-effort check - some readers may not show up this way)."
-            )
+            warnings.append(("identification-card", "No ACR122U NFC reader was detected (best-effort check)."))
         if not warnings:
-            return
-        self._append_log("[launcher] pre-flight check: " + " | ".join(warnings))
-        messagebox.showwarning(
-            "Before you open the gate monitor",
-            "\n\n".join(warnings) + "\n\nThe gate monitor will still open.",
-        )
+            return True
+        self._append_log("[launcher] pre-flight check: " + " | ".join(text for _name, text in warnings))
+        return self._preflight_dialog(warnings)
+
+    def _preflight_dialog(self, warnings):
+        """A modal "Before you open the gate monitor" dialog in the app's own
+        look (a messagebox can't show per-warning icons or a primary
+        button). Returns True for "Open gate monitor", False for Cancel or
+        closing the dialog."""
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("EVSU SecureTap")
+        dialog.configure(fg_color=SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        # CTkToplevel resets its icon shortly after creation - set ours after.
+        dialog.after(250, lambda: _apply_icon(dialog))
+        result = {"open": False}
+
+        body = ctk.CTkFrame(dialog, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=26, pady=(26, 20))
+        heading = ctk.CTkFrame(body, fg_color="transparent")
+        heading.pack(fill="x")
+        _icon_label(heading, "warning", 26, CAUTION).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(heading, text="Before you open the gate monitor", font=(SEMI_HEAVY, 20), text_color=INK,
+                     anchor="w").pack(side="left")
+
+        items = ctk.CTkFrame(body, fg_color="transparent")
+        items.pack(fill="x", pady=(16, 0))
+        _hairline(items)
+        for icon_name, text in warnings:
+            row = ctk.CTkFrame(items, fg_color="transparent")
+            row.pack(fill="x", pady=10)
+            _icon_label(row, icon_name, 18, CAUTION).pack(side="left", anchor="n", padx=(0, 10))
+            ctk.CTkLabel(row, text=text, font=(FONT, 14), text_color=INK, anchor="w", justify="left",
+                         wraplength=360).pack(side="left", fill="x", expand=True)
+            _hairline(items)
+
+        ctk.CTkLabel(body, text="The gate monitor will still open.", font=(FONT, 14, "bold"), text_color=INK,
+                     anchor="w").pack(fill="x", pady=(16, 0))
+
+        def finish(open_it):
+            result["open"] = open_it
+            dialog.grab_release()
+            dialog.destroy()
+
+        buttons = ctk.CTkFrame(body, fg_color="transparent")
+        buttons.pack(fill="x", pady=(22, 0))
+        ctk.CTkButton(
+            buttons, text="Open gate monitor  →", height=44, corner_radius=8, fg_color=MAROON,
+            hover_color=MAROON_DEEP, text_color="white", font=(FONT, 14, "bold"), command=lambda: finish(True),
+        ).pack(side="right")
+        ctk.CTkButton(
+            buttons, text="Cancel", width=90, height=44, corner_radius=8, fg_color=SURFACE, hover_color=CANVAS,
+            text_color=MAROON, font=(FONT, 14, "bold"), command=lambda: finish(False),
+        ).pack(side="right", padx=(0, 10))
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        dialog.bind("<Escape>", lambda _event: finish(False))
+        dialog.bind("<Return>", lambda _event: finish(True))
+
+        # Centered over the launcher. Position set through plain Tk (CTk's
+        # own geometry() would rescale the offsets for the display DPI).
+        dialog.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dialog.winfo_height()) // 3)
+        tk.Toplevel.geometry(dialog, f"+{max(0, x)}+{max(0, y)}")
+        dialog.grab_set()
+        dialog.focus_force()
+        self.root.wait_window(dialog)
+        return result["open"]
 
     def _handle_entry_agent_output(self, line):
         """Reader-thread side: record only. The Tk thread reacts in _flush_log."""
@@ -993,57 +1214,85 @@ class LauncherWindow:
         if ENTRY_AGENT_READY_MARKER in line:
             self._entry_agent_ready = True
 
-    # ---- loading animation ----------------------------------------------
+    # ---- settings -----------------------------------------------------------
 
-    def _start_spinner(self, key, label, message):
-        """Animate `label` while something starts up. Driven by Tk's after()
-        rather than a thread - it's the main loop's own timer, so there's no
-        cross-thread widget access to get wrong, and it stops dead if the
-        window closes."""
-        self._stop_spinner(key)
-        self._spinners[key] = {
-            "label": label,
-            "message": message,
-            "frame": 0,
-            "job": None,
-            "elapsed": 0,
+    def _toggle_settings_panel(self):
+        if self._settings_panel_visible:
+            self.settings_panel.pack_forget()
+            self.settings_rule.pack_forget()
+            self.settings_caret.configure(text=_icon("caret-right"))
+        else:
+            self.settings_rule.pack(fill="x", padx=1, before=self.log_rule)
+            self.settings_panel.pack(fill="x", before=self.log_rule)
+            self.settings_caret.configure(text=_icon("caret-down"))
+        self._settings_panel_visible = not self._settings_panel_visible
+
+    def _current_entry_agent_settings(self):
+        """Reads the settings widgets directly rather than trusting whatever
+        was last saved - covers the case where a field was edited but never
+        blurred (no <FocusOut> fired yet) before "Entry Agent" was clicked."""
+        return {
+            "gate_location": self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION,
+            "direction": self._direction,
+            "officer_name": self.guard_name_entry.get().strip(),
+            "auto_launch_entry_agent": bool(self.auto_launch_var.get()),
         }
+
+    def _save_current_settings(self):
+        self.settings = self._current_entry_agent_settings()
+        _save_settings(self.settings)
+        self._update_settings_summary()
+
+    def _update_settings_summary(self):
+        gate = self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION
+        self.settings_summary.configure(text=f"{gate} · {self._direction.capitalize()}")
+
+    # ---- loading state ------------------------------------------------------
+
+    def _start_spinner(self, key, message):
+        """Puts a choice card into its "starting" state and watches for the
+        startup timeout. Driven by Tk's after() rather than a thread - it's
+        the main loop's own timer, so there's no cross-thread widget access
+        to get wrong, and it stops dead if the window closes."""
+        self._stop_spinner(key)
+        self._spinners[key] = {"job": None, "elapsed": 0}
+        self._set_card_state(key, "starting", message)
         self._tick_spinner(key)
 
     def _tick_spinner(self, key):
         state = self._spinners.get(key)
         if state is None:
             return
-        frame = SPINNER_FRAMES[state["frame"] % len(SPINNER_FRAMES)]
-        state["frame"] += 1
         state["elapsed"] += SPINNER_INTERVAL_MS
-        state["label"].configure(text=f"{frame}    {state['message']}")
         if state["elapsed"] >= STARTUP_TIMEOUT_MS:
-            self._stop_spinner(
-                key, "Still not up after 45s - open the log below to see what happened"
-            )
+            self._stop_spinner(key, "Still not up after 45s — open the log below to see what happened", "slow")
             return
         state["job"] = self.root.after(SPINNER_INTERVAL_MS, lambda: self._tick_spinner(key))
 
-    def _stop_spinner(self, key, final_text=None):
+    def _stop_spinner(self, key, final_text=None, kind="running"):
         state = self._spinners.pop(key, None)
         if state is None:
             return
         if state["job"] is not None:
             self.root.after_cancel(state["job"])
         if final_text is not None:
-            state["label"].configure(text=final_text)
+            self._set_card_state(key, kind, final_text)
 
     def _spinning(self, key):
         return key in self._spinners
 
-    # ---- status ---------------------------------------------------------
+    # ---- status -----------------------------------------------------------
 
-    def _set_status(self, key, state, text):
-        colors = {"ok": SUCCESS, "starting": WARNING, "failed": DANGER, "idle": TEXT_MUTED}
-        label, _default = self.status_labels[key]
-        glyph = self.STATUS_GLYPHS.get(state, self.STATUS_GLYPHS["idle"])
-        label.configure(text=self._pad(f"{glyph}  {text}"), text_color=colors.get(state, TEXT_MUTED))
+    def _set_status(self, key, state):
+        word, color, icon_name = SERVICE_STATES[state]
+        icon, label = self.status_widgets[key]
+        if label.cget("text") == word and label.cget("text_color") == color:
+            return  # polled every 2s - skip redundant reconfigures
+        icon.configure(text=_icon(icon_name), text_color=color)
+        label.configure(text=word, text_color=color)
+        # A different word ("Starting…" vs "Not running") needs a different
+        # width - re-check whether the cells still fit on one line.
+        self.root.after_idle(self._fit_services)
 
     def _poll_health(self):
         """Backend liveness plus a liveness check on each child process, so a
@@ -1053,56 +1302,54 @@ class LauncherWindow:
             if not self._backend_ok:
                 self._append_log("[launcher] backend is up")
             self._backend_ok = True
-            self._set_status(
-                "backend", "ok", "Backend ready (already running)" if self._backend_external else "Backend ready"
-            )
+            self._set_status("backend", "ready")
+            self._set_status_message("Using a backend that was already running." if self._backend_external else None)
         elif self.backend.is_running():
             self._backend_ok = False
-            self._set_status("backend", "starting", "Backend starting")
+            self._set_status("backend", "starting")
         else:
             self._backend_ok = False
-            self._set_status("backend", "failed", "Backend stopped")
-            self.hint_label.configure(text="Backend stopped - open the log to see why")
+            self._set_status("backend", "stopped")
+            self._set_status_message("The backend stopped — open the log below to see why.")
 
         if self.dashboard.is_running():
-            self._set_status("dashboard", "ok", "Dashboard running")
+            self._set_status("dashboard", "running")
         elif self._dashboard_external and service_responds(FALLBACK_DASHBOARD_URL):
-            self._set_status("dashboard", "ok", "Dashboard running (already running)")
+            self._set_status("dashboard", "running")
         else:
             if self._spinning("dashboard"):
-                self._stop_spinner("dashboard", "Failed to start - open the log below to see why")
-                self._set_status("dashboard", "failed", "Dashboard failed")
+                self._stop_spinner("dashboard", "Failed to start — open the log below to see why", "failed")
+                self._set_status("dashboard", "failed")
                 # Clearing this is what keeps the message on screen: leave it
                 # set and the very next poll takes the reset branch below and
-                # quietly overwrites the failure with the idle description.
+                # quietly clears the failure.
                 self._dashboard_started = False
             else:
-                self._set_status("dashboard", "idle", "Dashboard")
+                self._set_status("dashboard", "off")
                 if self._dashboard_started:
                     self._dashboard_started = False
                     self._browser_opened = False
                     self._dashboard_url = None
-                    self.dashboard_subtitle.configure(text=DASHBOARD_IDLE_SUBTITLE)
+                    self._set_card_state("dashboard", None)
 
         if self.entry_agent.is_running():
             self._entry_agent_started = True
-            self._set_status("entry-agent", "ok", "Entry agent running")
+            self._set_status("entry-agent", "running")
         elif self._spinning("entry-agent"):
             # It exited before ever signalling ready - almost always a camera
             # that wouldn't open or a bad .env, and the traceback is in the log.
-            self._stop_spinner("entry-agent", "Failed to start - open the log below to see why")
-            self._set_status("entry-agent", "failed", "Entry agent failed")
-            # See the dashboard branch above - without this the next poll
-            # overwrites the failure message with the idle description.
+            self._stop_spinner("entry-agent", "Failed to start — open the log below to see why", "failed")
+            self._set_status("entry-agent", "failed")
+            # See the dashboard branch above.
             self._entry_agent_started = False
         else:
-            self._set_status("entry-agent", "idle", "Entry agent")
+            self._set_status("entry-agent", "off")
             if self._entry_agent_started:
-                # Ran and was closed normally - put the card back to its
-                # resting description rather than leaving "Gate monitor is
-                # open" next to a window that isn't.
+                # Ran and was closed normally - clear the card's state strip
+                # rather than leaving "Gate monitor is open" next to a window
+                # that isn't.
                 self._entry_agent_started = False
-                self.entry_agent_subtitle.configure(text=ENTRY_AGENT_IDLE_SUBTITLE)
+                self._set_card_state("entry-agent", None)
 
         self.root.after(HEALTH_POLL_MS, self._poll_health)
 
@@ -1121,7 +1368,10 @@ class LauncherWindow:
         if self._dashboard_url and not self._browser_opened:
             self._launch_browser()
         if self._entry_agent_ready and self._spinning("entry-agent"):
-            self._stop_spinner("entry-agent", "Gate monitor is open - check your taskbar if you don't see it")
+            self._stop_spinner("entry-agent", "Gate monitor is open — check your taskbar if you don't see it")
+        with self._log_lock:
+            count = len(self._log)
+        self.log_hint.configure(text=f"{count} line{'s' if count != 1 else ''}")
         if self._log_visible and self._log_dirty:
             with self._log_lock:
                 text = "\n".join(self._log)
@@ -1136,11 +1386,11 @@ class LauncherWindow:
     def _toggle_log(self):
         if self._log_visible:
             self.log_box.pack_forget()
-            self.log_toggle.configure(text="Show log ▾")
+            self.log_caret.configure(text=_icon("caret-right"))
             self._log_visible = False
         else:
-            self.log_box.pack(fill="both", expand=True, pady=(8, 0))
-            self.log_toggle.configure(text="Hide log ▴")
+            self.log_box.pack(fill="x", padx=16, pady=(0, 16))
+            self.log_caret.configure(text=_icon("caret-down"))
             self._log_visible = True
             self._log_dirty = True  # force one immediate repaint
 

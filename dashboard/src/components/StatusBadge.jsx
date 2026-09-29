@@ -1,19 +1,31 @@
+import { Icon } from "./ui";
+
+// Status is always an icon + a word in its status color - never color alone.
 const STATUS_STYLES = {
-  success: { label: "Success", className: "border border-emerald-200 bg-emerald-50 text-emerald-800" },
-  failed: { label: "Failed", className: "border border-red-200 bg-red-50 text-red-800" },
+  success: { label: "Success", icon: "check-circle", className: "text-verified" },
+  failed: { label: "Failed", icon: "x-circle", className: "text-danger" },
   // Distinct from a plain "Failed" (unrecognized face) - this is a security
   // event (liveness/anti-spoofing check failed), not a recognition miss.
-  spoof_suspected: { label: "Spoof suspected", className: "border border-purple-200 bg-purple-50 text-purple-800" },
+  spoof_suspected: { label: "Spoof suspected", icon: "warning-octagon", className: "text-danger" },
   // Also distinct from "Failed" - the mouth/nose read as covered before the
   // face was ever compared against anyone, so this was never a genuine
-  // non-match. Teal: not yet claimed by success (emerald) or spoof (purple).
-  occlusion_detected: { label: "Occlusion detected", className: "border border-teal-200 bg-teal-50 text-teal-800" },
+  // non-match. Prompt blue: it's an instruction to the person, not an alarm.
+  occlusion_detected: { label: "Face covered", icon: "hand-palm", className: "text-prompt" },
+};
+
+// Left-edge bar color on a log row - only non-routine rows get one.
+export const STATUS_BAR = {
+  success: "#FFFFFF",
+  failed: "#C62828",
+  spoof_suspected: "#C62828",
+  occlusion_detected: "#1D5FA8",
 };
 
 export default function StatusBadge({ status }) {
-  const { label, className } = STATUS_STYLES[status] || STATUS_STYLES.failed;
+  const { label, icon, className } = STATUS_STYLES[status] || STATUS_STYLES.failed;
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${className}`}>
+    <span className={`inline-flex items-center gap-s1 whitespace-nowrap text-sm font-bold ${className}`}>
+      <Icon name={icon} bold size={16} />
       {label}
     </span>
   );

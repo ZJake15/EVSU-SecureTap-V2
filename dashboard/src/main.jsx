@@ -1,6 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import "@phosphor-icons/web/regular";
+import "@phosphor-icons/web/bold";
 import "./index.css";
 import App from "./App.jsx";
 import { AuthProvider } from "./auth/AuthContext.jsx";

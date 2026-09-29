@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import apiClient from "../api/client";
+import { useAuth } from "../auth/AuthContext";
+import { Avatar, Icon, PageHeader } from "../components/ui";
 
 const POLL_INTERVAL_MS = 1000;
 const MAX_EVENTS_SHOWN = 500;
 
-// A small fixed set of avatar background colors, picked deterministically
-// from the person's name (same name -> same color every time) so cards
-// stay visually stable across polls instead of flickering.
-const AVATAR_COLORS = [
-  "bg-red-500", "bg-orange-500", "bg-amber-500", "bg-emerald-500",
-  "bg-teal-500", "bg-sky-500", "bg-indigo-500", "bg-purple-500", "bg-pink-500",
-];
+const TABLE_COLS = "36px minmax(0,2.4fr) 110px 110px minmax(0,1.5fr) 56px minmax(0,84px)";
 
 function startOfToday() {
   const date = new Date();
@@ -18,144 +14,193 @@ function startOfToday() {
   return date.toISOString();
 }
 
-function initials(name) {
-  if (!name) return "?";
-  const parts = name.trim().split(/\s+/);
-  const first = parts[0]?.[0] || "";
-  const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
-  return (first + last).toUpperCase();
+function clockTime(value) {
+  return new Date(value).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function avatarColor(name) {
-  const key = name || "";
-  let hash = 0;
-  for (let i = 0; i < key.length; i += 1) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+function todayLabel() {
+  return new Date()
+    .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    .toUpperCase();
 }
 
-function UnknownFaceIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-8 w-8 text-red-600" aria-hidden="true">
-      <circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.6" />
-      <path
-        d="M4.5 20c1.2-3.6 4-5.4 7.5-5.4s6.3 1.8 7.5 5.4"
-        stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
-      />
-      <text x="12" y="11" textAnchor="middle" fontSize="6.5" fill="currentColor" stroke="none">?</text>
-    </svg>
-  );
+function pct(value) {
+  return value != null ? `${Math.round(value * 100)}%` : "—";
 }
 
-function EventPhoto({ event }) {
-  if (event.status === "success") {
-    if (event.person_photo) {
-      return <img src={event.person_photo} alt="" className="aspect-square w-full object-cover" />;
-    }
-    return (
-      <div className={`flex aspect-square w-full items-center justify-center text-lg font-bold text-white ${avatarColor(event.person_name)}`}>
-        {initials(event.person_name)}
-      </div>
-    );
+// How a successful pass was verified - icon + word, verified green (a manual
+// override is ink: a person vouched for it, not the scanner).
+function passMethod(event) {
+  switch (event.verification_method) {
+    case "face_and_card_tiebreak":
+      return { label: "Face + card", icon: "identification-card", className: "text-verified" };
+    case "confusable_pair_tiebreak":
+      return { label: "Lookalike + card", icon: "users-three", className: "text-verified" };
+    case "manual_override":
+      return { label: "Manual", icon: "hand-pointing", className: "text-ink" };
+    case "face_only":
+      return { label: "Face", icon: "user-focus", className: "text-verified" };
+    default:
+      // Historical rows from before the face-primary pivot (nfc_only,
+      // nfc_and_face) - no longer created, but may still turn up in today's
+      // feed right after a restart.
+      return { label: "Card", icon: "identification-card", className: "text-verified" };
   }
-  if (event.captured_photo) {
-    return <img src={event.captured_photo} alt="" className="aspect-square w-full object-cover" />;
+}
+
+// Everything that isn't a clean pass gets pinned to "Needs attention", with
+// its own word, icon and status color.
+function attentionKind(event) {
+  if (event.status === "spoof_suspected") {
+    return { word: "Spoof suspected", icon: "warning-octagon", color: "#C62828", className: "text-danger" };
   }
+  if (event.status === "occlusion_detected") {
+    return { word: "Face covered", icon: "hand-palm", color: "#1D5FA8", className: "text-prompt" };
+  }
+  if (event.verification_method === "confusable_pair_tiebreak") {
+    // Unresolved - no card tap came in time, and (per EntryLog.person being
+    // null on this row) nobody was auto-accepted either. Needs a specific
+    // manual review, not just "didn't match".
+    return { word: "Needs review", icon: "users-three", color: "#9A5B00", className: "text-caution" };
+  }
+  return { word: "Flagged · Unknown", icon: "user-circle-dashed", color: "#9A5B00", className: "text-caution" };
+}
+
+function SubStat({ label, icon, value, tone }) {
+  // Only colored once there's something to see - a zero stays ink.
+  const active = tone && Number(value) > 0;
   return (
-    <div
-      className={`flex aspect-square w-full items-center justify-center ${
-        event.status === "occlusion_detected" ? "bg-teal-50" : "bg-red-50"
-      }`}
-    >
-      <UnknownFaceIcon />
+    <div className="flex flex-col gap-s2 border-l border-line px-s5 pb-0.5">
+      <span className={`t-eyebrow flex items-center gap-s1 ${active ? tone : ""}`}>
+        <Icon name={icon} bold size={14} />
+        {label}
+      </span>
+      <span className={`t-stat ${active ? tone : "text-ink"}`}>{value}</span>
     </div>
   );
 }
 
-function MethodBadge({ event }) {
-  if (event.status === "spoof_suspected") {
-    return (
-      <span className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-800">
-        Spoof suspected
-      </span>
-    );
-  }
-  if (event.status === "occlusion_detected") {
-    return (
-      <span className="inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-teal-800">
-        Face covered
-      </span>
-    );
-  }
-  if (event.verification_method === "confusable_pair_tiebreak" && event.status !== "success") {
-    // Unresolved - no card tap came in time, and (per EntryLog.person being
-    // null on this row) nobody was auto-accepted either. Distinct from the
-    // generic "Flagged" case below: this needs a specific manual review,
-    // not just "didn't match".
-    return (
-      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-        Needs review - confusable pair
-      </span>
-    );
-  }
-  if (event.status !== "success") {
-    return (
-      <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-800">
-        Flagged
-      </span>
-    );
-  }
-  if (event.verification_method === "confusable_pair_tiebreak") {
-    return (
-      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-        Confusable pair + NFC
-      </span>
-    );
-  }
-  if (event.verification_method === "face_and_card_tiebreak") {
-    return (
-      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-        Face + NFC
-      </span>
-    );
-  }
-  if (event.verification_method === "face_only") {
-    return (
-      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-        Face
-      </span>
-    );
-  }
-  // Historical rows from before the face-primary pivot (nfc_only,
-  // nfc_and_face) - no longer created, but may still be visible if today's
-  // feed happens to include one from right after a restart.
+function LatestPass({ event }) {
+  const method = passMethod(event);
   return (
-    <span className="inline-flex items-center rounded-full border border-ink-200 bg-ink-50 px-2 py-0.5 text-[10px] font-bold text-ink-600">
-      NFC
-    </span>
+    <div className="card flex flex-none items-stretch gap-s5 p-s4">
+      <Avatar src={event.person_photo} name={event.person_name} size={120} />
+      <div className="flex min-w-0 flex-1 flex-col justify-center gap-s2">
+        <span className="t-eyebrow">
+          Latest &middot; {event.gate_location || "Gate"} &middot; {event.direction}
+        </span>
+        <span className="truncate text-[28px] font-bold leading-tight">{event.person_name}</span>
+        <div className="flex flex-wrap items-center gap-s4 text-sm">
+          <span className="font-mono font-medium">{event.student_or_employee_id}</span>
+          <span className="font-mono font-medium text-ink-600">{clockTime(event.timestamp)}</span>
+          <span className={`flex items-center gap-s1 font-bold ${method.className}`}>
+            <Icon name={method.icon} bold size={16} />
+            {method.label}
+          </span>
+        </div>
+      </div>
+      {event.match_confidence != null && (
+        <div className="hidden flex-none flex-col items-end justify-center gap-s1 border-l border-line pl-s5 pr-s3 sm:flex">
+          <span className="t-eyebrow">Confidence</span>
+          <span className="font-mono text-[44px] font-semibold leading-none">{pct(event.match_confidence)}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
-function MetricCard({ label, value, tone = "default" }) {
-  const toneClasses =
-    tone === "danger"
-      ? "border-red-200 bg-red-50"
-      : tone === "accent"
-        ? "border-gold-300 bg-gold-50"
-        : tone === "teal"
-          ? "border-teal-200 bg-teal-50"
-          : "border-ink-900/10 bg-white";
-  const valueClasses = tone === "danger" ? "text-red-700" : tone === "teal" ? "text-teal-700" : "text-ink-900";
+function PassRow({ event }) {
+  const method = passMethod(event);
+  // A manual backstop for a confusable pair (see users.models.ConfusablePair)
+  // - shown on a confusable-pair tiebreak, the one moment a guard actually
+  // needs it to double-check by eye. Never used by matching itself.
+  const note =
+    event.verification_method === "confusable_pair_tiebreak" && event.distinguishing_note
+      ? event.distinguishing_note
+      : null;
   return (
-    <div className={`rounded-xl border p-4 shadow-sm ${toneClasses}`}>
-      <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">{label}</p>
-      <p className={`mt-1 font-display text-2xl font-semibold ${valueClasses}`}>{value}</p>
+    <div
+      className="grid min-h-10 items-center gap-s3 border-b border-line px-s4 py-s1 text-sm"
+      style={{ gridTemplateColumns: TABLE_COLS }}
+    >
+      <Avatar src={event.person_photo} name={event.person_name} size={28} />
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate font-bold">{event.person_name}</span>
+        {note && (
+          <span className="flex items-center gap-s1 truncate text-xs text-ink-600" title={note}>
+            <Icon name="note" size={12} />
+            {note}
+          </span>
+        )}
+        {/* A moment of occlusion seen earlier in this same encounter, even
+            though it resolved into this pass (see EntryLog.occlusion_detected). */}
+        {event.occlusion_detected && (
+          <span className="flex items-center gap-s1 text-xs text-prompt">
+            <Icon name="hand-palm" size={12} />
+            Face briefly covered earlier
+          </span>
+        )}
+      </span>
+      <span className="truncate font-mono text-[13px] font-medium">{event.student_or_employee_id}</span>
+      <span className="font-mono text-[13px] font-medium text-ink-600">{clockTime(event.timestamp)}</span>
+      <span className={`flex items-center gap-s1 whitespace-nowrap font-bold ${method.className}`}>
+        <Icon name={method.icon} bold size={16} />
+        {method.label}
+      </span>
+      <span className="text-right font-mono font-medium">{pct(event.match_confidence)}</span>
+      <span className="truncate text-ink-600">{event.gate_location}</span>
+    </div>
+  );
+}
+
+function AttentionCard({ event }) {
+  const kind = attentionKind(event);
+  const isLookalike = event.status !== "spoof_suspected" && event.verification_method === "confusable_pair_tiebreak";
+  const meta = [
+    event.student_or_employee_id || "No ID on file",
+    isLookalike ? "Lookalike unresolved" : event.failure_reason,
+    event.gate_location,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div
+      className="flex flex-none gap-s4 rounded-l-sm rounded-r-md border border-l-[3px] border-line bg-surface p-s4"
+      style={{ borderLeftColor: kind.color }}
+    >
+      {event.captured_photo ? (
+        <img src={event.captured_photo} alt="" className="h-14 w-14 flex-none rounded-sm object-cover" />
+      ) : (
+        <span className="flex h-14 w-14 flex-none items-center justify-center rounded-sm bg-ink text-ink-400">
+          <Icon name={kind.icon} size={28} />
+        </span>
+      )}
+      <div className="flex min-w-0 flex-1 flex-col gap-s1">
+        <div className="flex items-center justify-between gap-s3">
+          <span
+            className={`flex items-center gap-s1 font-display stretch-condensed text-sm font-extrabold uppercase tracking-[0.06em] ${kind.className}`}
+          >
+            <Icon name={kind.icon} bold size={16} />
+            {kind.word}
+          </span>
+          <span className="font-mono text-xs font-medium text-ink-600">{clockTime(event.timestamp)}</span>
+        </div>
+        <span className="text-base font-bold leading-tight">{event.person_name || "Unknown"}</span>
+        <span className="text-xs text-ink-600">{meta}</span>
+        {isLookalike && event.distinguishing_note && (
+          <span className="mt-s1 rounded-sm bg-canvas px-s2 py-s1 text-xs text-ink">Note: {event.distinguishing_note}</span>
+        )}
+      </div>
     </div>
   );
 }
 
 export default function LiveMonitoring() {
+  const { user } = useAuth();
+  const isSecurityOfficer = user?.role === "security_officer";
   const [events, setEvents] = useState([]);
   const [error, setError] = useState("");
+  const [lastUpdate, setLastUpdate] = useState(null);
   const sinceRef = useRef(startOfToday());
 
   useEffect(() => {
@@ -172,8 +217,9 @@ export default function LiveMonitoring() {
           sinceRef.current = data.results[0].timestamp;
         }
         setError("");
+        setLastUpdate(new Date());
       } catch {
-        if (!isCancelled) setError("Live feed unavailable - retrying...");
+        if (!isCancelled) setError("Live feed unavailable — retrying…");
       }
     };
 
@@ -185,81 +231,131 @@ export default function LiveMonitoring() {
     };
   }, []);
 
-  const enrolledCount = events.filter((event) => event.status === "success").length;
-  const spoofCount = events.filter((event) => event.status === "spoof_suspected").length;
+  const passes = events.filter((event) => event.status === "success");
+  const attention = events.filter((event) => event.status !== "success");
   const unknownCount = events.filter((event) => event.status === "failed").length;
+  const spoofCount = events.filter((event) => event.status === "spoof_suspected").length;
   const occludedCount = events.filter((event) => event.status === "occlusion_detected").length;
   const confidences = events
     .map((event) => event.match_confidence)
     .filter((value) => value !== null && value !== undefined);
   const avgConfidence = confidences.length
-    ? Math.round((confidences.reduce((sum, value) => sum + value, 0) / confidences.length) * 100)
-    : null;
+    ? `${Math.round((confidences.reduce((sum, value) => sum + value, 0) / confidences.length) * 100)}%`
+    : "—";
+
+  const gate = user?.gateLocation || "no gate assigned";
+  const latest = passes[0];
+
+  const attentionEmpty = (
+    <span className="border-t border-line pt-s4 text-sm leading-normal text-ink-600">
+      Nothing to review. Spoof attempts, unknown people, covered faces and unresolved lookalikes will be pinned
+      here.
+    </span>
+  );
 
   return (
-    <div>
-      <div className="mb-6">
-        <h1 className="font-display text-2xl font-semibold text-ink-900">Live Monitoring</h1>
-        <p className="mt-1 text-sm text-ink-500">Today&rsquo;s gate activity, updated in real time.</p>
+    <div className="flex flex-col">
+      <PageHeader
+        eyebrow={isSecurityOfficer ? "Your gate · today only" : `Today · ${todayLabel()} · All gates`}
+        title={isSecurityOfficer ? `Live Monitoring · ${gate}` : "Live Monitoring"}
+      >
+        <div className="flex items-center gap-s3 pb-s1 text-sm text-ink-600">
+          <span className={`h-2 w-2 ${error ? "bg-caution" : "bg-verified"}`} />
+          <span>{error ? "Reconnecting · last update" : "Live · updates every second"}</span>
+          {lastUpdate && <span className="font-mono font-medium text-ink">{clockTime(lastUpdate)}</span>}
+        </div>
+      </PageHeader>
+
+      <div className="mt-s5 flex flex-none flex-wrap items-end gap-y-s4">
+        <div className="flex flex-col gap-s1 pr-s6">
+          <span className="t-eyebrow">Passes today</span>
+          <span className="t-hero">{events.length}</span>
+        </div>
+        <SubStat label="Enrolled matches" icon="user-focus" value={passes.length} />
+        <SubStat label="Unknown attempts" icon="user-circle-dashed" value={unknownCount} tone="text-caution" />
+        <SubStat label="Spoof suspected" icon="warning-octagon" value={spoofCount} tone="text-danger" />
+        <SubStat label="Face covered" icon="hand-palm" value={occludedCount} tone="text-prompt" />
+        <SubStat label="Avg. confidence" icon="gauge" value={avgConfidence} />
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <MetricCard label="Passes today" value={events.length} />
-        <MetricCard label="Enrolled matches" value={enrolledCount} />
-        <MetricCard label="Unknown attempts" value={unknownCount} tone="danger" />
-        <MetricCard label="Spoof suspected" value={spoofCount} tone="danger" />
-        <MetricCard label="Occlusion detected" value={occludedCount} tone="teal" />
-        <MetricCard label="Avg confidence" value={avgConfidence !== null ? `${avgConfidence}%` : "—"} tone="accent" />
-      </div>
-
-      {error && <p className="mb-3 text-sm font-medium text-amber-700">{error}</p>}
-      {events.length === 0 && (
-        <p className="text-sm text-ink-500">Waiting for the next scan...</p>
+      {error && (
+        <div className="notice mt-s5 flex-none items-center bg-caution-tint">
+          <Icon name="arrows-clockwise" bold size={20} className="text-caution" />
+          <span className="font-bold">{error}</span>
+          {lastUpdate && (
+            <span className="text-ink-600">
+              Events shown are from {clockTime(lastUpdate)}. New scans will appear once the connection returns.
+            </span>
+          )}
+        </div>
       )}
-      <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-        {events.map((event) => (
-          <div
-            key={event.id}
-            className="flex flex-col overflow-hidden rounded-xl border border-ink-900/10 bg-white shadow-sm"
-          >
-            <EventPhoto event={event} />
-            <div className="flex flex-1 flex-col gap-0.5 border-t-2 border-gold-400/70 p-2">
-              <p className="truncate text-xs font-semibold text-ink-900">{event.person_name || "Unknown"}</p>
-              <p className="truncate text-[10px] text-ink-500">
-                {event.student_or_employee_id || "No ID on file"}
-              </p>
-              <p className="truncate text-[10px] text-ink-400">
-                {new Date(event.timestamp).toLocaleTimeString()}
-              </p>
-              <div className="mt-1 flex items-center gap-1">
-                <MethodBadge event={event} />
-                {event.status === "success" && event.match_confidence != null && (
-                  <span className="text-[10px] font-medium text-ink-500">
-                    {Math.round(event.match_confidence * 100)}%
-                  </span>
-                )}
+
+      {events.length === 0 ? (
+        <div className="mt-s6 grid grid-cols-1 gap-s6 xl:grid-cols-[minmax(0,8fr)_minmax(0,4fr)]">
+          <div className="card flex flex-col justify-center gap-s4 p-s7">
+            <Icon name="hourglass-medium" size={44} className="text-ink-600" />
+            <span className="font-display stretch-semi text-[28px] font-extrabold leading-tight">
+              Waiting for the first scan of the day
+            </span>
+            <span className="max-w-[460px] text-base leading-normal text-ink-600">
+              Entries appear here the moment a gate camera or card reader logs someone. This page updates every
+              second.
+            </span>
+          </div>
+          <div className="flex flex-col gap-s3">
+            <span className="t-section">Needs attention</span>
+            {attentionEmpty}
+          </div>
+        </div>
+      ) : (
+        <div className="mt-s6 grid grid-cols-1 gap-s6 xl:grid-cols-[minmax(0,8fr)_minmax(0,4fr)]">
+          <div className="flex min-w-0 flex-col gap-s5">
+            {latest && <LatestPass event={latest} />}
+            <div className="card flex flex-col overflow-hidden">
+              <div className="overflow-x-auto">
+                <div className="min-w-[720px]">
+                  <div
+                    className="table-head grid h-9 items-center gap-s3 border-b border-line px-s4"
+                    style={{ gridTemplateColumns: TABLE_COLS }}
+                  >
+                    <span />
+                    <span>Name</span>
+                    <span>ID</span>
+                    <span>Time</span>
+                    <span>Method</span>
+                    <span className="text-right">Conf.</span>
+                    <span>Gate</span>
+                  </div>
+                  <div className="max-h-[calc(100vh-420px)] min-h-[200px] overflow-y-auto">
+                    {passes.map((event) => (
+                      <PassRow key={event.id} event={event} />
+                    ))}
+                    {passes.length === 0 && (
+                      <p className="px-s4 py-s5 text-sm text-ink-600">No successful passes yet today.</p>
+                    )}
+                  </div>
+                </div>
               </div>
-              {/* A moment of occlusion seen earlier in this same encounter,
-                  even though it resolved into this row's own outcome - the
-                  point of keeping the note rather than dropping it once
-                  resolved (see EntryLog.occlusion_detected). Not shown on an
-                  occlusion_detected row itself - its own badge already says so. */}
-              {event.occlusion_detected && event.status !== "occlusion_detected" && (
-                <p className="truncate text-[10px] text-teal-700">Face briefly covered earlier</p>
-              )}
-              {/* A manual backstop for a confusable pair (see users.models.
-                  ConfusablePair) - shown specifically on a confusable-pair
-                  tiebreak, the one moment a guard actually needs it to
-                  double-check by eye. Never used by matching itself. */}
-              {event.verification_method === "confusable_pair_tiebreak" && event.distinguishing_note && (
-                <p className="truncate text-[10px] font-medium text-amber-700" title={event.distinguishing_note}>
-                  Note: {event.distinguishing_note}
-                </p>
-              )}
             </div>
           </div>
-        ))}
-      </div>
+
+          <div className="flex min-w-0 flex-col gap-s3">
+            <div className="flex flex-none items-baseline justify-between">
+              <span className="t-section">Needs attention</span>
+              <span className="font-mono text-sm font-medium text-ink-600">{attention.length} today</span>
+            </div>
+            {attention.length === 0 ? (
+              attentionEmpty
+            ) : (
+              <div className="flex max-h-[calc(100vh-260px)] flex-col gap-s3 overflow-y-auto">
+                {attention.map((event) => (
+                  <AttentionCard key={event.id} event={event} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

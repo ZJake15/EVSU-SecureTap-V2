@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Icon } from "./ui";
 
 export default function WebcamCapture({ onCapture }) {
   // The <video> element is always mounted (just hidden via CSS when
@@ -57,13 +58,10 @@ export default function WebcamCapture({ onCapture }) {
   };
 
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col gap-s2">
       {!isActive && (
-        <button
-          type="button"
-          onClick={startCamera}
-          className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-        >
+        <button type="button" onClick={startCamera} className="btn-secondary btn-sm self-start">
+          <Icon name="camera" size={16} />
           Open webcam
         </button>
       )}
@@ -72,27 +70,20 @@ export default function WebcamCapture({ onCapture }) {
         autoPlay
         playsInline
         muted
-        className={`w-full max-w-xs rounded border border-gray-300 bg-black ${isActive ? "" : "hidden"}`}
+        className={`w-full max-w-xs rounded-sm bg-ink ${isActive ? "" : "hidden"}`}
       />
       {isActive && (
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={capture}
-            className="rounded bg-maroon px-3 py-1.5 text-sm font-medium text-white hover:bg-maroon-600"
-          >
+        <div className="flex gap-s2">
+          <button type="button" onClick={capture} className="btn-primary btn-sm">
+            <Icon name="camera" bold size={16} />
             Capture photo
           </button>
-          <button
-            type="button"
-            onClick={stopCamera}
-            className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700"
-          >
+          <button type="button" onClick={stopCamera} className="btn-secondary btn-sm">
             Cancel
           </button>
         </div>
       )}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm font-bold text-danger">{error}</p>}
     </div>
   );
 }

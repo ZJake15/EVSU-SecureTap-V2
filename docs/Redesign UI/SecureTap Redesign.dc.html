@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Atkinson+Hyperlegible+Next:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#EEF0F2;font-family:'Atkinson Hyperlegible Next',sans-serif;color:#121416}a{color:#7B1113}a:hover{color:#4A0A0C}</style>
+</helmet>
+<section id="launcher" style="padding:68px 68px 42px;border-bottom:1px solid #D9DCDF">
+  <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:26px">
+    <span style="font-family:'IBM Plex Mono';font-weight:600;font-size:14px;background:#121416;color:#FFFFFF;padding:4px 8px;border-radius:3px">D</span>
+    <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:44px;letter-spacing:-0.01em;white-space:nowrap">Launcher</span>
+    <span style="font-size:16px;color:#4B5157">560 × 760 at 100% · maximized at 50% · CustomTkinter-buildable (solid fills, no transparency)</span>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:42px 26px;align-items:flex-start">
+    <sc-for list="{{ launchFrames }}" as="g" hint-placeholder-count="4">
+      <div id="{{ g.id }}" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">{{ g.id }}</span><span style="font-size:14px;color:#4B5157">{{ g.label }}</span></div>
+        <div style="width:560px;height:760px;overflow:hidden">
+          <dc-import name="Launcher" scenario="{{ g.scenario }}" style="width:560px;height:760px;display:block" hint-size="560px,760px"></dc-import>
+        </div>
+      </div>
+    </sc-for>
+    <div id="D4" style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">D4</span><span style="font-size:14px;color:#4B5157">Maximized 1920 × 1080 — content capped at 960 and centered, cards side by side</span></div>
+      <div style="width:960px;height:540px;overflow:hidden">
+        <div style="width:1920px;height:1080px;transform:scale(0.5);transform-origin:0 0">
+          <dc-import name="Launcher" scenario="maximized" style="width:1920px;height:1080px;display:block" hint-size="1920px,1080px"></dc-import>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<section id="dash" style="padding:68px 68px 42px;border-bottom:1px solid #D9DCDF">
+  <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:26px">
+    <span style="font-family:'IBM Plex Mono';font-weight:600;font-size:14px;background:#121416;color:#FFFFFF;padding:4px 8px;border-radius:3px">C</span>
+    <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:44px;letter-spacing:-0.01em;white-space:nowrap">Dashboard</span>
+    <span style="font-size:16px;color:#4B5157">1440 × 900 · shown at 2⁄3 · React + Tailwind</span>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:42px 26px;align-items:flex-start">
+    <sc-for list="{{ dashFrames }}" as="g" hint-placeholder-count="8">
+      <div id="{{ g.id }}" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">{{ g.id }}</span><span style="font-size:14px;color:#4B5157">{{ g.label }}</span></div>
+        <div style="width:960px;height:600px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
+          <div style="width:1440px;height:900px;transform:scale(0.66667);transform-origin:0 0">
+            <dc-import name="Dashboard Monitoring" screen="{{ g.screen }}" style="width:1440px;height:900px;display:block" hint-size="1440px,900px"></dc-import>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+    <sc-for list="{{ mgmtFrames }}" as="g" hint-placeholder-count="7">
+      <div id="{{ g.id }}" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">{{ g.id }}</span><span style="font-size:14px;color:#4B5157">{{ g.label }}</span></div>
+        <div style="width:960px;height:600px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
+          <div style="width:1440px;height:900px;transform:scale(0.66667);transform-origin:0 0">
+            <dc-import name="Dashboard Management" screen="{{ g.screen }}" style="width:1440px;height:900px;display:block" hint-size="1440px,900px"></dc-import>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</section>
+<section id="gate" style="padding:68px 68px 42px;border-bottom:1px solid #D9DCDF">
+  <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:26px">
+    <span style="font-family:'IBM Plex Mono';font-weight:600;font-size:14px;background:#121416;color:#FFFFFF;padding:4px 8px;border-radius:3px">B</span>
+    <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:44px;letter-spacing:-0.01em;white-space:nowrap">Gate Monitor</span>
+    <span style="font-size:16px;color:#4B5157">1920 × 1080 · shown at 50% · Windows / CustomTkinter-buildable (solid fills, no transparency)</span>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:42px 26px;align-items:flex-start">
+    <sc-for list="{{ gateFrames }}" as="g" hint-placeholder-count="8">
+      <div id="{{ g.id }}" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">{{ g.id }}</span><span style="font-size:14px;color:#4B5157">{{ g.label }}</span></div>
+        <div style="width:960px;height:540px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
+          <div style="width:1920px;height:1080px;transform:scale(0.5);transform-origin:0 0">
+            <dc-import name="Gate Monitor" scenario="{{ g.scenario }}" style="width:1920px;height:1080px;display:block" hint-size="1920px,1080px"></dc-import>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+    <div id="B9" style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">B9</span><span style="font-size:14px;color:#4B5157">Calm state, narrow window · 1100 × 700 at 100%</span></div>
+      <div style="width:1100px;height:700px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
+        <dc-import name="Gate Monitor" scenario="calm" narrow="{{ true }}" style="width:1100px;height:700px;display:block" hint-size="1100px,700px"></dc-import>
+      </div>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals(){
+    const D='Dashboard Monitoring';
+    return {
+      dashFrames:[
+        {id:'C1',file:D,screen:'login',label:'Login — with inline error'},
+        {id:'C2',file:D,screen:'live',label:'Live Monitoring — busy, attention items pinned'},
+        {id:'C3',file:D,screen:'liveEmpty',label:'Live Monitoring — waiting for the first scan'},
+        {id:'C3b',file:D,screen:'liveError',label:'Live Monitoring — live feed unavailable'},
+        {id:'C4',file:D,screen:'liveOfficer',label:'Live Monitoring — Security Officer (Main Gate, today only)'},
+        {id:'C5',file:D,screen:'logs',label:'Logs — Admin'},
+        {id:'C6',file:D,screen:'logsOfficer',label:'Logs — Security Officer + manual override'}
+      ],
+      launchFrames:[
+        {id:'D1',scenario:'starting',label:'Backend starting'},
+        {id:'D2',scenario:'ready',label:'Everything ready + last-session and unsynced-taps notices'},
+        {id:'D3',scenario:'settings',label:'Entry Agent settings expanded'},
+        {id:'D5',scenario:'preflight',label:'Pre-flight warning dialog'}
+      ],
+      mgmtFrames:[
+        {id:'C7',screen:'users',label:'User Management — people list with row badges'},
+        {id:'C8',screen:'drawer',label:'Add Person drawer — guided capture, 2 of 5, one failing quality'},
+        {id:'C9',screen:'queue',label:'Pending deactivation, lookalike pairs, bulk-import results'},
+        {id:'C10',screen:'reports',label:'Reports — today'},
+        {id:'C11',screen:'audit',label:'Audit Log — Admin'},
+        {id:'C12',screen:'accounts',label:'Accounts — editing a Security Officer'},
+        {id:'C13',screen:'settings',label:'Settings — read-only'}
+      ],
+      gateFrames:[
+        {id:'B1',scenario:'calm',label:'Calm — two recognized people entering'},
+        {id:'B2',scenario:'unknown',label:'Alarm — unknown person, banner docked above video'},
+        {id:'B3',scenario:'spoof',label:'Alarm — spoof suspected'},
+        {id:'B4',scenario:'covered',label:'Covered face (label only, not counted) beside a recognized person'},
+        {id:'B5',scenario:'tapcard',label:'Tap card to confirm + card accepted'},
+        {id:'B6',scenario:'rejected',label:'Card rejected — not registered'},
+        {id:'B7',scenario:'nocamera',label:'No camera connected'},
+        {id:'B8',scenario:'offline',label:'Offline — backend not OK, queue 3'}
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

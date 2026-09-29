@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Atkinson+Hyperlegible+Next:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css">
+<style>body{margin:0}a{color:#7B1113}a:hover{color:#4A0A0C}</style>
+</helmet>
+<div style="width:100%;height:100%;font-family:'Atkinson Hyperlegible Next',sans-serif;color:#121416;background:#EEF0F2;overflow:hidden;box-sizing:border-box">
+
+<sc-if value="{{ isLogin }}" hint-placeholder-val="{{ false }}">
+  <div style="display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);height:100%">
+    <div style="background:#4A0A0C;color:#FFFFFF;display:flex;flex-direction:column;justify-content:space-between;padding:110px 68px 68px 110px">
+      <div style="display:flex;flex-direction:column;gap:42px">
+        <img src="assets/evsu-seal.png" alt="EVSU seal" style="width:112px;height:112px"></img>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Archivo';font-stretch:125%;font-weight:900;font-size:28px;letter-spacing:0.16em;line-height:1">EVSU</span>
+          <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:72px;letter-spacing:-0.02em;line-height:0.95">SecureTap</span>
+        </div>
+        <div style="width:68px;height:3px;background:#C89B3C"></div>
+        <span style="font-size:20px;max-width:420px;line-height:1.4">Campus Entry Monitoring System</span>
+      </div>
+      <span style="font-size:14px;color:#D9DCDF">Eastern Visayas State University · Tacloban City · Est. 1907</span>
+    </div>
+    <div style="display:flex;flex-direction:column;justify-content:center;padding:68px 68px 110px">
+      <div style="display:flex;flex-direction:column;gap:26px;max-width:380px;width:100%">
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">STAFF SIGN-IN</span>
+          <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:44px;letter-spacing:-0.01em;line-height:1">Sign in</span>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px;background:#FBE4E4;border-radius:3px;padding:10px 16px;color:#C62828;font-size:14px;font-weight:700"><i class="ph-bold ph-warning-circle" style="font-size:20px"></i><span style="color:#121416">Invalid username or password.</span></div>
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Username</span><span style="height:40px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-size:16px">saso.reyes</span></label>
+          <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Password</span><span style="height:40px;box-sizing:border-box;background:#FFFFFF;border:2px solid #1D5FA8;border-radius:3px;padding:0 9px;display:flex;align-items:center;font-size:16px;letter-spacing:0.2em">••••••••</span></label>
+        </div>
+        <div style="height:40px;border-radius:8px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;justify-content:center;gap:10px;font-weight:700;font-size:16px">Sign in<i class="ph-bold ph-arrow-right" style="font-size:16px"></i></div>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<sc-if value="{{ isApp }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;height:100%">
+  <div style="width:232px;flex:none;background:#4A0A0C;color:#FFFFFF;display:flex;flex-direction:column;padding:26px 0 16px;box-sizing:border-box">
+    <div style="display:flex;align-items:center;gap:10px;padding:0 20px 42px">
+      <img src="assets/evsu-seal.png" alt="EVSU seal" style="width:40px;height:40px;flex:none"></img>
+      <div style="display:flex;flex-direction:column;gap:2px"><span style="font-family:'Archivo';font-stretch:125%;font-weight:900;font-size:12px;letter-spacing:0.14em;line-height:1">EVSU</span><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px;line-height:1">SecureTap</span></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="7">
+        <div style="display:flex;align-items:center;gap:10px;height:40px;padding:0 20px 0 17px;border-left:3px solid {{ n.bar }};background:{{ n.bg }};color:{{ n.fg }};font-size:14px;font-weight:{{ n.fw }}"><i class="ph ph-{{ n.icon }}" style="font-size:20px"></i>{{ n.label }}</div>
+      </sc-for>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;flex-direction:column;gap:10px;padding:16px 20px 0;border-top:1px solid #7B1113">
+      <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:14px;font-weight:700">{{ user.name }}</span><span style="font-size:12px;color:#D9DCDF">{{ user.role }}</span></div>
+      <div style="height:40px;border:1px solid #D9DCDF;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:700"><i class="ph ph-sign-out" style="font-size:16px"></i>Log out</div>
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;padding:42px 42px 26px;box-sizing:border-box;overflow:hidden">
+    <div style="flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:26px">
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+        <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">{{ page.eyebrow }}</span>
+        <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:44px;letter-spacing:-0.01em;line-height:1;white-space:nowrap">{{ page.title }}</span>
+      </div>
+      <sc-if value="{{ isLiveAny }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:10px;font-size:14px;color:#4B5157;padding-bottom:4px"><span style="width:8px;height:8px;background:{{ liveDot }}"></span><span>{{ liveNote }}</span><span style="font-family:'IBM Plex Mono';font-weight:500;color:#121416">07:43:06 AM</span></div>
+      </sc-if>
+      <sc-if value="{{ isLogsAdmin }}" hint-placeholder-val="{{ false }}">
+        <div style="height:40px;padding:0 16px;white-space:nowrap;border-radius:8px;background:#FFFFFF;border:1px solid #D9DCDF;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700;box-sizing:border-box"><i class="ph ph-download-simple" style="font-size:16px"></i>Export CSV</div>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ isLiveAny }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:none;display:flex;align-items:flex-end;flex-wrap:wrap;gap:16px 0;margin-top:26px">
+        <div style="display:flex;flex-direction:column;gap:4px;padding-right:42px">
+          <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">PASSES TODAY</span>
+          <span style="font-family:'Archivo';font-stretch:125%;font-weight:800;font-size:72px;line-height:0.85;letter-spacing:-0.02em">{{ m.passes }}</span>
+        </div>
+        <sc-for list="{{ m.sub }}" as="x" hint-placeholder-count="4">
+          <div style="display:flex;flex-direction:column;gap:6px;padding:0 26px 2px;border-left:1px solid #D9DCDF">
+            <span style="display:flex;align-items:center;gap:4px;font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:{{ x.lab }}"><i class="ph-bold ph-{{ x.icon }}" style="font-size:14px"></i>{{ x.label }}</span>
+            <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:28px;line-height:1;color:{{ x.fg }}">{{ x.val }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ feedError }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;margin-top:26px;display:flex;align-items:center;gap:10px;background:#FBEFD9;border-radius:3px;padding:10px 16px;font-size:14px"><i class="ph-bold ph-arrows-clockwise" style="font-size:20px;color:#9A5B00"></i><span style="font-weight:700">Live feed unavailable — retrying…</span><span style="color:#4B5157">Events shown are from 07:41:56 AM. New scans will appear once the connection returns.</span></div>
+    </sc-if>
+
+    <sc-if value="{{ isLiveBusy }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:42px;margin-top:42px">
+        <div style="display:flex;flex-direction:column;gap:26px;min-height:0">
+          <div style="flex:none;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;display:flex;gap:26px;padding:16px;align-items:stretch">
+            <div style="flex:none;width:120px;height:120px;border-radius:3px;background:#EEF0F2;display:flex;align-items:center;justify-content:center;font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:36px;color:#4B5157">MS</div>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:6px">
+              <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">LATEST · MAIN GATE · ENTRY</span>
+              <span style="font-weight:700;font-size:28px;line-height:1.1">Maria Clara D. Santos</span>
+              <div style="display:flex;align-items:center;gap:16px;font-size:14px"><span style="font-family:'IBM Plex Mono';font-weight:500">2021-00123</span><span style="font-family:'IBM Plex Mono';font-weight:500;color:#4B5157">07:42:18 AM</span><span style="display:flex;align-items:center;gap:4px;color:#1E7B45;font-weight:700"><i class="ph-bold ph-user-focus" style="font-size:16px"></i>Face</span></div>
+            </div>
+            <div style="flex:none;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;gap:4px;padding:0 10px 0 26px;border-left:1px solid #D9DCDF">
+              <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">CONFIDENCE</span>
+              <span style="font-family:'IBM Plex Mono';font-weight:600;font-size:44px;line-height:1">92%</span>
+            </div>
+          </div>
+          <div style="flex:1;min-height:0;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;overflow:hidden;display:flex;flex-direction:column">
+            <div style="flex:none;display:grid;grid-template-columns:36px minmax(0,2.4fr) 100px 110px minmax(0,1.5fr) 56px 84px;gap:10px;align-items:center;height:36px;padding:0 16px;border-bottom:1px solid #D9DCDF;font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">
+              <span></span><span>NAME</span><span>ID</span><span>TIME</span><span>METHOD</span><span style="text-align:right">CONF.</span><span>GATE</span>
+            </div>
+            <sc-for list="{{ liveRows }}" as="r" hint-placeholder-count="8">
+              <div style="flex:none;display:grid;grid-template-columns:36px minmax(0,2.4fr) 100px 110px minmax(0,1.5fr) 56px 84px;gap:10px;align-items:center;min-height:40px;padding:4px 16px;border-bottom:1px solid #D9DCDF;font-size:14px;box-sizing:border-box">
+                <span style="width:28px;height:28px;border-radius:3px;background:#EEF0F2;color:#4B5157;display:flex;align-items:center;justify-content:center;font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:11px">{{ r.ini }}</span>
+                <span style="display:flex;flex-direction:column;min-width:0"><span style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.name }}</span><sc-if value="{{ r.note }}" hint-placeholder-val="{{ false }}"><span style="font-size:12px;color:#4B5157;display:flex;align-items:center;gap:4px"><i class="ph ph-note" style="font-size:12px"></i>{{ r.note }}</span></sc-if></span>
+                <span style="font-family:'IBM Plex Mono';font-weight:500;font-size:13px">{{ r.id }}</span>
+                <span style="font-family:'IBM Plex Mono';font-weight:500;font-size:13px;color:#4B5157">{{ r.time }}</span>
+                <span style="display:flex;align-items:center;gap:4px;color:{{ r.fg }};font-weight:700;white-space:nowrap"><i class="ph-bold ph-{{ r.icon }}" style="font-size:16px"></i>{{ r.method }}</span>
+                <span style="font-family:'IBM Plex Mono';font-weight:500;text-align:right">{{ r.conf }}</span>
+                <span style="color:#4B5157">{{ r.gate }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;min-height:0;gap:10px">
+          <div style="flex:none;display:flex;align-items:baseline;justify-content:space-between"><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px">Needs attention</span><span style="font-family:'IBM Plex Mono';font-weight:500;font-size:14px;color:#4B5157">{{ attnCount }} today</span></div>
+          <sc-for list="{{ attn }}" as="a" hint-placeholder-count="3">
+            <div style="flex:none;background:#FFFFFF;border:1px solid #D9DCDF;border-left:3px solid {{ a.fg }};border-radius:3px 8px 8px 3px;display:flex;gap:16px;padding:16px">
+              <div style="flex:none;width:56px;height:56px;border-radius:3px;background:#121416;color:#8A9097;display:flex;align-items:center;justify-content:center"><i class="ph ph-{{ a.thumb }}" style="font-size:28px"></i></div>
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><span style="display:flex;align-items:center;gap:4px;color:{{ a.fg }};font-family:'Archivo';font-stretch:75%;font-weight:800;font-size:14px;letter-spacing:0.06em"><i class="ph-bold ph-{{ a.icon }}" style="font-size:16px"></i>{{ a.word }}</span><span style="font-family:'IBM Plex Mono';font-weight:500;font-size:12px;color:#4B5157">{{ a.time }}</span></div>
+                <span style="font-weight:700;font-size:16px;line-height:1.25">{{ a.name }}</span>
+                <span style="font-size:12px;color:#4B5157">{{ a.meta }}</span>
+                <sc-if value="{{ a.note }}" hint-placeholder-val="{{ false }}"><span style="font-size:12px;color:#121416;background:#EEF0F2;border-radius:3px;padding:4px 6px;margin-top:4px">Note: {{ a.note }}</span></sc-if>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isLiveEmpty }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:42px;margin-top:42px">
+        <div style="background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;display:flex;flex-direction:column;justify-content:center;padding:68px;gap:16px">
+          <i class="ph ph-hourglass-medium" style="font-size:44px;color:#4B5157"></i>
+          <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:28px;line-height:1.1">Waiting for the first scan of the day</span>
+          <span style="font-size:16px;color:#4B5157;max-width:460px;line-height:1.5">Entries appear here the moment a gate camera or card reader logs someone. This page updates every second.</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px">Needs attention</span>
+          <span style="font-size:14px;color:#4B5157;line-height:1.5;border-top:1px solid #D9DCDF;padding-top:16px">Nothing to review. Spoof attempts, unknown people and unresolved lookalikes will be pinned here.</span>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isLogsAny }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;margin-top:42px">
+        <sc-if value="{{ isLogsAdmin }}" hint-placeholder-val="{{ false }}">
+          <label style="display:flex;flex-direction:column;gap:4px"><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">DATE RANGE</span><span style="height:40px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;gap:10px;font-family:'IBM Plex Mono';font-size:14px"><i class="ph ph-calendar-blank" style="font-size:16px;color:#4B5157"></i>Sep 22 – Sep 28, 2026</span></label>
+        </sc-if>
+        <label style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:180px"><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">NAME</span><span style="height:40px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;gap:10px;font-size:14px;color:#4B5157"><i class="ph ph-magnifying-glass" style="font-size:16px"></i>Search by name</span></label>
+        <sc-if value="{{ isLogsAdmin }}" hint-placeholder-val="{{ false }}">
+          <label style="display:flex;flex-direction:column;gap:4px"><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">GATE</span><span style="height:40px;width:150px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:14px">All gates<i class="ph-bold ph-caret-down" style="font-size:14px"></i></span></label>
+        </sc-if>
+        <label style="display:flex;flex-direction:column;gap:4px"><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">STATUS</span><span style="height:40px;width:220px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:14px">All<i class="ph-bold ph-caret-down" style="font-size:14px"></i></span></label>
+        <span style="height:40px;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700"><span style="width:18px;height:18px;border-radius:3px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;justify-content:center"><i class="ph-bold ph-check" style="font-size:12px"></i></span>Hide unknown</span>
+      </div>
+      <div style="flex:1;min-height:0;display:flex;gap:42px;margin-top:26px">
+        <div style="flex:1;min-width:0;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:8px;overflow:hidden;display:flex;flex-direction:column">
+          <div style="flex:none;display:grid;grid-template-columns:{{ logCols }};gap:10px;align-items:center;height:36px;padding:0 16px;border-bottom:1px solid #D9DCDF;font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:12px;letter-spacing:0.08em;color:#4B5157">
+            <span>NAME</span><span>TIMESTAMP</span><span>DIRECTION</span><span>METHOD</span><span>STATUS</span><span style="text-align:right">CONF.</span><span>REASON</span><span>GATE</span>
+          </div>
+          <div style="flex:1;min-height:0;overflow:hidden">
+            <sc-for list="{{ logRows }}" as="r" hint-placeholder-count="12">
+              <div style="display:grid;grid-template-columns:{{ logCols }};gap:10px;align-items:center;height:40px;padding:0 16px 0 13px;border-left:3px solid {{ r.bar }};border-bottom:1px solid #D9DCDF;font-size:14px">
+                <span style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.name }}</span>
+                <span style="font-family:'IBM Plex Mono';font-weight:500;font-size:12px;color:#4B5157;white-space:nowrap">{{ r.ts }}</span>
+                <span style="display:flex;align-items:center;gap:4px"><i class="ph ph-{{ r.dirIcon }}" style="font-size:16px;color:#4B5157"></i>{{ r.dir }}</span>
+                <span style="display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;color:{{ r.mfg }};font-weight:{{ r.mfw }}"><i class="ph-bold ph-{{ r.micon }}" style="font-size:16px;flex:none"></i><span style="overflow:hidden;text-overflow:ellipsis">{{ r.method }}</span></span>
+                <span style="display:flex;align-items:center;gap:4px;white-space:nowrap;color:{{ r.sfg }};font-weight:700"><i class="ph-bold ph-{{ r.sicon }}" style="font-size:16px"></i>{{ r.status }}</span>
+                <span style="font-family:'IBM Plex Mono';font-weight:500;text-align:right">{{ r.conf }}</span>
+                <span style="color:#4B5157;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.reason }}</span>
+                <span style="color:#4B5157;white-space:nowrap">{{ r.gate }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="flex:none;display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 16px;border-top:1px solid #D9DCDF;font-size:14px;color:#4B5157">
+            <span><span style="font-family:'IBM Plex Mono';font-weight:500;color:#121416">{{ pager }}</span> · 25 per page</span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="height:32px;padding:0 10px;border:1px solid #D9DCDF;border-radius:3px;display:flex;align-items:center;gap:4px;color:#8A9097"><i class="ph-bold ph-caret-left" style="font-size:14px"></i>Previous</span>
+              <span style="height:32px;padding:0 10px;border:1px solid #D9DCDF;border-radius:3px;display:flex;align-items:center;gap:4px;color:#121416;font-weight:700">Next<i class="ph-bold ph-caret-right" style="font-size:14px"></i></span>
+            </div>
+          </div>
+        </div>
+
+        <sc-if value="{{ isLogsOfficer }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:none;width:330px;display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;flex-direction:column;gap:4px;border-top:3px solid #C89B3C;padding-top:16px">
+              <span style="display:flex;align-items:center;gap:6px;font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px"><i class="ph-bold ph-hand-pointing" style="font-size:20px"></i>Manual override</span>
+              <span style="font-size:14px;color:#4B5157;line-height:1.45">Use only when the scanner fails. Logged as “Manual · guard.maingate”.</span>
+            </div>
+            <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Student/Employee ID</span><span style="height:40px;box-sizing:border-box;background:#FFFFFF;border:1px solid #D9DCDF;border-radius:3px;padding:0 10px;display:flex;align-items:center;font-family:'IBM Plex Mono';font-size:14px">2022-04417</span></label>
+            <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Direction</span>
+              <div style="display:grid;grid-template-columns:1fr 1fr;height:40px;border:1px solid #D9DCDF;border-radius:3px;overflow:hidden;background:#FFFFFF;font-size:14px;font-weight:700">
+                <span style="display:flex;align-items:center;justify-content:center;gap:6px;background:#121416;color:#FFFFFF"><i class="ph-bold ph-sign-in" style="font-size:16px"></i>Entry</span>
+                <span style="display:flex;align-items:center;justify-content:center;gap:6px;color:#4B5157;border-left:1px solid #D9DCDF"><i class="ph ph-sign-out" style="font-size:16px"></i>Exit</span>
+              </div>
+            </div>
+            <label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:14px;font-weight:700">Reason</span><span style="min-height:84px;box-sizing:border-box;background:#FFFFFF;border:2px solid #1D5FA8;border-radius:3px;padding:9px;font-size:14px;color:#8A9097;line-height:1.4">What did you check? e.g. checked physical school ID</span></label>
+            <div style="height:40px;border-radius:8px;background:#7B1113;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">Submit</div>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+  </div>
+</div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;screen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;login&quot;,&quot;live&quot;,&quot;liveEmpty&quot;,&quot;liveError&quot;,&quot;liveOfficer&quot;,&quot;logs&quot;,&quot;logsOfficer&quot;],&quot;default&quot;:&quot;live&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const C={i9:'#121416',i6:'#4B5157',i4:'#8A9097',line:'#D9DCDF',cv:'#EEF0F2',sf:'#FFFFFF',maroon:'#7B1113',brass:'#C89B3C',v:'#1E7B45',c:'#9A5B00',d:'#C62828',p:'#1D5FA8'};
+const NAV=[['Live Monitoring','broadcast'],['Logs','list-bullets'],['User Management','users'],['Reports','chart-bar'],['Audit Log','clipboard-text'],['Accounts','user-gear'],['Settings','gear-six']];
+const ROLES={admin:{items:7,name:'System Administrator',role:'Admin'},officer:{items:2,name:'Noel B. Cortez',role:'Security Officer · Main Gate'}};
+const M={face:['Face',C.v,'user-focus'],facecard:['Face + card',C.v,'identification-card'],look:['Lookalike + card',C.v,'users-three']};
+const LIVE=[
+  ['JD','Juan Miguel R. Dela Cruz','2022-04417','07:42:11 AM','facecard','71%','Main Gate'],
+  ['AU','Angelica P. Uy','EMP-0412','07:41:56 AM','face','91%','Back Gate'],
+  ['KR','Kristine Joy B. Ramos','2023-01288','07:41:30 AM','face','88%','Main Gate'],
+  ['RA','Ramon T. Abad','EMP-0178','07:39:47 AM','face','94%','Main Gate'],
+  ['MV','Mark Anthony L. Villanueva','2021-03350','07:39:12 AM','face','86%','Back Gate'],
+  ['PM','Paolo S. Mendoza','2023-02210','07:38:51 AM','look','82%','Main Gate','Mole on left cheek'],
+  ['RB','Rhea Mae C. Bacalso','2024-00096','07:38:40 AM','face','79%','Main Gate'],
+  ['MS','Maria Clara D. Santos','2021-00123','07:31:07 AM','facecard','64%','Back Gate'],
+  ['AU','Angelica P. Uy','EMP-0412','07:30:44 AM','face','90%','Main Gate']
+];
+const ATTN=[
+  {word:'SPOOF SUSPECTED',fg:C.d,icon:'warning-octagon',thumb:'user-circle-dashed',time:'07:43:05 AM',name:'Unknown',meta:'No ID on file · Main Gate',gate:'Main Gate'},
+  {word:'NEEDS REVIEW',fg:C.c,icon:'users-three',thumb:'users-three',time:'07:36:48 AM',name:'Paolo S. Mendoza or Paulo S. Mendoza',meta:'Lookalike unresolved · Back Gate',note:'Paolo has a mole on his left cheek.',gate:'Back Gate'},
+  {word:'FLAGGED · UNKNOWN',fg:C.c,icon:'user-circle-dashed',thumb:'user-circle-dashed',time:'07:40:02 AM',name:'Unknown',meta:'No ID on file · Main Gate',gate:'Main Gate'}
+];
+const S={ok:['Success',C.v,'check-circle'],fail:['Failed',C.d,'x-circle'],spoof:['Spoof suspected',C.d,'warning-octagon']};
+const LM={face:['Face','user-focus'],facecard:['Face + card','identification-card'],look:['Lookalike tiebreak','users-three'],card:['Card','identification-card'],manual:['Manual override · guard.maingate','hand-pointing']};
+const LOGS=[
+  ['Unknown','Sep 28 · 07:43:05 AM','Entry','face','spoof','—','Liveness check failed','Main Gate'],
+  ['Maria Clara D. Santos','Sep 28 · 07:42:18 AM','Entry','face','ok','92%','—','Main Gate'],
+  ['Juan Miguel R. Dela Cruz','Sep 28 · 07:42:11 AM','Entry','facecard','ok','71%','—','Main Gate'],
+  ['Angelica P. Uy','Sep 28 · 07:41:56 AM','Entry','face','ok','91%','—','Back Gate'],
+  ['Kristine Joy B. Ramos','Sep 28 · 07:41:30 AM','Entry','face','ok','88%','—','Main Gate'],
+  ['Unregistered card','Sep 28 · 07:41:02 AM','Entry','card','fail','—','Card not registered','Main Gate'],
+  ['Ramon T. Abad','Sep 28 · 07:39:47 AM','Entry','face','ok','94%','—','Main Gate'],
+  ['Mark Anthony L. Villanueva','Sep 28 · 07:39:12 AM','Entry','face','ok','86%','—','Back Gate'],
+  ['Paolo S. Mendoza','Sep 28 · 07:38:51 AM','Entry','look','ok','82%','—','Main Gate'],
+  ['Rhea Mae C. Bacalso','Sep 28 · 07:38:40 AM','Entry','face','ok','79%','—','Main Gate'],
+  ['Juan Miguel R. Dela Cruz','Sep 28 · 07:35:20 AM','Entry','manual','ok','—','checked physical school ID','Main Gate'],
+  ['Maria Clara D. Santos','Sep 28 · 07:31:07 AM','Entry','facecard','ok','64%','—','Back Gate'],
+  ['Angelica P. Uy','Sep 28 · 07:30:44 AM','Entry','face','ok','90%','—','Main Gate'],
+  ['Kristine Joy B. Ramos','Sep 28 · 07:28:15 AM','Entry','card','ok','—','—','Main Gate'],
+  ['Ramon T. Abad','Sep 27 · 05:02:48 PM','Exit','face','ok','93%','—','Main Gate']
+];
+class Component extends DCLogic {
+  renderVals(){
+    const screen=this.props.screen??'live';
+    const officer=screen==='liveOfficer'||screen==='logsOfficer';
+    const R=ROLES[officer?'officer':'admin'];
+    const isLogs=screen==='logs'||screen==='logsOfficer';
+    const activeIdx=isLogs?1:0;
+    const nav=NAV.slice(0,R.items).map(([label,icon],i)=>({label,icon,bar:i===activeIdx?C.brass:'#4A0A0C',bg:i===activeIdx?C.maroon:'#4A0A0C',fg:i===activeIdx?C.sf:C.line,fw:i===activeIdx?700:400}));
+    const empty=screen==='liveEmpty';
+    const gateOnly=r=>!officer||r[6]==='Main Gate';
+    const liveRows=LIVE.filter(gateOnly).map(r=>{const m=M[r[4]];return {ini:r[0],name:r[1],id:r[2],time:r[3],method:m[0],fg:m[1],icon:m[2],conf:r[5],gate:r[6],note:r[7]||null};});
+    const attn=ATTN.filter(a=>!officer||a.gate==='Main Gate');
+    const m=empty?{passes:0,sub:[['ENROLLED MATCHES','0','user-focus',C.i9],['UNKNOWN ATTEMPTS','0','user-circle-dashed',C.i9],['SPOOF SUSPECTED','0','warning-octagon',C.i9],['AVG. CONFIDENCE','—','gauge',C.i9]]}
+      :{passes:officer?298:412,sub:[['ENROLLED MATCHES',officer?'287':'396','user-focus',C.i9],['UNKNOWN ATTEMPTS',officer?'5':'7','user-circle-dashed',C.c],['SPOOF SUSPECTED','1','warning-octagon',C.d],['AVG. CONFIDENCE','84%','gauge',C.i9]]};
+    m.sub=m.sub.map(([label,val,icon,fg])=>({label,val,icon,fg,lab:fg===C.i9?C.i6:fg}));
+    const logRows=LOGS.filter(r=>!officer||(r[7]==='Main Gate'&&r[1].startsWith('Sep 28'))).map(r=>{
+      const s=S[r[4]];const lm=LM[r[3]];const sec=r[4]!=='ok';const man=r[3]==='manual';
+      return {name:r[0],ts:r[1],dir:r[2],dirIcon:r[2]==='Entry'?'sign-in':'sign-out',method:lm[0],micon:lm[1],mfg:man?C.i9:C.i6,mfw:man?700:400,status:s[0],sfg:s[1],sicon:s[2],conf:r[5],reason:r[6],gate:r[7],bar:man?C.brass:(sec?s[1]:C.sf)};
+    });
+    const pages={
+      live:['TODAY · SEP 28, 2026 · ALL GATES','Live Monitoring'],liveEmpty:['TODAY · SEP 28, 2026 · ALL GATES','Live Monitoring'],liveError:['TODAY · SEP 28, 2026 · ALL GATES','Live Monitoring'],
+      liveOfficer:['YOUR GATE · TODAY ONLY','Live Monitoring · Main Gate'],logs:['FULL HISTORY','Logs'],logsOfficer:['MAIN GATE · TODAY ONLY','Logs · Main Gate']
+    };
+    const pg=pages[screen]||pages.live;
+    return {
+      isLogin:screen==='login',isApp:screen!=='login',nav,user:R,page:{eyebrow:pg[0],title:pg[1]},
+      isLiveAny:screen.startsWith('live'),isLiveBusy:screen.startsWith('live')&&!empty,isLiveEmpty:empty,
+      feedError:screen==='liveError',liveDot:screen==='liveError'?C.c:C.v,liveNote:screen==='liveError'?'Reconnecting · last update':'Live · updates every second',
+      isLogsAny:isLogs,isLogsAdmin:screen==='logs',isLogsOfficer:screen==='logsOfficer',
+      m,liveRows:liveRows.slice(0,screen==='liveError'?7:8),attn,attnCount:attn.length,
+      logRows,pager:officer?'1–11 of 298':'1–25 of 2,847',
+      logCols:officer?'minmax(0,1.5fr) 140px 64px minmax(0,1.4fr) minmax(0,1fr) 44px minmax(0,1.1fr) 72px':'minmax(0,1.6fr) 150px 72px minmax(0,1.5fr) minmax(0,1.1fr) 48px minmax(0,1.3fr) 76px'
+    };
+  }
+}
+</script>
+</body>
+</html>

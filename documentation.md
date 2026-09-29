@@ -260,15 +260,20 @@ currently in frame.
     a stranger as a match.
 11. **Response & rendering.** The backend returns one result per detected face
     (box, verdict, similarity/liveness score, log id). The entry-agent draws a
-    colored box per face straight from this response — **green** = matched,
+    colored box per face straight from this response, each with a name tab
+    (icon + words) on its top edge — **green** = matched (name · confidence),
     **amber** = confirmed unknown, **red** = spoof suspected (shown as soon as
-    suspected, confirmed or not), **teal** = face covered (shown as soon as
-    suspected, same as spoof), **blue** = tiebreak ("tap your card"), **gray** =
-    still checking — appends a card to the live-log grid, updates the stats strip,
-    and, for a newly *confirmed* unknown-person or spoof event specifically, plays
-    an audible alarm and shows a banner over the video feed (occlusion shows the
-    same banner, prominently, but without the alarm sound - covering your face
-    isn't inherently adversarial the way a spoof attempt is).
+    suspected, confirmed or not), **blue "PLEASE UNCOVER YOUR FACE"** = face
+    covered (shown as soon as suspected, same as spoof), **blue "TAP CARD TO
+    CONFIRM"** = tiebreak, **gray "Checking…"** = not yet decided. It then adds
+    the event to the live log, updates the stats row, and, for a newly
+    *confirmed* unknown-person or spoof event specifically, plays an audible
+    alarm and docks an alarm banner across the top of the video panel
+    (UNKNOWN PERSON / SPOOF SUSPECTED, with the time). A covered face gets
+    neither the banner nor the alarm — covering your face isn't inherently
+    adversarial the way a spoof attempt is, so the label on the face itself is
+    the prompt, and the live view is never blocked for it. It is still logged
+    and counted (it appears in the live log as `COVERED`).
 
 ### 2.2 Card scanner (NFC tap)
 
@@ -306,14 +311,17 @@ action, not a continuous background process.
    `EntryLog(status=failed)` row is written too — a rejected card is still a
    security-relevant event worth keeping visible — with a specific reason code
    (`not_registered` / `deactivated` / `read_error`).
-7. **Rendering.** The gate monitor's card panel shows the result (photo, name,
-   role, course, ID, card ID, direction, timestamp) on success, so the guard can
-   visually cross-check the tapped card against the person standing in front of
-   them, or a red failure headline on rejection. Either way it auto-resets back
-   to "Tap a card" after 8 seconds. The same outcome is simultaneously appended
-   to the live log beside it (badge `CARD · ENTRY` / `CARD · EXIT` on success,
-   `CARD ✗` on rejection), so a tap is as visible in the gate's running record as
-   a face event.
+7. **Rendering.** The gate monitor's card-scanner strip shows the result (photo,
+   name, role, course, ID, card ID, direction, timestamp) on success, so the
+   guard can visually cross-check the tapped card against the person standing
+   in front of them; on rejection it turns red with the failure headline ("Not
+   registered", "Deactivated", ...) and `CARD REJECTED`; a tap queued while
+   offline turns amber ("Offline — tap queued, will sync automatically"). The
+   strip's left edge takes the same status color. Either way it auto-resets
+   back to "Tap a card" after 8 seconds. The same outcome is simultaneously added
+   to the live log beside it (`CARD · ENTRY` / `CARD · EXIT` on success,
+   `CARD REJECTED` or `QUEUED` otherwise), so a tap is as visible in the gate's
+   running record as a face event.
 
 ---
 
@@ -357,8 +365,8 @@ manual-override channel:
 | Component | Language | Framework / key libraries |
 |---|---|---|
 | **backend** | Python | Django 5.x, Django REST Framework, djangorestframework-simplejwt (JWT auth), django-filter, django-cors-headers, django-environ, MySQL (`mysqlclient`), **InsightFace** (ArcFace) + **MiniFASNetV2** on **ONNX Runtime**, OpenCV, NumPy, Pillow (+ `pillow-heif` for iPhone HEIC photos, registered in `users/apps.py`), pandas + openpyxl (bulk import), bcrypt |
-| **dashboard** | JavaScript (React, JSX) | React 19, React Router 7, Axios, Recharts (charts), Tailwind CSS, `jwt-decode`, Vite (dev server/bundler) |
-| **entry-agent** | Python | CustomTkinter (UI), OpenCV (webcam capture only, no ML), Pillow, `requests` (HTTP client), `python-dotenv`, `winsound` (Windows alert tone), SQLite (offline queue) |
+| **dashboard** | JavaScript (React, JSX) | React 19, React Router 7, Axios, Recharts (charts), Tailwind CSS, `@phosphor-icons/web` (icons), `jwt-decode`, Vite (dev server/bundler); fonts Archivo, Atkinson Hyperlegible Next and IBM Plex Mono from Google Fonts |
+| **entry-agent** | Python | CustomTkinter (UI), OpenCV (webcam capture only, no ML), Pillow, `requests` (HTTP client), `python-dotenv`, `winsound` (Windows alert tone), SQLite (offline queue); bundled fonts in `entry-agent/assets/fonts/` (see §8.1) |
 | **Database** | — | MySQL 8.0+ |
 | **Face recognition model** | — | InsightFace `buffalo_s` model pack (ArcFace recognition + RetinaFace-family detection), run via ONNX Runtime, CPU only |
 | **Liveness/anti-spoofing model** | — | MiniFASNetV2 (Minivision AI, Silent-Face-Anti-Spoofing project), from-source ONNX export, run via the same ONNX Runtime, CPU only |
@@ -776,46 +784,69 @@ no finer-grained per-object permission system beyond what §13 describes.
 
 ## 8. Dashboard (web app) features
 
+Every page shares one layout: a maroon left sidebar (EVSU seal and wordmark,
+the pages this role can open, the signed-in account and Log out) and, on the
+right, a page header — a small condensed eyebrow line above a large title — with
+the page's main action beside it. See §8.1 for the visual design system.
+
 - **Login** — username/password, JWT-based session (auto-refresh on expiry, forced
-  logout if refresh fails).
-- **Live Monitoring** — polls every second; a live photo-grid feed of today's gate
-  events with method badges (Face / Face+NFC tiebreak / **Confusable pair + NFC**
-  / Spoof suspected / Occlusion detected / Flagged / **Needs review — confusable
-  pair**, for one that expired unresolved), plus stat tiles (passes today,
-  enrolled matches, unknown attempts, spoof suspected, occlusion detected, average
-  confidence). A card whose encounter briefly included a covered face before
-  resolving into a match or non-match shows a small "face briefly covered
-  earlier" note rather than silently dropping that fact; a confusable-pair
-  tiebreak card shows the person's `distinguishing_note` (§5.8) if one's on file.
-  Scoped to the caller's own gate, today only, for a Security Officer (§13) — the
-  same server-side scoping `/api/logs/live` itself enforces, not a client-side
-  filter.
+  logout if refresh fails). A split screen: the EVSU seal and wordmark on a maroon
+  panel, the sign-in form beside it, with an inline error notice on a failed
+  sign-in.
+- **Live Monitoring** — polls every second. Across the top, one large "passes
+  today" number followed by enrolled matches, unknown attempts, spoof suspected,
+  face covered and average confidence (a count only takes its status color once
+  it's non-zero). Below, two columns: the **latest pass** as a large card (photo,
+  name, ID, time, method, confidence), then a table of today's successful passes
+  (name, ID, time, method — Face / Face + card / Lookalike + card / Manual /
+  Card — confidence, gate); and a **Needs attention** column pinning every
+  non-routine event as its own card with a colored left edge and a word —
+  `SPOOF SUSPECTED`, `FACE COVERED`, `FLAGGED · UNKNOWN`, or `NEEDS REVIEW` for a
+  confusable-pair tiebreak that expired unresolved. A pass whose encounter
+  briefly included a covered face shows a small "face briefly covered earlier"
+  note rather than silently dropping that fact; a confusable-pair tiebreak shows
+  the person's `distinguishing_note` (§5.8) if one's on file. There's an empty
+  state ("Waiting for the first scan of the day") and a reconnecting notice if
+  the feed drops. Scoped to the caller's own gate, today only, for a Security
+  Officer (§13) — the same server-side scoping `/api/logs/live` itself enforces,
+  not a client-side filter.
 - **Logs** — paginated (25/page), filterable by date/name/gate/status (including
-  Spoof suspected and Occlusion detected), with a "hide unknown" toggle and a
+  Spoof suspected and Face covered), with a "hide unknown" toggle and a
   **client-side CSV export** (built in-browser from loaded rows; there's no
-  server-generated export file — hidden entirely for a Security Officer, §13). The
-  Reason column carries the same "face briefly covered earlier" note for a
-  success/failed/spoof row whose encounter involved occlusion, distinct from the
-  reason text an occlusion-detected row's own status already gives, plus the
-  confusable pair's `distinguishing_note` on a `confusable_pair_tiebreak` row. A
-  manual-override row (§13) shows a distinct "Manual override · `<username>`"
-  badge instead of the usual verification method, so it's never mistaken for an
-  automatic match. A Security Officer gets a manual-override entry form here
-  instead of the export button/date filter, scoped to their own assigned gate.
+  server-generated export file — hidden entirely for a Security Officer, §13).
+  Status is an icon + word in its status color, and every non-routine row gets a
+  colored left edge (red for failed/spoof, blue for face covered, brass for a
+  manual override). The Reason column carries the same "face briefly covered
+  earlier" note for a success/failed/spoof row whose encounter involved
+  occlusion, distinct from the reason text an occlusion-detected row's own status
+  already gives, plus the confusable pair's `distinguishing_note` on a
+  `confusable_pair_tiebreak` row. A manual-override row (§13) shows "Manual
+  override · `<username>`" as its method instead of the usual verification
+  method, so it's never mistaken for an automatic match. A Security Officer gets
+  a **Manual override** panel beside the table instead of the export
+  button/date filter, scoped to their own assigned gate.
 - **User Management** *(admin/SASO — no access at all for Security Officer, §13)*
-  — full Person CRUD; profile-photo upload via webcam capture or file; **guided
-  5-shot enrollment** (front/left/right/neutral/smile, each live quality-checked
-  against `/api/users/check-photo-quality`) or a single-photo fallback (flagged
-  low-confidence); add extra photos to an existing person (up to 8 once flagged
-  confusable — §5.8); an optional `distinguishing_note` field; **bulk CSV/XLSX
-  import** with per-row error and confusable-pair-warning reporting. Deactivating
-  a record is immediate for an Admin, but for a SASO opens a reason-prompted
-  `DeactivationRequest` instead (§13) — an Admin sees a pending-requests queue
-  here to approve/reject, and every record shows a "Pending deactivation" badge
-  while one's outstanding. A separate **Confusable pairs** panel lists every
-  flagged pair (auto-detected, with its similarity score, or manually flagged),
-  a form to flag two existing people by hand, and a way to remove a pair flagged
-  in error.
+  — organized as three tabs: **People** (the searchable, filterable list — name,
+  role, ID, NFC ID, department, status — with a one-line flag under a name for
+  "Pending deactivation", "Lookalike pair" or "Single-photo enrollment · lower
+  confidence"), **Requests & pairs** (the Admin's pending-deactivation queue
+  beside the confusable pairs), and **Bulk import**. Adding or editing a person
+  happens in a **drawer** that slides in from the right, so the list stays in
+  view. Full Person CRUD; profile-photo upload via webcam capture or file;
+  **guided 5-shot enrollment** (front/left/right/neutral/smile, each live
+  quality-checked against `/api/users/check-photo-quality`, shown as five tiles
+  that turn green/red as each shot passes or fails) or a single-photo fallback
+  (flagged low-confidence); add extra photos to an existing person (up to 8 once
+  flagged confusable — §5.8); an optional `distinguishing_note` field; **bulk
+  CSV/XLSX import** with per-row error and confusable-pair-warning reporting.
+  Deactivating a record is immediate for an Admin, but for a SASO opens a
+  reason-prompted `DeactivationRequest` instead (§13) — an Admin approves or
+  rejects each one from its own card on the Requests & pairs tab, optionally
+  typing a note to the requester there before rejecting, and every record shows
+  a "Pending deactivation" flag while one's outstanding. The **Lookalike pairs**
+  list shows every flagged pair (auto-detected, with its similarity score, or
+  manually flagged), a form to flag two existing people by hand, and a way to
+  remove a pair flagged in error.
 
   **Photo uploads are restricted to JPEG, PNG and HEIC** (`.jpg`, `.jpeg`, `.png`,
   `.heic`, `.heif`). Every photo the dashboard can upload — the enrollment photo,
@@ -858,28 +889,69 @@ no finer-grained per-object permission system beyond what §13 describes.
   This is a display limitation only — the file uploads, is face-detected, and is
   re-encoded to JPEG by `normalize_to_jpeg` for storage, so the stored photo the
   dashboard renders afterwards is an ordinary JPEG.
-- **Reports** *(admin/SASO — no access for Security Officer, §13)* — range
-  selector (today/7d/30d, up to 90d via API), stat cards, entries-by-method chart
-  (Face / Face+NFC / Failed / **Occluded**, its own stacked-bar segment rather
-  than folded into Failed), confidence histogram, busiest-hours chart,
-  entries-per-day chart, and the FAR/FRR curve with its "preliminary" caveat —
-  built with Recharts.
-- **Account Management** *(admin only)* — CRUD for dashboard logins (Admin/SASO/
-  Security Officer), including each account's `assigned_gate_location` for a
-  Security Officer. Deactivating a login here sets `is_active=False`, the same
-  soft-deactivate `Person` uses, not a hard delete — an old audit entry attributed
-  to that login should keep pointing at a real, if disabled, account.
+- **Reports** *(admin/SASO — no access for Security Officer, §13)* — a
+  Today / Last 7 days / Last 30 days toggle (up to 90d via API); entries today
+  as the large number, beside failed verifications and the busiest hour; an
+  entries-by-method bar (Face / Face + card / Failed / **Face covered**, its own
+  segment rather than folded into Failed) with CSV export; and four charts —
+  busiest hours (peak hour highlighted), entries per day for the last week
+  (today highlighted), the confidence histogram, and the FAR/FRR curve with its
+  "preliminary estimate" caveat and, for an Admin, a marker at the match
+  threshold currently in effect — built with Recharts.
+- **Account Management** *(admin only)* — the list of dashboard logins (Admin/
+  SASO/Security Officer) beside an edit panel; clicking a row opens it for
+  editing (username, first/last name, password, role, and each Security
+  Officer's `assigned_gate_location`), and "New account" clears the panel for a
+  new one. Deactivating a login (from the edit panel) sets `is_active=False`,
+  the same soft-deactivate `Person` uses, not a hard delete — an old audit entry
+  attributed to that login should keep pointing at a real, if disabled, account.
 - **Audit Log** *(admin/SASO)* — Admin sees every entry system-wide; a SASO sees
   only entries they themselves are the actor on. Security Officer has no access
   at all — not even their own, since the only thing they do that's audited
   (manual overrides) already shows up distinctly in Logs, not here. See §13.
+  Filterable by actor and action; each action shows with its own icon, a
+  permanent deletion in red, and a manual override with a brass left edge.
 - **System Settings** *(admin only)* — a read-only snapshot of every match/
   liveness/occlusion/voting/confusable-pair threshold currently in effect (§5.4/
-  §5.8), read straight from `backend/.env`/`settings.py`. Explicitly not a live-
-  editable form yet — changing a value still means editing that file and
-  restarting the backend; the page says so rather than implying otherwise.
+  §5.8), read straight from `backend/.env`/`settings.py` and grouped (Face
+  matching, Voting window, Gate-scan quality, Liveness, Occlusion detection,
+  Cooldowns, Enrollment). Explicitly not a live-editable form yet — changing a
+  value still means editing that file and restarting the backend; the page says
+  so rather than implying otherwise.
 
 There is currently no notification center in the dashboard.
+
+### 8.1 Visual design system
+
+The dashboard, the gate monitor and the launcher share one design system, taken
+from the redesign mockups in `docs/Redesign UI/` (brief: `docs/design-brief.md`):
+
+- **Colors** — a fixed palette of 17 tokens: inks and neutrals (`#121416`,
+  `#4B5157`, `#8A9097`, line `#D9DCDF`, canvas `#EEF0F2`, white), EVSU maroon
+  (`#7B1113`, deep `#4A0A0C`) with a brass accent (`#C89B3C`) used only for
+  rules and active marks, and four status colors each with a tint — verified
+  green, caution amber, danger red, and prompt blue. No gradients, no
+  transparency. Status is never color alone: it always comes with an icon and a
+  word (✓ Success, ⚠ Spoof suspected, ✋ Face covered, ...).
+- **Type** — Archivo for display text, used at three widths (condensed for the
+  small caps labels, semi-expanded for titles, expanded for the big numbers);
+  Atkinson Hyperlegible Next for body text; IBM Plex Mono for data (IDs, times,
+  confidence). The EVSU wordmark is set at the same size as "SecureTap"
+  everywhere it appears.
+- **Icons** — Phosphor (regular and bold).
+- **Spacing** — an asymmetric scale of 4 / 6 / 10 / 16 / 26 / 42 / 68 / 110px,
+  corners of 3 / 8 / 14px.
+
+The dashboard loads the fonts from Google Fonts and the icons from the
+`@phosphor-icons/web` package; the tokens live in `dashboard/tailwind.config.js`
+and shared pieces (icon, page header, notice, avatar, segmented toggle) in
+`dashboard/src/components/ui.jsx`. The two Windows apps can't use a web font, and
+Tk on Windows can't select a width or weight out of a variable font, so
+`entry-agent/assets/fonts/` bundles static cuts of each width/weight the design
+uses (renamed "SecureTap …" as the SIL Open Font License asks of modified fonts;
+licenses alongside) plus the Phosphor icon font. `entry-agent/ui.py` loads them
+privately for its own process at startup — nothing is installed system-wide —
+and falls back to stock Windows fonts if a file is missing.
 
 ---
 
@@ -892,48 +964,62 @@ rather than a second screen asking the same question again. The gate monitor
 owns the Tk root, so closing it ends the process.
 
 - **Gate monitor** — a single window owning both credentials at once, so a guard
-  watches one screen rather than alt-tabbing between two. It opens maximized and
-  is laid out by how much attention each panel deserves:
-  - **Live log** (right, the widest panel) — a 4-column grid of recent events,
-    each with photo, name, timestamp and a status badge. Both credentials land
-    here: `ENTRY`/`EXIT` for a face match, `UNKNOWN`, `SPOOF`, and
-    `CARD · ENTRY`/`CARD ✗` for an NFC tap — so the log is one chronological
-    record of the gate regardless of how someone was identified.
-  - **Live monitor** (top left, takes all the left column's spare height) —
-    CCTV-style continuous monitoring, not a one-person kiosk; several faces in
-    frame are each identified independently (§2.1). Draws bounding
-    boxes/names/confidence straight from the backend's `/api/identify` response
-    (one source of truth — the entry-agent runs no local detector of its own).
-    Green box = confirmed match, amber box + audible alarm + red banner =
-    confirmed unknown person, **red box = spoof suspected** (shown as soon as
-    suspected, plus an audible alarm and banner once confirmed), **teal box =
-    face covered** (shown as soon as suspected, same as spoof, plus a banner once
-    confirmed — but no alarm sound, since covering your face isn't inherently
-    adversarial the way a spoof attempt is; §2.1 step 5), blue box = "tap card to
-    confirm" (ambiguous) or, for a confusable-pair-forced tiebreak specifically,
-    "tap card — lookalike check" (§5.8) so it doesn't read as an ordinary
-    uncertain match, gray box = "Checking…" (not yet confirmed). A matched
-    or unmatched card whose encounter briefly included a covered face gets a small
-    "face briefly covered" note on its own log card rather than losing that fact.
-    **No camera connected** shows its own panel state — "No camera connected /
-    Card taps still work — connecting a camera will resume automatically" —
-    instead of a frozen or blank feed; the entry-agent starts up fine with no
-    webcam at all (a gate can run on NFC taps and manual overrides alone), retries
-    the connection on its own timer for as long as it runs, and picks a camera up
-    automatically whether it's plugged in for the first time or was unplugged and
-    reconnected mid-session — no restart needed either way.
-  - **Card scanner** (bottom left, a compact strip) — waits for an NFC tap (the
-    reader emulates a USB keyboard; a hidden always-focused input field catches
-    the typed card ID) — a tap is the only input, there is no typed-ID fallback
-    (§2.2). Shows photo, name, role, ID, card ID and timestamp on success, or a
-    specific failure reason (not registered / deactivated / read error) on
-    rejection, then resets to "Tap a card" after 8 seconds.
-  - **Stats strip** (top) — Today / Entries / Unknown / Spoof / Occluded / In
-    frame. Driven by camera events and seeded from `/api/gate-summary`; card taps
-    show in the live log but don't move these counters.
-  - **Status bar** (bottom) — recognition threshold, **Camera ✓/✗** next to a
-    **camera-picker dropdown**, the officer name and app version on the left;
-    Backend ✓/✗, offline-queue depth and sync state on the right. The camera chip
+  watches one screen rather than alt-tabbing between two. It opens maximized.
+  Under a maroon header (seal, EVSU SecureTap wordmark, "`<gate>` — live
+  monitoring", a large clock and date, and a white ENTRY/EXIT pill) it splits
+  into two columns, 7:5:
+  - **Stats row** (top of the left column) — one large **Today** number, then
+    **Entries / Unknown / Spoof / In frame**, each behind a thin divider. Driven
+    by camera events and seeded from `/api/gate-summary`; card taps show in the
+    live log but don't move these counters. Covered faces are still counted
+    internally (for the launcher's last-session summary, §9.1) but have no
+    counter on screen.
+  - **Live monitor** (left column, takes all its spare height) — CCTV-style
+    continuous monitoring, not a one-person kiosk; several faces in frame are
+    each identified independently (§2.1). Draws bounding boxes, each with a name
+    tab, straight from the backend's `/api/identify` response (one source of
+    truth — the entry-agent runs no local detector of its own). A strip across
+    the top of the panel reads "■ LIVE · 1280×720 · 2 faces tracked"; the feed
+    fills the rest of the panel edge to edge, trimming a little off its top and
+    bottom if the panel's shape differs from the camera's (never more than 35% —
+    past that the whole picture is shown with bars instead, so nobody at the edge
+    of the camera's view can be cropped out). Green box = confirmed match (name ·
+    confidence), amber box = confirmed unknown person, **red box = spoof
+    suspected** (shown as soon as suspected), **blue "PLEASE UNCOVER YOUR FACE"
+    box = face covered** (shown as soon as suspected), blue "TAP CARD TO
+    CONFIRM" = ambiguous match or, for a confusable-pair-forced tiebreak
+    specifically, "TAP CARD · LOOKALIKE CHECK" (§5.8) so it doesn't read as an
+    ordinary uncertain match, gray "Checking…" = not yet confirmed. A newly
+    confirmed unknown person or spoof also sounds an alarm and replaces the top
+    strip with an amber UNKNOWN PERSON / red SPOOF SUSPECTED banner for 6
+    seconds; a covered face gets no banner and no alarm (§2.1 step 11). **No
+    camera connected** shows its own panel state — "No camera connected — card
+    taps still work. Connecting a camera resumes automatically." — instead of a
+    frozen or blank feed; the entry-agent starts up fine with no webcam at all (a
+    gate can run on NFC taps and manual overrides alone), retries the connection
+    on its own timer for as long as it runs, and picks a camera up automatically
+    whether it's plugged in for the first time or was unplugged and reconnected
+    mid-session — no restart needed either way.
+  - **Card scanner** (bottom of the left column, a compact strip) — waits for an
+    NFC tap (the reader emulates a USB keyboard; a hidden always-focused input
+    field catches the typed card ID) — a tap is the only input, there is no
+    typed-ID fallback (§2.2). Shows photo, name, role, ID, card ID and timestamp
+    on success, or a specific failure reason (not registered / deactivated /
+    read error) on rejection, then resets to "Tap a card" after 8 seconds.
+  - **Live log** (the whole right column, header to status bar) — the newest
+    event as a large card (a colored band with its word and time, then the
+    photo, name, ID and match %), and every earlier one below it in a list, each
+    row with photo, name, ID · time · confidence and its word. Both credentials
+    land here: `ENTRY`/`EXIT` for a face match, `UNKNOWN`, `SPOOF`, `COVERED`,
+    and `CARD · ENTRY`/`CARD REJECTED`/`QUEUED` for an NFC tap — so the log is
+    one chronological record of the gate regardless of how someone was
+    identified. Non-routine rows get a tinted background and a colored left
+    edge. An event whose encounter briefly included a covered face gets a
+    "face briefly covered" note rather than losing that fact.
+  - **Status bar** (bottom) — recognition threshold, **Camera OK / not
+    connected** next to a **camera-picker dropdown**, the officer name and app
+    version on the left; Backend OK/not OK, offline-queue depth and sync state on
+    the right. The camera chip
     and the officer/version line moved here from the entry-agent's old launcher
     screen when that screen was removed — a camera that has stopped responding is
     exactly what a guard needs to see, and a frozen feed doesn't always look
@@ -944,6 +1030,13 @@ owns the Tk root, so closing it ends the process.
     built-in webcam plus a USB camera plugged in for the gate otherwise showed
     "No camera connected" if `CAMERA_INDEX` in `.env` happened to point at the
     wrong one, with no way to fix it short of editing that file and restarting.
+  - **Sized to the screen** — the layout is designed as a 1920×1080 screen and
+    scaled to fit whatever screen it opens on (the usable area minus the
+    taskbar and title bar), so it keeps the same proportions whatever Windows'
+    display-scaling setting is — on a 1080p monitor at 125% it doesn't simply
+    grow 25% and push panels off the edge. An un-maximized, narrower window
+    shrinks toward a compact variant of the same layout, and the stats row wraps
+    to a 2×2 block rather than being cut off.
 
 **Offline resilience**: NFC tap lookups that fail due to a network error are
 queued in a local SQLite database (`offline_queue.db`) and automatically retried
@@ -997,32 +1090,51 @@ guard would otherwise only discover once already standing at the gate:
   specific* reader — Windows sees any HID-emulation NFC reader as a generic
   keyboard, with no NFC-specific identity to query in general (see §10's note on
   why the gate monitor's own live "ready" indicator can't do this). Neither check
-  blocks opening the gate monitor — a negative result shows as a one-time
-  warning dialog, not a stop sign, since a live demo or a real shift can't afford
-  to be blocked by a pre-flight check that's wrong.
+  can block opening the gate monitor on its own — a negative result shows a
+  "Before you open the gate monitor" dialog listing each warning, with **Open
+  gate monitor** (the default — it opens anyway) and **Cancel**, since a live
+  demo or a real shift can't afford to be blocked by a pre-flight check that's
+  wrong, but the guard may still want to fix the problem first.
 - **Startup notices.** If the offline queue (see "Offline resilience" above) has
   any NFC taps still waiting to sync, or a record exists of the previous gate
   monitor session (written to `last_session.json` when that window closes, with
   its final entries/exits/unknown/spoof/occlusion counts, gate, direction, and
-  when it ended), both show as a line on the launcher's main screen before
-  anything is opened at all.
+  when it ended), both show on the launcher's main screen before anything is
+  opened at all — the last session as a line, the unsynced taps as an amber
+  notice.
 - **Auto-launch.** An optional setting in the same panel opens the gate monitor
   automatically a moment after the launcher itself starts, for a kiosk-style
   deployment where nobody should need to click anything.
 
-The window is also responsive rather than fixed-size: its content is capped at a
+**Layout.** Top to bottom: a maroon header (seal, EVSU SecureTap wordmark,
+"Choose what to open"); a **services bar** showing Backend, Dashboard and Entry
+Agent each as an icon + word (Ready / Running / Starting… / Not running /
+Failed), with a note under it when there's something to add ("Using a backend
+that was already running."); the two **choice cards**, Dashboard and Entry
+Agent; the startup notices; and one card holding the collapsed **Entry Agent
+settings** (showing the current gate and direction) and **Show log** (showing
+how many lines it holds). A footer carries the version and a red-outlined
+**Quit**.
+
+The window is responsive rather than fixed-size: its content is capped at a
 comfortable reading width and centered instead of stretching edge-to-edge on a
-large monitor, the two choice cards sit side-by-side above a width breakpoint and
-stack below it, and the gate monitor's own stat-tile strip wraps to two rows
-rather than squashing six tiles into one if its window is narrower than usual.
-The current app version (the same value the gate monitor's status bar shows)
-appears in the launcher's own footer too, so both windows always agree on it.
+large monitor, the two choice cards sit side-by-side when each has room for at
+least 360px and stack below that, and the header grows when the window is
+maximized. In the services bar, a service's state sits beside its name when
+there's room and drops under it when there isn't, so the default-size window
+never squeezes one over the other. The current app version (the same value the
+gate monitor's status bar shows) appears in the launcher's footer too, so both
+windows always agree on it.
 
 **Loading animation.** Both choices take several seconds before anything visible
 happens — the entry-agent measured ~3.6–4.2s (importing `cv2`, opening the webcam
 through DirectShow, building the window), and the dev server's first start is
-comparable. The card's subtitle animates a pulse while that runs, so the wait
-reads as work rather than as a button that missed the click.
+comparable. While that runs, the card grows a status strip — "Starting the
+camera and opening the gate monitor…" over a moving progress bar — so the wait
+reads as work rather than as a button that missed the click. The strip then
+settles to a green "Gate monitor is open" / "Running at localhost:5173 — click to
+open", a red "Failed to start — open the log below to see why", or, after 45
+seconds with no signal, an amber "Still not up after 45s".
 
 It ends on a real signal, not a timer. `main.py` prints
 `SECURETAP_ENTRY_AGENT_READY` on the line immediately before handing off to its
@@ -1050,7 +1162,7 @@ Design points worth knowing:
   bad `.env`) explains itself, instead of the button just appearing to do nothing.
 - **Threading follows the same rule as the gate monitor** — output readers only
   touch plain data; every widget update happens on the Tk main thread.
-- The design system (colors, `HeaderBar`, hover animation) is imported from
+- The design system (color tokens, fonts, icons — §8.1) is imported from
   `entry-agent/ui.py` rather than duplicated, so the launcher and the gate monitor
   can't drift into looking like two different products.
 

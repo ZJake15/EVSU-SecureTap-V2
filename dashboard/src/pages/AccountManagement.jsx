@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import apiClient from "../api/client";
+import { Field, Icon, Notice, PageHeader } from "../components/ui";
 
 const emptyForm = {
   username: "",
@@ -16,6 +17,8 @@ const ROLE_LABELS = {
   security_officer: "Security Officer",
 };
 
+const COLS = "minmax(0,1.2fr) minmax(0,1.4fr) minmax(0,1.3fr) minmax(0,96px) 96px";
+
 function extractErrorMessage(err) {
   const data = err.response?.data;
   if (!data) return "Could not reach the server. Check your connection and try again.";
@@ -26,18 +29,6 @@ function extractErrorMessage(err) {
   return field ? `${field}: ${text}` : text;
 }
 
-const inputClass =
-  "w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 shadow-sm transition-colors placeholder:text-ink-400 focus:border-maroon focus:outline-none focus:ring-1 focus:ring-maroon";
-
-function Field({ label, children }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-500">{label}</span>
-      {children}
-    </label>
-  );
-}
-
 export default function AccountManagement() {
   const [accounts, setAccounts] = useState([]);
   const [form, setForm] = useState(emptyForm);
@@ -45,6 +36,8 @@ export default function AccountManagement() {
   const [formError, setFormError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const editingAccount = editingId ? accounts.find((account) => account.id === editingId) : null;
 
   const loadAccounts = () => {
     apiClient
@@ -75,6 +68,7 @@ export default function AccountManagement() {
 
   const handleEdit = (account) => {
     setEditingId(account.id);
+    setFormError("");
     setForm({
       username: account.username,
       first_name: account.first_name,
@@ -119,142 +113,165 @@ export default function AccountManagement() {
   };
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="font-display text-2xl font-semibold text-ink-900">Account Management</h1>
-        <p className="mt-1 text-sm text-ink-500">
-          Create and manage SASO and Security Officer dashboard accounts, and assign their roles.
-        </p>
-      </div>
+    <div className="flex flex-col">
+      <PageHeader eyebrow="Dashboard sign-ins" title="Accounts">
+        <button type="button" onClick={resetForm} className="btn-primary">
+          <Icon name="plus" bold size={16} />
+          New account
+        </button>
+      </PageHeader>
 
-      {loadError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
+      {loadError && (
+        <Notice tone="danger" className="mt-s4">
+          {loadError}
+        </Notice>
+      )}
 
-      <form onSubmit={handleSubmit} className="space-y-5 rounded-xl border border-ink-900/10 bg-white p-6 shadow-sm">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-s6 grid grid-cols-1 items-start gap-s6 xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <div className="min-w-[620px]">
+              <div className="table-head grid h-9 items-center gap-s3 border-b border-line px-s4" style={{ gridTemplateColumns: COLS }}>
+                <span>Username</span>
+                <span>Name</span>
+                <span>Role</span>
+                <span>Gate</span>
+                <span>Status</span>
+              </div>
+              {accounts.map((account) => {
+                const selected = account.id === editingId;
+                return (
+                  <button
+                    key={account.id}
+                    type="button"
+                    onClick={() => handleEdit(account)}
+                    title={`Edit ${account.username}`}
+                    className={`grid h-[52px] w-full items-center gap-s3 border-b border-l-[3px] border-b-line pl-[13px] pr-s4 text-left text-sm transition-colors ${
+                      selected ? "border-l-maroon bg-canvas" : "border-l-transparent hover:bg-canvas"
+                    }`}
+                    style={{ gridTemplateColumns: COLS }}
+                  >
+                    <span className="truncate font-mono font-semibold">{account.username}</span>
+                    <span className="truncate font-bold">{account.full_name || "—"}</span>
+                    <span className="truncate">{ROLE_LABELS[account.role] || account.role}</span>
+                    <span className="truncate text-ink-600">{account.assigned_gate_location || "—"}</span>
+                    {account.is_active ? (
+                      <span className="flex items-center gap-s1 font-bold text-verified">
+                        <Icon name="check-circle" bold size={14} />
+                        Active
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-s1 font-bold text-ink-600">
+                        <Icon name="minus-circle" bold size={14} />
+                        Inactive
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+              {accounts.length === 0 && <p className="px-s4 py-s5 text-sm text-ink-600">No accounts yet.</p>}
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="card flex flex-col gap-s4 p-s5">
+          <div className="flex flex-col gap-s1">
+            <span className="t-eyebrow">{editingId ? "Edit account" : "New account"}</span>
+            <span className="t-section">{editingId ? form.username : "Create a dashboard sign-in"}</span>
+          </div>
+
           <Field label="Username">
             <input
               required
               disabled={Boolean(editingId)}
               value={form.username}
               onChange={handleChange("username")}
-              className={`${inputClass} disabled:bg-parchment-100 disabled:text-ink-400`}
+              className="input font-mono"
             />
           </Field>
-          <Field label="First name">
-            <input value={form.first_name} onChange={handleChange("first_name")} className={inputClass} />
+          <div className="grid grid-cols-2 gap-s4">
+            <Field label="First name">
+              <input value={form.first_name} onChange={handleChange("first_name")} className="input" />
+            </Field>
+            <Field label="Last name">
+              <input value={form.last_name} onChange={handleChange("last_name")} className="input" />
+            </Field>
+          </div>
+          <Field label={editingId ? "New password" : "Password"}>
+            <input
+              type="password"
+              required={!editingId}
+              placeholder={editingId ? "Leave blank to keep current password" : "At least 10 characters"}
+              value={form.password}
+              onChange={handleChange("password")}
+              className="input"
+            />
           </Field>
-          <Field label="Last name">
-            <input value={form.last_name} onChange={handleChange("last_name")} className={inputClass} />
-          </Field>
-          <Field label="Role">
-            <select value={form.role} onChange={handleChange("role")} className={inputClass}>
-              <option value="admin">Admin</option>
-              <option value="saso">Security Manager (SASO)</option>
-              <option value="security_officer">Security Officer</option>
-            </select>
-          </Field>
+
+          <div className="flex flex-col gap-s2">
+            <span className="field-label">Role</span>
+            <div role="radiogroup" className="flex flex-col rounded-sm border border-line text-sm">
+              {Object.entries(ROLE_LABELS).map(([value, label], index) => (
+                <label
+                  key={value}
+                  className={`flex h-10 cursor-pointer items-center gap-s3 px-s3 ${index > 0 ? "border-t border-line" : ""} ${
+                    form.role === value ? "font-bold" : ""
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="role"
+                    value={value}
+                    checked={form.role === value}
+                    onChange={handleChange("role")}
+                    className="h-4 w-4 accent-maroon"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+
           {form.role === "security_officer" && (
-            <Field label="Assigned gate">
+            <Field label="Assigned gate" hint="Security Officers only - they see this gate's activity, today only.">
               <input
                 required
                 placeholder="Main Gate"
                 value={form.assigned_gate_location}
                 onChange={handleChange("assigned_gate_location")}
-                className={inputClass}
+                className="input"
               />
             </Field>
           )}
-          <Field label={editingId ? "New password (optional)" : "Password"}>
-            <input
-              type="password"
-              required={!editingId}
-              placeholder={editingId ? "Leave blank to keep current password" : ""}
-              value={form.password}
-              onChange={handleChange("password")}
-              className={inputClass}
-            />
-          </Field>
-        </div>
 
-        {formError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>}
+          {formError && <Notice tone="danger">{formError}</Notice>}
 
-        <div className="flex gap-2 border-t border-ink-900/10 pt-4">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="rounded-lg bg-maroon px-5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-maroon-600 disabled:opacity-50"
-          >
-            {editingId ? "Save changes" : "Create account"}
-          </button>
-          {editingId && (
-            <button
-              type="button"
-              onClick={resetForm}
-              className="rounded-lg border border-ink-200 px-5 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-parchment-100"
-            >
-              Cancel edit
+          <div className="flex flex-wrap items-center gap-s3 pt-s3">
+            <button type="submit" disabled={isSubmitting} className="btn-primary">
+              {editingId ? "Save changes" : "Create account"}
             </button>
-          )}
-        </div>
-      </form>
-
-      <div className="overflow-x-auto rounded-xl border border-ink-900/10 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-ink-900/10 text-sm">
-          <thead className="bg-parchment-100">
-            <tr>
-              {["Username", "Name", "Role", "Gate", "Status", ""].map((h) => (
-                <th
-                  key={h}
-                  className="border-b-2 border-maroon/20 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-ink-500"
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-ink-900/5">
-            {accounts.map((account) => (
-              <tr key={account.id} className="transition-colors hover:bg-parchment-50">
-                <td className="px-4 py-2.5 font-medium text-ink-900">{account.username}</td>
-                <td className="px-4 py-2.5 text-ink-700">{account.full_name || "—"}</td>
-                <td className="px-4 py-2.5 text-ink-700">{ROLE_LABELS[account.role] || account.role}</td>
-                <td className="px-4 py-2.5 text-ink-700">{account.assigned_gate_location || "—"}</td>
-                <td className="px-4 py-2.5">
-                  <span
-                    className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
-                      account.is_active
-                        ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
-                        : "border border-ink-200 bg-ink-50 text-ink-500"
-                    }`}
-                  >
-                    {account.is_active ? "Active" : "Inactive"}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <button onClick={() => handleEdit(account)} className="mr-3 text-sm font-medium text-maroon hover:underline">
-                    Edit
-                  </button>
-                  {account.is_active ? (
-                    <button onClick={() => handleDeactivate(account)} className="text-sm font-medium text-red-600 hover:underline">
-                      Deactivate
-                    </button>
-                  ) : (
-                    <button onClick={() => handleReactivate(account)} className="text-sm font-medium text-emerald-700 hover:underline">
-                      Reactivate
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {accounts.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-ink-400">
-                  No accounts yet.
-                </td>
-              </tr>
+            {editingId && (
+              <button type="button" onClick={resetForm} className="btn-ghost">
+                Cancel
+              </button>
             )}
-          </tbody>
-        </table>
+            <span className="flex-1" />
+            {editingAccount &&
+              (editingAccount.is_active ? (
+                <button type="button" onClick={() => handleDeactivate(editingAccount)} className="link-danger">
+                  Deactivate account
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleReactivate(editingAccount)}
+                  className="text-sm font-bold text-verified hover:underline"
+                >
+                  Reactivate account
+                </button>
+              ))}
+          </div>
+        </form>
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from audit.utils import log_action
+from users import occlusion_utils
 from users.confusable_utils import MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON
 from users.serializers import MAX_EMBEDDINGS_PER_PERSON
 
@@ -85,6 +86,11 @@ class SystemSettingsView(APIView):
             "face_min_mouth_visibility_ratio": settings.FACE_MIN_MOUTH_VISIBILITY_RATIO,
             "face_max_mouth_texture_ratio": settings.FACE_MAX_MOUTH_TEXTURE_RATIO,
             "face_min_det_score_unoccluded": settings.FACE_MIN_DET_SCORE_UNOCCLUDED,
+            # What's actually deciding occlusion right now - not just what's
+            # configured - so a classifier that silently fell back to the
+            # rules (missing model file) is visible here, not only in a log.
+            "occlusion_detection_mode": occlusion_utils.active_mode_description(),
+            "occlusion_classifier_threshold": settings.OCCLUSION_CLASSIFIER_THRESHOLD,
             "recognition_cooldown_seconds": settings.RECOGNITION_COOLDOWN_SECONDS,
             "unenrolled_capture_cooldown_seconds": settings.UNENROLLED_CAPTURE_COOLDOWN_SECONDS,
             "spoof_capture_cooldown_seconds": settings.SPOOF_CAPTURE_COOLDOWN_SECONDS,

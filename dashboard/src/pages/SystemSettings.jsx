@@ -46,6 +46,8 @@ const RIGHT_GROUPS = [
   {
     title: "Occlusion detection",
     keys: {
+      occlusion_detection_mode: { label: "Mode in effect" },
+      occlusion_classifier_threshold: { label: "Classifier cutoff" },
       face_min_mouth_visibility_ratio: { label: "Min mouth visibility" },
       face_max_mouth_texture_ratio: { label: "Mouth texture ratio" },
       face_min_det_score_unoccluded: { label: "Min detection score" },

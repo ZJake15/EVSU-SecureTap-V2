@@ -326,6 +326,29 @@ FACE_MAX_MOUTH_TEXTURE_RATIO = env.float("FACE_MAX_MOUTH_TEXTURE_RATIO", default
 # there's no other existing behavior this could disturb by being wrong.
 FACE_MIN_DET_SCORE_UNOCCLUDED = env.float("FACE_MIN_DET_SCORE_UNOCCLUDED", default=0.65)
 
+# Which rule decides whether a face is covered (see users/occlusion_utils.py):
+#   "rules"      - the three thresholds above, OR-ed together (the original
+#                  behavior, and the default).
+#   "classifier" - the Random Forest trained by `manage.py
+#                  train_occlusion_classifier`, fed the same three measurements.
+# Classifier mode falls back to "rules" on its own - for the whole process if
+# the model file is missing or won't load, or for a single frame if one of the
+# measurements it needs couldn't be taken - so switching it on can never stop
+# the gate scan from running. Anything other than "classifier" means "rules".
+# Read once at startup: restart the backend after changing it, and after
+# retraining (the model file is loaded once, then kept in memory).
+# Either way, a face that already matches an enrolled person is never flagged
+# as covered - see IdentifyView._already_recognizable.
+OCCLUSION_DETECTION_MODE = env("OCCLUSION_DETECTION_MODE", default="rules").strip().lower()
+OCCLUSION_CLASSIFIER_PATH = env(
+    "OCCLUSION_CLASSIFIER_PATH", default=str(BASE_DIR / "users" / "occlusion_classifier.joblib")
+)
+# The classifier's own "probably covered" cutoff, on its 0-1 probability.
+# 0.5 is exactly what the training command's evaluation measured (sklearn's
+# plain predict()). Raise it if live testing shows too many false "please
+# uncover your face" prompts; lower it if real coverings slip through.
+OCCLUSION_CLASSIFIER_THRESHOLD = env.float("OCCLUSION_CLASSIFIER_THRESHOLD", default=0.5)
+
 # The continuous camera scan re-checks the gate every couple of seconds, so a
 # person lingering nearby would otherwise create a new log row on every pass.
 # Recognitions of the same person within this window are deduped server-side.

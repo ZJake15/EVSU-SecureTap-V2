@@ -10,12 +10,11 @@ from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
 
 from users.management.commands.collect_occlusion_training_data import EXCLUDED_FROM_TRAINING
-
-# The exact three inputs the classifier sees - same three signals
-# IdentifyView._occlusion_reason already computes per frame (see
-# insightface_utils.py), in a fixed order so a saved model and a fresh
-# feature vector always line up the same way.
-FEATURE_COLUMNS = ["mouth_ratio", "texture_ratio", "det_score"]
+# The exact three inputs the classifier sees, in a fixed order - imported from
+# the live check (users/occlusion_utils.py) rather than kept as a separate
+# copy here, so a model trained by this command and the gate scan that uses it
+# can never disagree about which number is which.
+from users.occlusion_utils import FEATURE_COLUMNS
 
 # Below this many usable rows (after filtering), a train/test split is too
 # small to mean anything - not a hard ML law, just a sanity floor so a
@@ -25,7 +24,9 @@ MIN_TOTAL_SAMPLES = 20
 MIN_PER_CLASS = 8
 
 DEFAULT_MANIFEST = os.path.join(settings.BASE_DIR, "occlusion_training_data", "manifest.csv")
-DEFAULT_MODEL_OUTPUT = os.path.join(settings.BASE_DIR, "users", "occlusion_classifier.joblib")
+# Same file the live gate scan loads in classifier mode, so retraining with no
+# --output flag updates exactly what the backend will use after a restart.
+DEFAULT_MODEL_OUTPUT = settings.OCCLUSION_CLASSIFIER_PATH
 
 
 class Command(BaseCommand):
@@ -36,9 +37,9 @@ class Command(BaseCommand):
         "collect_occlusion_training_data for how manifest.csv is built. Prints a held-out "
         "evaluation (precision/recall/confusion matrix) for the trained classifier AND for "
         "the current rule-based OR-of-three-thresholds logic on the exact same test rows, so "
-        "the two can be honestly compared before anything changes in the live pipeline. Saves "
-        "the trained model to disk either way - saving is NOT the same as using it live; "
-        "wiring a saved model into IdentifyView is a deliberate, separate step, not automatic."
+        "the two can be honestly compared. Saves the trained model to disk either way. The "
+        "live gate scan only uses it when OCCLUSION_DETECTION_MODE=classifier is set in "
+        "backend/.env (and the backend has been restarted since) - see users/occlusion_utils.py."
     )
 
     def add_arguments(self, parser):
@@ -87,12 +88,16 @@ class Command(BaseCommand):
 
         joblib.dump(classifier, options["output"])
         self.stdout.write(self.style.SUCCESS(f"\nModel saved to {options['output']}"))
-        self.stdout.write(
-            "This is a saved file only - nothing in the live gate scan uses it yet. Wiring it "
-            "into IdentifyView (behind a setting, compared against the rule-based logic on real "
-            "production data) is a separate step, done deliberately, not automatically by this "
-            "command."
-        )
+        if settings.OCCLUSION_DETECTION_MODE == "classifier":
+            self.stdout.write(
+                "The live gate scan is set to classifier mode. Restart the backend so it loads this "
+                "new model - it keeps whichever model it loaded at startup until then."
+            )
+        else:
+            self.stdout.write(
+                "The live gate scan is still using the rule-based thresholds. To use this model "
+                "instead, set OCCLUSION_DETECTION_MODE=classifier in backend/.env and restart the backend."
+            )
 
     # ---- loading + building the training set --------------------------------
 

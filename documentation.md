@@ -181,6 +181,30 @@ currently in frame.
    a missed occlusion just falls through to normal matching/Unknown handling,
    same as before any of this existed.
 
+   **Trained classifier mode.** With `OCCLUSION_DETECTION_MODE=classifier` in
+   `backend/.env`, the same three measurements go to a Random Forest trained on
+   labeled clean/covered photos (`manage.py train_occlusion_classifier`, §10)
+   instead of the three separate cutoffs — it weighs them together, and a face
+   counts as covered when its "probably covered" probability reaches
+   `OCCLUSION_CLASSIFIER_THRESHOLD`. It falls back to the three rules by itself
+   if the model file is missing or won't load (for the whole process) or if a
+   measurement couldn't be taken (for that frame), so switching it on can never
+   stop the gate scan; the dashboard's Settings page shows which rule is actually
+   in effect. See `users/occlusion_utils.py`.
+
+   **A face the system already recognizes is never flagged as covered**, in
+   either mode. Before the covered-face check runs, the face's embedding is
+   compared against every enrolled person (`IdentifyView._already_recognizable`);
+   if it already clears the normal match threshold, the covered-face check is
+   skipped and the face goes on to liveness and the normal match vote. A
+   genuinely covered face can't produce a confident match, so this only removes
+   false alarms — and false alarms were the real problem in testing: the
+   covered-face signals read a small or soft face (someone standing farther from
+   the camera) much like a covered one, so an enrolled person with nothing on
+   their face could be told to uncover it and never be recognized. It's a
+   similarity check only, not a decision — the face still has to pass liveness,
+   win the multi-frame vote, and go to a card tap if the match is borderline.
+
    A confirmed occlusion is deduped by **time alone** (`OCCLUSION_CAPTURE_
    COOLDOWN_SECONDS`), not by embedding similarity like an unmatched face or spoof
    attempt are - comparing embeddings would lean on the exact thing this feature
@@ -459,6 +483,8 @@ their single best-scoring embedding.
 | `FACE_MIN_MOUTH_VISIBILITY_RATIO` | `0.73` | First of two occlusion signals (either firing routes to `occlusion_detected` instead of Unknown/spoof) — mouth width over inter-eye distance, from the same 5 keypoints yaw uses. Alone, badly under-detects partial coverage (a hand over just the mouth/chin) — see the next row. See §2.1 step 5. |
 | `FACE_MAX_MOUTH_TEXTURE_RATIO` | `0.40` | Second occlusion signal, added after real-world testing showed the one above missed too much: Laplacian-variance texture of the lower face vs. the upper face — a real mouth is texture-rich, a covering hand/cloth is comparatively smooth. Doesn't trust regressed keypoint positions, only the (more robust) bounding box. See §2.1 step 5. |
 | `FACE_MIN_DET_SCORE_UNOCCLUDED` | `0.65` | Third occlusion signal: the detector's own per-face detection confidence (not a match score) — fails independently of the two ratios above, since a covered face can still regress a plausible-looking keypoint arrangement. See §2.1 step 5. |
+| `OCCLUSION_DETECTION_MODE` | `rules` | Which rule decides "is this face covered": `rules` (the three thresholds above, any one tripping) or `classifier` (the trained Random Forest, same three measurements, falling back to the rules if the model can't be loaded). Either way a face that already matches an enrolled person is never flagged. Restart the backend after changing it or retraining. See §2.1 step 5. |
+| `OCCLUSION_CLASSIFIER_THRESHOLD` | `0.5` | Classifier mode only: the "probably covered" probability at or above which a face counts as covered. Raise it for fewer false "please uncover your face" prompts, lower it to catch more real coverings. |
 | `OCCLUSION_CAPTURE_COOLDOWN_SECONDS` | `30` | Same "same situation still there" dedup as `SPOOF_CAPTURE_COOLDOWN_SECONDS`, for a confirmed `occlusion_detected` row — time-based only, since an occluded frame's embedding is exactly what this feature doesn't trust for a same-face comparison. |
 | `GATE_SCAN_DET_SIZE` | `480` | Detector input resolution for the continuous scan (speed/range tradeoff). |
 | `LIVENESS_SCORE_THRESHOLD` | `0.5` | Minimum combined liveness score (§5.5) to be treated as a real, live face. |
@@ -1221,8 +1247,8 @@ knowing before extending the system:
   failure mode: it just falls through to normal matching) and retuning against
   real occlusion data once any exists. None of the three attempts to detect
   occlusion of the *eyes* specifically (sunglasses) — only the mouth/nose region
-  and overall face-likeness. **A trained classifier is the flagged upgrade path,
-  and tooling for it now exists but isn't wired into live matching yet:**
+  and overall face-likeness. **A trained classifier is the upgrade path, and is
+  now usable live behind `OCCLUSION_DETECTION_MODE=classifier` (§2.1 step 5):**
   `manage.py collect_occlusion_training_data` captures labeled clean/degraded
   photo sets (straight-on, angled, and smiling for "clean"; hand over
   mouth/nose/eyes for "degraded") either live from a webcam or by harvesting
@@ -1235,8 +1261,17 @@ knowing before extending the system:
   the three current signals can detect eye coverage at all, so including them
   would just teach the classifier to guess. The command prints a side-by-side
   comparison against the current three-threshold rule on the same held-out
-  photos and saves the trained model to a file — evaluation only, for now;
-  nothing in the live gate scan reads that saved file yet.
+  photos and saves the trained model to `backend/users/occlusion_classifier.joblib`,
+  the file classifier mode loads. On the current training set (124 clean, 186
+  covered photos) the model flags 19 of the 124 clean photos as covered and
+  catches 153 of the 186 covered ones — measured on its own training data, so
+  the real-world rate is likely worse, especially for faces far from the camera.
+  The `_already_recognizable` skip (§2.1 step 5) removes those false alarms for
+  anyone enrolled; they can still reach an **unenrolled** person with an
+  uncovered face, who may be shown "please uncover your face" (and logged as
+  face covered) instead of being flagged Unknown. The fix for that is more and
+  better training data — more clean photos taken at the real gate camera and
+  distance, until clean and covered are roughly balanced — then retraining.
 - The FAR/FRR evaluation (§5.7) covers identity matching only — there is no
   equivalent held-out accuracy benchmark for the liveness threshold yet.
 - Face matching is a brute-force vectorized NumPy scan — fine at hundreds of

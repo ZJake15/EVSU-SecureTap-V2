@@ -19,7 +19,7 @@ from accounts.permissions import (
 )
 from audit.utils import log_action
 from securetap_project.media_auth import build_signed_media_url
-from users import insightface_utils, liveness_utils
+from users import insightface_utils, liveness_utils, occlusion_utils
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
@@ -494,7 +494,12 @@ class IdentifyView(APIView):
             # doesn't return a plain non-logged skip - it's routed to its own
             # vote-then-confirm path so a real occlusion event still ends up
             # logged, just correctly labeled instead of as "Unknown".
-            if self._occlusion_reason(mouth_ratio, texture_ratio, det_score):
+            #
+            # Skipped outright for a face that already matches an enrolled
+            # person - see _already_recognizable.
+            if not self._already_recognizable(embedding, known_matrix) and self._occlusion_reason(
+                mouth_ratio, texture_ratio, det_score
+            ):
                 results.append(
                     self._confirm_or_vote_occlusion(bgr_image, box, direction, gate_location, request)
                 )
@@ -628,11 +633,38 @@ class IdentifyView(APIView):
         keypoints/box, or the frame never got this far because it already
         failed an earlier check) just drops that signal - never flag on a
         measurement that never happened. det_score always exists once a face
-        is detected at all, so it has no None case."""
-        mouth_flagged = mouth_ratio is not None and mouth_ratio < settings.FACE_MIN_MOUTH_VISIBILITY_RATIO
-        texture_flagged = texture_ratio is not None and texture_ratio < settings.FACE_MAX_MOUTH_TEXTURE_RATIO
-        det_score_flagged = det_score < settings.FACE_MIN_DET_SCORE_UNOCCLUDED
-        return mouth_flagged or texture_flagged or det_score_flagged
+        is detected at all, so it has no None case.
+
+        The three signals above describe the default "rules" mode. With
+        OCCLUSION_DETECTION_MODE=classifier, the same three measurements go
+        to the trained Random Forest instead, which weighs them together
+        rather than checking each against its own cutoff - see
+        users/occlusion_utils.py, including when it falls back to the rules
+        on its own."""
+        return occlusion_utils.is_occluded(mouth_ratio, texture_ratio, det_score)
+
+    @staticmethod
+    def _already_recognizable(embedding, known_matrix):
+        """True if this face already matches some enrolled person at the
+        normal match threshold - in which case it's never flagged as covered.
+
+        The covered-face check exists so a person can be recognized; a face
+        that already is recognizable doesn't need to uncover anything, and a
+        genuinely covered face can't produce a confident match in the first
+        place. This matters because the check misfires on uncovered faces:
+        measured on labeled photos, it flags a large share of UNCOVERED faces
+        as covered when the face is small or soft in the frame (far from the
+        camera), and a flagged frame is never matched - so without this, an
+        enrolled person could be told to uncover a face that isn't covered,
+        and never be recognized.
+
+        Only a similarity check (a single matrix product against the same
+        known_matrix _match_one_face uses) - no voting, no logging. A face
+        that clears it still goes through liveness and the normal match vote
+        afterwards, including the near-threshold tiebreak (card tap), so a
+        weak match here can't wave anyone through on its own."""
+        query = np.array(embedding, dtype=np.float32)
+        return float((known_matrix @ query).max()) >= settings.FACE_MATCH_SIMILARITY_THRESHOLD
 
     def _match_one_face(
         self, embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image, liveness_score,

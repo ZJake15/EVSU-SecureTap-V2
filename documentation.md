@@ -183,7 +183,7 @@ currently in frame.
 
    **Trained classifier mode.** With `OCCLUSION_DETECTION_MODE=classifier` in
    `backend/.env`, the same three measurements go to a Random Forest trained on
-   labeled clean/covered photos (`manage.py train_occlusion_classifier`, §10)
+   labeled clean/covered photos (`manage.py train_occlusion_classifier`, §5.9)
    instead of the three separate cutoffs — it weighs them together, and a face
    counts as covered when its "probably covered" probability reaches
    `OCCLUSION_CLASSIFIER_THRESHOLD`. It falls back to the three rules by itself
@@ -399,18 +399,22 @@ No Node.js backend, no separate microservices, no message queue/Celery, no
 WebSocket server — the dashboard and entry-agent both use plain HTTP polling
 against the same Django REST API.
 
-> **Offline tooling, not part of the live pipeline:** `scikit-learn` and
-> `joblib` are also installed on the backend, used only by the occlusion-
-> classifier data-collection/training management commands described in §10 —
-> not loaded or imported anywhere the running gate scan touches.
+> **Covered-face classifier:** `scikit-learn` and `joblib` are also installed
+> on the backend. The occlusion-classifier data-collection/training commands
+> (§10) use them to build the model, and the live gate scan loads that model
+> with `joblib` when `OCCLUSION_DETECTION_MODE=classifier` is set (§5.9). In
+> the default `rules` mode the live scan doesn't touch them.
 
 ---
 
 ## 5. Does it use machine learning?
 
-**Yes — two separate models, both for the camera scanner, and nowhere else in the
-system.** User management, reporting, and authentication are conventional
-CRUD/business logic with no ML involved.
+**Yes — two pretrained models, plus one small model trained on this project's own
+photos, all three for the camera scanner and nowhere else in the system:**
+identity (§5.1), liveness/anti-spoofing (§5.5), and the covered-face classifier
+(§5.9, used when `OCCLUSION_DETECTION_MODE=classifier`). User management,
+reporting, and authentication are conventional CRUD/business logic with no ML
+involved.
 
 ### 5.1 Model 1 — identity: InsightFace / ArcFace (`buffalo_s`)
 
@@ -483,7 +487,7 @@ their single best-scoring embedding.
 | `FACE_MIN_MOUTH_VISIBILITY_RATIO` | `0.73` | First of two occlusion signals (either firing routes to `occlusion_detected` instead of Unknown/spoof) — mouth width over inter-eye distance, from the same 5 keypoints yaw uses. Alone, badly under-detects partial coverage (a hand over just the mouth/chin) — see the next row. See §2.1 step 5. |
 | `FACE_MAX_MOUTH_TEXTURE_RATIO` | `0.40` | Second occlusion signal, added after real-world testing showed the one above missed too much: Laplacian-variance texture of the lower face vs. the upper face — a real mouth is texture-rich, a covering hand/cloth is comparatively smooth. Doesn't trust regressed keypoint positions, only the (more robust) bounding box. See §2.1 step 5. |
 | `FACE_MIN_DET_SCORE_UNOCCLUDED` | `0.65` | Third occlusion signal: the detector's own per-face detection confidence (not a match score) — fails independently of the two ratios above, since a covered face can still regress a plausible-looking keypoint arrangement. See §2.1 step 5. |
-| `OCCLUSION_DETECTION_MODE` | `rules` | Which rule decides "is this face covered": `rules` (the three thresholds above, any one tripping) or `classifier` (the trained Random Forest, same three measurements, falling back to the rules if the model can't be loaded). Either way a face that already matches an enrolled person is never flagged. Restart the backend after changing it or retraining. See §2.1 step 5. |
+| `OCCLUSION_DETECTION_MODE` | `rules` | Which rule decides "is this face covered": `rules` (the three thresholds above, any one tripping) or `classifier` (the trained Random Forest, same three measurements, falling back to the rules if the model can't be loaded). Either way a face that already matches an enrolled person is never flagged. The backend's dev server restarts itself when `backend/.env` or the model file changes, so a change or a retrain takes effect within a few seconds. See §2.1 step 5 and §5.9. |
 | `OCCLUSION_CLASSIFIER_THRESHOLD` | `0.5` | Classifier mode only: the "probably covered" probability at or above which a face counts as covered. Raise it for fewer false "please uncover your face" prompts, lower it to catch more real coverings. |
 | `OCCLUSION_CAPTURE_COOLDOWN_SECONDS` | `30` | Same "same situation still there" dedup as `SPOOF_CAPTURE_COOLDOWN_SECONDS`, for a confirmed `occlusion_detected` row — time-based only, since an occluded frame's embedding is exactly what this feature doesn't trust for a same-face comparison. |
 | `GATE_SCAN_DET_SIZE` | `480` | Detector input resolution for the continuous scan (speed/range tradeoff). |
@@ -669,6 +673,43 @@ that actually tells the two people apart, so the system reaches a *person* inste
 |---|---|---|
 | `CONFUSABLE_SIMILARITY_THRESHOLD` | `0.60` | Cross-person similarity above this flags both people as a confusable pair. Separate from, and higher than, `FACE_MATCH_SIMILARITY_THRESHOLD` — a starting point, not a validated value, same caveat as every other threshold on this page. |
 | `MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON` | `8` | Enrollment-photo ceiling once a person has an active confusable-pair flag (standard cap is 5) — confusable pairs should be rare, so the extra per-frame comparison cost stays negligible. |
+
+### 5.9 Model 3 — covered-face classifier (Random Forest)
+
+- **What it decides:** whether a detected face is covered (a hand, mask or cloth
+  over the mouth/nose), so the person is asked to uncover rather than being
+  matched on a distorted face or voted "Unknown" (§2.1 step 5).
+- **Model:** a scikit-learn `RandomForestClassifier` — trained on this project's
+  own labeled photos, not a downloaded pretrained model. It doesn't look at the
+  image directly: its input is the same three measurements the original rules
+  use — mouth-visibility ratio, lower-face texture ratio, and the detector's
+  confidence — and it outputs a 0-1 "probably covered" probability. A face counts
+  as covered at or above `OCCLUSION_CLASSIFIER_THRESHOLD` (default `0.5`).
+- **Training data:** `manage.py collect_occlusion_training_data` captures labeled
+  photos — "clean" (straight-on, slight left/right, slight smile) and "degraded"
+  (hand over mouth, nose, mouth and nose, or an eye). `manage.py
+  train_occlusion_classifier` trains on them (eye-covering photos excluded,
+  since none of the three measurements can see the eyes), prints a held-out
+  evaluation next to the original rules on the same photos, and saves the model
+  to `backend/users/occlusion_classifier.joblib`. The model file isn't committed
+  to the repo — each installation trains its own.
+- **Current accuracy** (124 clean / 186 covered photos, measured on the training
+  photos themselves, so real-world numbers are likely lower): catches about 86%
+  of hand-over-mouth, 89% of hand-over-mouth-and-nose and 90% of hand-over-nose
+  photos, versus about 30% for the original rules; flags 19 of the 124 clean
+  photos (15%) as covered. See §10 for what those false alarms mean in practice.
+- **Switching it on:** `OCCLUSION_DETECTION_MODE=classifier` in `backend/.env`.
+  The model is loaded once per backend process; if the file is missing or
+  unreadable it logs a warning and uses the original rules instead, so it can
+  never stop the gate scan. The dashboard's Settings page shows which rule is
+  actually in effect.
+- **Always paired with the recognition check:** in either mode, a face that
+  already matches an enrolled person is never flagged as covered
+  (`_already_recognizable`, §2.1 step 5) — this is what keeps the classifier's
+  false alarms away from enrolled people.
+- **Reloading:** the backend's dev server restarts itself when `backend/.env` or
+  the model file changes, so switching modes or retraining takes effect within a
+  few seconds, without restarting anything by hand.
 
 ---
 
@@ -941,9 +982,13 @@ the page's main action beside it. See §8.1 for the visual design system.
   liveness/occlusion/voting/confusable-pair threshold currently in effect (§5.4/
   §5.8), read straight from `backend/.env`/`settings.py` and grouped (Face
   matching, Voting window, Gate-scan quality, Liveness, Occlusion detection,
-  Cooldowns, Enrollment). Explicitly not a live-editable form yet — changing a
-  value still means editing that file and restarting the backend; the page says
-  so rather than implying otherwise.
+  Cooldowns, Enrollment). The Occlusion detection group also shows the **mode
+  actually in effect** (`classifier`, `rules`, or `rules` with the reason the
+  classifier isn't being used, e.g. a missing model file) and the classifier's
+  cutoff (§5.9). Explicitly not a live-editable form yet — changing a value
+  still means editing `backend/.env`; the backend's dev server restarts itself
+  when that file changes, so no manual restart is needed. The page says it's
+  read-only rather than implying otherwise.
 
 There is currently no notification center in the dashboard.
 

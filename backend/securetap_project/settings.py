@@ -335,8 +335,10 @@ FACE_MIN_DET_SCORE_UNOCCLUDED = env.float("FACE_MIN_DET_SCORE_UNOCCLUDED", defau
 # the model file is missing or won't load, or for a single frame if one of the
 # measurements it needs couldn't be taken - so switching it on can never stop
 # the gate scan from running. Anything other than "classifier" means "rules".
-# Read once at startup: restart the backend after changing it, and after
-# retraining (the model file is loaded once, then kept in memory).
+# Read once at startup (the model file is loaded once, then kept in memory).
+# Under `manage.py runserver` - which is how the launcher runs the backend -
+# the server restarts itself when backend/.env or the model file changes (see
+# users/apps.py); any other server needs a manual restart.
 # Either way, a face that already matches an enrolled person is never flagged
 # as covered - see IdentifyView._already_recognizable.
 OCCLUSION_DETECTION_MODE = env("OCCLUSION_DETECTION_MODE", default="rules").strip().lower()

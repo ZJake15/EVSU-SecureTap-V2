@@ -421,13 +421,10 @@ class IdentifyView(APIView):
 
     A face whose mouth/nose read as covered (three independent signals - see
     _occlusion_reason) is intercepted the same place, right after the
-    yaw/blur checks - but unlike those, it isn't a silent
-    skip: it gets its own vote-then-confirm path (_confirm_or_vote_occlusion)
-    into a distinct EntryLog(status=OCCLUSION_DETECTED), the same grace-period
-    treatment a match or spoof suspicion gets, so it's never matched (ArcFace
-    was never given a fair look at the face), and never silently folded into
-    "Unknown" either - occlusion is a specific, logged event in its own
-    right, not noise.
+    yaw/blur checks - and like those, it's never logged: it just gets a
+    "please uncover your face" prompt (_occlusion_prompt) instead of the
+    generic "still checking", so it's never matched (ArcFace was never given
+    a fair look at the face) and never folded into "Unknown" either.
 
     Matching is one vectorized cosine-similarity computation over every
     enrolled embedding - fast (numpy/BLAS) for hundreds of embeddings, but
@@ -490,19 +487,16 @@ class IdentifyView(APIView):
             # Checked before liveness and before matching, same position as
             # the skip checks above - an occluded face is never given a fair
             # ArcFace comparison (it would just produce a distorted, unusable
-            # embedding) or a fair liveness read. Unlike those checks, this
-            # doesn't return a plain non-logged skip - it's routed to its own
-            # vote-then-confirm path so a real occlusion event still ends up
-            # logged, just correctly labeled instead of as "Unknown".
+            # embedding) or a fair liveness read. Like those checks it's never
+            # logged, but it carries its own "please uncover your face" prompt
+            # instead of a generic "Checking..." - see _occlusion_prompt.
             #
             # Skipped outright for a face that already matches an enrolled
             # person - see _already_recognizable.
             if not self._already_recognizable(embedding, known_matrix) and self._occlusion_reason(
                 mouth_ratio, texture_ratio, det_score
             ):
-                results.append(
-                    self._confirm_or_vote_occlusion(bgr_image, box, direction, gate_location, request)
-                )
+                results.append(self._occlusion_prompt(box, gate_location))
                 continue
             # Liveness (anti-spoofing) runs after quality checks but before
             # this face is ever compared against enrolled embeddings - a
@@ -628,8 +622,8 @@ class IdentifyView(APIView):
 
         A plain bool, not a skip-style payload, because unlike
         _skip_reason's checks this doesn't fall through silently - a True
-        here routes to _confirm_or_vote_occlusion instead, which decides the
-        actual response. Any signal being unusable (ratios None from missing
+        here routes to _occlusion_prompt instead, which builds the actual
+        response. Any signal being unusable (ratios None from missing
         keypoints/box, or the frame never got this far because it already
         failed an earlier check) just drops that signal - never flag on a
         measurement that never happened. det_score always exists once a face
@@ -893,7 +887,7 @@ class IdentifyView(APIView):
         because a hand shifts slightly frame to frame. Before this check,
         those two outcomes voted in two fully independent, unrelated
         buckets (UnmatchedAttempt here, OcclusionAttempt over in
-        _confirm_or_vote_occlusion) - both accumulating from the SAME
+        _occlusion_prompt) - both accumulating from the SAME
         physical event, racing each other, and "Unknown" won the race just
         as often as occlusion did. The result, seen directly in real
         EntryLog rows: occlusion_detected and failed/Unknown alternating
@@ -906,9 +900,9 @@ class IdentifyView(APIView):
         in the Unknown vote at all - it's far more likely a continuation of
         that same event than a newly-arrived, genuinely unenrolled
         stranger. Not counting it (rather than, say, loosening the
-        occlusion thresholds further) means occlusion gets the room to
-        actually confirm instead of "Unknown" winning on a technicality,
-        without touching the carefully-calibrated per-frame thresholds
+        occlusion thresholds further) keeps the person on the "please
+        uncover your face" prompt instead of "Unknown" winning on a
+        technicality, without touching the carefully-calibrated per-frame thresholds
         themselves. The tradeoff is bounded and deliberate: a genuine
         stranger who happens to walk up within VOTE_WINDOW_SECONDS of
         someone else's occlusion attempt has their own "Unknown"
@@ -1051,8 +1045,8 @@ class IdentifyView(APIView):
     @staticmethod
     def _recent_occlusion_seen(gate_location):
         """Whether an occluded frame was seen at this gate recently enough
-        to still count as "the same encounter" - used two ways: to decide
-        occlusion vote agreement in _confirm_or_vote_occlusion, and to decide
+        to still count as "the same encounter" - used two ways: to hold back
+        an "Unknown" vote in between covered frames, and to decide
         whether a face match or non-match that follows should carry the
         occlusion_detected note (see EntryLog.occlusion_detected). Reuses
         VOTE_WINDOW_SECONDS rather than inventing a separate "recent"
@@ -1063,118 +1057,37 @@ class IdentifyView(APIView):
             gate_location=gate_location, timestamp__gte=window_cutoff
         ).exists()
 
-    def _confirm_or_vote_occlusion(self, bgr_image, box, direction, gate_location, request):
-        """An occluded frame is never confirmed from a single read either -
-        same grace-period reasoning as a face match, an unmatched face, and a
-        suspected spoof (see class docstring): a single anomalous frame (an
-        odd angle, a genuinely narrow mouth) shouldn't be enough to log
-        someone as having covered their face. Recent OcclusionAttempt rows
-        for this gate are just counted directly (no embedding-similarity
-        grouping - see OcclusionAttempt's docstring for why), reusing the
-        same VOTE_REQUIRED_AGREEMENT/VOTE_WINDOW_SIZE/VOTE_WINDOW_SECONDS
-        settings a match/non-match/spoof already votes with."""
+    def _occlusion_prompt(self, box, gate_location):
+        """A covered face is never logged - no EntryLog row, no captured
+        photo - it only gets the on-screen "Please uncover your face" prompt
+        until the person uncovers and is matched (or not) normally. Covering
+        your face isn't inherently adversarial (a scarf, a cough, a phone
+        call), so it isn't treated as an event worth a log entry.
+
+        An OcclusionAttempt is still recorded: _recent_occlusion_seen reads
+        these to hold back an "Unknown" that flickers in between covered
+        frames, and to note occlusion_detected on the entry that follows
+        (see EntryLog.occlusion_detected). They're working state for that,
+        not a log - the dashboard never shows them."""
         OcclusionAttempt.objects.create(gate_location=gate_location)
-
-        # Every row here already "is" an occlusion occurrence (there's no
-        # per-attempt identity to disagree about, unlike RecognitionAttempt),
-        # so agreement is just how many of the last VOTE_WINDOW_SIZE attempts
-        # at this gate landed inside VOTE_WINDOW_SECONDS - same bounded
-        # recent-attempts shape _confirm_or_vote/_confirm_or_vote_unmatched/
-        # _confirm_or_vote_spoof all use, just without a grouping step.
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
-        recent_attempts = list(
-            OcclusionAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
-            .order_by("-timestamp")[: settings.VOTE_WINDOW_SIZE]
-        )
-        agreement = len(recent_attempts)
-
-        if agreement < settings.VOTE_REQUIRED_AGREEMENT:
-            # Shown immediately, not held back until confirmed - unlike an
-            # unmatched face (which stays neutral "Checking..." so a real
-            # person can't be flagged Unknown off one bad frame), telling
-            # someone to uncover their face is a low-stakes thing to say even
-            # if this frame's read turns out wrong, so the entry-agent can
-            # show the prompt right away. retry=True still keeps it out of
-            # the log/stats until the vote actually confirms it.
-            return {
-                "success": False,
-                "retry": True,
-                # occlusion_suspected: this frame's own outcome is occlusion -
-                # same role spoof_suspected plays for a suspected spoof, and
-                # what the entry-agent checks to show its own box label/status
-                # (distinct from occlusion_detected, which any outcome can
-                # carry as a note - see EntryLog.occlusion_detected).
-                "occlusion_suspected": True,
-                "occlusion_detected": True,
-                "reason": "Face partially covered - please uncover your mouth/nose and rescan.",
-                "hint": "Please uncover your face",
-                "log_id": None,
-                "box": _box_to_dict(box),
-            }
-
-        return self._handle_occlusion(bgr_image, box, direction, gate_location, request)
-
-    def _handle_occlusion(self, bgr_image, box, direction, gate_location, request):
-        """Only reached once _confirm_or_vote_occlusion has enough recent
-        agreement to trust this as a real, ongoing occlusion, not a one-off
-        misread. Deduped by time alone (see OCCLUSION_CAPTURE_COOLDOWN_
-        SECONDS's comment) rather than by embedding similarity the way
-        _handle_unmatched_face/_handle_spoof_face dedupe - an occluded
-        frame's embedding is exactly what this feature doesn't trust, so it
-        isn't asked to do double duty as a same-person check too."""
-        reason = "Face partially covered - please uncover your mouth/nose and rescan."
-        cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=settings.OCCLUSION_CAPTURE_COOLDOWN_SECONDS)
-        recent_log = (
-            EntryLog.objects.filter(
-                gate_location=gate_location,
-                status=EntryLog.Status.OCCLUSION_DETECTED,
-                timestamp__gte=cooldown_cutoff,
-            )
-            .order_by("-timestamp")
-            .first()
-        )
-        if recent_log:
-            payload = {
-                "success": False,
-                "retry": False,
-                "occlusion_suspected": True,
-                "occlusion_detected": True,
-                "reason": reason,
-                "person_name": None,
-                "log_id": recent_log.id,
-                "deduped": True,
-                "box": _box_to_dict(box),
-            }
-            if recent_log.captured_photo:
-                payload["captured_photo"] = build_signed_media_url(request, recent_log.captured_photo.url)
-            return payload
-
-        captured_photo_bytes = insightface_utils.crop_face(bgr_image, box)
-        log = EntryLog(
-            person=None,
-            direction=direction,
-            verification_method=EntryLog.VerificationMethod.FACE_ONLY,
-            status=EntryLog.Status.OCCLUSION_DETECTED,
-            gate_location=gate_location,
-            failure_reason=reason,
-            occlusion_detected=True,
-        )
-        log.captured_photo.save("occlusion_capture.jpg", ContentFile(captured_photo_bytes), save=False)
-        log.save()
-
-        payload = {
+        return {
             "success": False,
-            "retry": False,
+            # retry: not a decided outcome, so the entry-agent shows the
+            # prompt on the face's box but never adds it to its live log or
+            # stats (those only take results carrying a log_id).
+            "retry": True,
+            # occlusion_suspected: this frame's own outcome is occlusion -
+            # same role spoof_suspected plays for a suspected spoof, and
+            # what the entry-agent checks to show its own box label/status
+            # (distinct from occlusion_detected, which any outcome can
+            # carry as a note - see EntryLog.occlusion_detected).
             "occlusion_suspected": True,
             "occlusion_detected": True,
-            "reason": reason,
-            "person_name": None,
-            "log_id": log.id,
+            "reason": "Face partially covered - please uncover your mouth/nose and rescan.",
+            "hint": "Please uncover your face",
+            "log_id": None,
             "box": _box_to_dict(box),
         }
-        if log.captured_photo:
-            payload["captured_photo"] = build_signed_media_url(request, log.captured_photo.url)
-        return payload
 
     def _confirm_or_vote_spoof(self, embedding, bgr_image, box, direction, gate_location, request, liveness_score):
         """A failed liveness check is never logged as spoof_suspected from a

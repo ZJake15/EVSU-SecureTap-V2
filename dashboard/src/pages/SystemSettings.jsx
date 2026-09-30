@@ -59,7 +59,6 @@ const RIGHT_GROUPS = [
       recognition_cooldown_seconds: { label: "Recognition", unit: "s" },
       unenrolled_capture_cooldown_seconds: { label: "Unenrolled capture", unit: "s" },
       spoof_capture_cooldown_seconds: { label: "Spoof capture", unit: "s" },
-      occlusion_capture_cooldown_seconds: { label: "Covered-face capture", unit: "s" },
     },
   },
   {

@@ -164,24 +164,19 @@ class PendingTiebreak(models.Model):
 
 
 class OcclusionAttempt(models.Model):
-    """The occlusion counterpart to UnmatchedAttempt/SpoofAttempt: one frame
-    from the continuous scan whose mouth/nose read as covered, tallied here
-    before it's trusted enough to confirm a real EntryLog(status=
-    OCCLUSION_DETECTED) row - so one anomalous frame (a narrow-mouthed
-    person, a bad angle) can't misclassify someone on its own; see
-    IdentifyView._confirm_or_vote_occlusion.
+    """One frame from the continuous scan whose mouth/nose read as covered
+    (see IdentifyView._occlusion_prompt). A covered face is never logged as
+    an EntryLog row - these only answer "was a covered face seen at this gate
+    in the last few seconds" (IdentifyView._recent_occlusion_seen), which
+    holds back an "Unknown" flickering in between covered frames and notes
+    occlusion_detected on the entry that follows.
 
-    Deliberately simpler than the other two: no embedding stored. Unmatched/
-    SpoofAttempt group recent rows by embedding similarity ("probably the
-    same face across frames") before counting agreement - but an occluded
-    frame's embedding is exactly the thing insightface_utils.
-    mouth_visibility_ratio's docstring says not to trust, so leaning on it
-    for even a same-face grouping would undermine the reason this exists.
-    Agreement here is just a raw count of recent rows at this gate within the
-    window instead - coarser (it can't tell two different occluded people
-    apart within the same few seconds), but doesn't pretend a certainty the
-    underlying signal doesn't have. Not a permanent audit record - old rows
-    can be pruned freely, same as its siblings."""
+    No embedding stored, unlike Unmatched/SpoofAttempt: an occluded frame's
+    embedding is exactly the thing insightface_utils.mouth_visibility_ratio's
+    docstring says not to trust. Not a permanent audit record - old rows can
+    be pruned freely, same as its siblings. (EntryLog.Status.
+    OCCLUSION_DETECTED is kept only so rows logged before covered faces
+    stopped being logged still display.)"""
 
     gate_location = models.CharField(max_length=100)
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)

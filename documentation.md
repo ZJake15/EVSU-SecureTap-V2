@@ -99,18 +99,20 @@ currently in frame.
 5. **Occlusion check.** A face that passes the quality gate is next checked for
    whether its mouth/nose read as covered (a hand, mask, or high collar) - before
    the liveness check and before ever being compared against anyone enrolled. If
-   *any* of three independent signals fires (below), the face is routed to its own
-   vote-then-confirm path (`OcclusionAttempt` → `IdentifyView._confirm_or_vote_occlusion`,
-   the same `VOTE_REQUIRED_AGREEMENT`/`VOTE_WINDOW_SIZE`/`VOTE_WINDOW_SECONDS`
-   grace period a match or spoof suspicion gets) instead of continuing to steps 6+.
+   *any* of three independent signals fires (below), the face stops here instead
+   of continuing to steps 6+: the entry-agent is told to show "Please uncover
+   your face" on it (`IdentifyView._occlusion_prompt`), and **nothing is logged** —
+   no `EntryLog` row, no captured photo. Covering your face isn't inherently
+   adversarial (a scarf, a cough, a phone call), so it's a prompt, not an event.
+   Only a short-lived `OcclusionAttempt` marker is kept, for the two uses below.
 
    **Why this exists, and why it's a proxy, not a certainty:** an occluded face is
    the one input that fails *both* ways at once, the same problem the yaw check
    above solves for a turned face - ArcFace was never given a fair look at it, so
    matching it either produces a distorted embedding that matches nobody (voted
    through as **Unknown**, wrongly) or a real match forced on incomplete
-   information (wrong the other way). Routing it to its own
-   `EntryLog(status=occlusion_detected)` avoids both.
+   information (wrong the other way). Stopping at a prompt until the face is
+   uncovered avoids both.
 
    InsightFace exposes **no per-landmark confidence or visibility score anywhere**
    in this installation - checked directly in the installed package source (the
@@ -205,10 +207,7 @@ currently in frame.
    similarity check only, not a decision — the face still has to pass liveness,
    win the multi-frame vote, and go to a card tap if the match is borderline.
 
-   A confirmed occlusion is deduped by **time alone** (`OCCLUSION_CAPTURE_
-   COOLDOWN_SECONDS`), not by embedding similarity like an unmatched face or spoof
-   attempt are - comparing embeddings would lean on the exact thing this feature
-   doesn't trust. If a later frame in the same encounter (within `VOTE_WINDOW_
+   If a later frame in the same encounter (within `VOTE_WINDOW_
    SECONDS`) turns out unoccluded and matches or fails normally, that outcome is
    logged as usual (a clean match still logs `SUCCESS`) but carries
    `EntryLog.occlusion_detected=True` as a standing note that occlusion was seen
@@ -296,8 +295,9 @@ currently in frame.
     (UNKNOWN PERSON / SPOOF SUSPECTED, with the time). A covered face gets
     neither the banner nor the alarm — covering your face isn't inherently
     adversarial the way a spoof attempt is, so the label on the face itself is
-    the prompt, and the live view is never blocked for it. It is still logged
-    and counted (it appears in the live log as `COVERED`).
+    the prompt, and the live view is never blocked for it. It is also **not
+    logged or counted** — it never appears in the live log, the dashboard's
+    logs or the reports (§2.1 step 5).
 
 ### 2.2 Card scanner (NFC tap)
 
@@ -489,7 +489,6 @@ their single best-scoring embedding.
 | `FACE_MIN_DET_SCORE_UNOCCLUDED` | `0.65` | Third occlusion signal: the detector's own per-face detection confidence (not a match score) — fails independently of the two ratios above, since a covered face can still regress a plausible-looking keypoint arrangement. See §2.1 step 5. |
 | `OCCLUSION_DETECTION_MODE` | `rules` | Which rule decides "is this face covered": `rules` (the three thresholds above, any one tripping) or `classifier` (the trained Random Forest, same three measurements, falling back to the rules if the model can't be loaded). Either way a face that already matches an enrolled person is never flagged. The backend's dev server restarts itself when `backend/.env` or the model file changes, so a change or a retrain takes effect within a few seconds. See §2.1 step 5 and §5.9. |
 | `OCCLUSION_CLASSIFIER_THRESHOLD` | `0.5` | Classifier mode only: the "probably covered" probability at or above which a face counts as covered. Raise it for fewer false "please uncover your face" prompts, lower it to catch more real coverings. |
-| `OCCLUSION_CAPTURE_COOLDOWN_SECONDS` | `30` | Same "same situation still there" dedup as `SPOOF_CAPTURE_COOLDOWN_SECONDS`, for a confirmed `occlusion_detected` row — time-based only, since an occluded frame's embedding is exactly what this feature doesn't trust for a same-face comparison. |
 | `GATE_SCAN_DET_SIZE` | `480` | Detector input resolution for the continuous scan (speed/range tradeoff). |
 | `LIVENESS_SCORE_THRESHOLD` | `0.5` | Minimum combined liveness score (§5.5) to be treated as a real, live face. |
 
@@ -759,13 +758,13 @@ that actually tells the two people apart, so the system reaches a *person* inste
   `direction` (`entry`/`exit`), `verification_method` (`nfc_only`, `face_only`,
   `manual_override`, `face_and_card_tiebreak`, `confusable_pair_tiebreak` — see
   §5.8/§2.2 step 4 — plus a legacy `nfc_and_face` value kept only for old rows),
-  `status` (`success` / `failed` / `spoof_suspected` / `occlusion_detected`),
+  `status` (`success` / `failed` / `spoof_suspected`, plus `occlusion_detected`,
+  kept only so rows from before covered faces stopped being logged still
+  display — no new ones are written, §2.1 step 5),
   `gate_location` (free text), `failure_reason`, `captured_photo` (saved for
-  unrecognized, spoof-suspected, *and* occlusion-detected faces),
+  unrecognized and spoof-suspected faces),
   `unmatched_encoding` (embedding of an unrecognized or spoof-suspected face, for
-  dedupe — deliberately **not** populated for an occlusion-detected row, since an
-  occluded frame's embedding is exactly what §2.1 step 5 says not to trust for a
-  same-face comparison), `match_confidence` (ArcFace cosine similarity at
+  dedupe), `match_confidence` (ArcFace cosine similarity at
   confirmation time), `liveness_score` (combined liveness score at confirmation
   time — populated on every face-scan row, matched or not), `occlusion_detected`
   (bool — separate from `status`: True if occlusion was seen at this gate moments
@@ -1042,9 +1041,8 @@ owns the Tk root, so closing it ends the process.
   - **Stats row** (top of the left column) — one large **Today** number, then
     **Entries / Unknown / Spoof / In frame**, each behind a thin divider. Driven
     by camera events and seeded from `/api/gate-summary`; card taps show in the
-    live log but don't move these counters. Covered faces are still counted
-    internally (for the launcher's last-session summary, §9.1) but have no
-    counter on screen.
+    live log but don't move these counters. Covered faces aren't counted
+    (they aren't logged at all, §2.1 step 5).
   - **Live monitor** (left column, takes all its spare height) — CCTV-style
     continuous monitoring, not a one-person kiosk; several faces in frame are
     each identified independently (§2.1). Draws bounding boxes, each with a name
@@ -1081,8 +1079,7 @@ owns the Tk root, so closing it ends the process.
     event as a large card (a colored band with its word and time, then the
     photo, name, ID and match %), and every earlier one below it in a list, each
     row with photo, name, ID · time · confidence and its word. Both credentials
-    land here: `ENTRY`/`EXIT` for a face match, `UNKNOWN`, `SPOOF`, `COVERED`,
-    and `CARD · ENTRY`/`CARD REJECTED`/`QUEUED` for an NFC tap — so the log is
+    land here: `ENTRY`/`EXIT` for a face match, `UNKNOWN`, `SPOOF`, and `CARD · ENTRY`/`CARD REJECTED`/`QUEUED` for an NFC tap — so the log is
     one chronological record of the gate regardless of how someone was
     identified. Non-routine rows get a tinted background and a colored left
     edge. An event whose encounter briefly included a covered face gets a
@@ -1155,12 +1152,18 @@ guard would otherwise only discover once already standing at the gate:
   how these three values reach that process without editing `.env`.
 - **Pre-flight checks** run right before the Entry Agent button actually spawns
   the process: whether the backend currently responds, and a best-effort check
-  for an ACS ACR122U NFC reader specifically (the reader model this deployment
-  uses) via Windows' own Plug-and-Play device list, matched against that reader's
-  USB vendor/product ID. This is the only practical way to check for *that
-  specific* reader — Windows sees any HID-emulation NFC reader as a generic
-  keyboard, with no NFC-specific identity to query in general (see §10's note on
-  why the gate monitor's own live "ready" indicator can't do this). Neither check
+  for the NFC card reader via Windows' own Plug-and-Play device list, matched
+  against a list of known reader USB vendor:product IDs. The default list is
+  `072F:2200` (a genuine ACS ACR122U) and `FFFF:0035` (the unbranded
+  keyboard-emulation reader this gate actually has — it's sold as an "ACR122U"
+  but doesn't report ACS's vendor ID, which is why an ACS-only check warned
+  about a missing reader while it was plugged in). A different reader is added
+  with `NFC_READER_USB_IDS` in `entry-agent/.env` (comma-separated `VID:PID`
+  pairs, found in Device Manager → the reader → Properties → Details →
+  Hardware Ids). Matching by ID is the only practical check — Windows sees any
+  HID-emulation NFC reader as a generic keyboard, with no NFC-specific identity
+  to query in general (see §10's note on why the gate monitor's own live
+  "ready" indicator can't do this). Neither check
   can block opening the gate monitor on its own — a negative result shows a
   "Before you open the gate monitor" dialog listing each warning, with **Open
   gate monitor** (the default — it opens anyway) and **Cancel**, since a live
@@ -1313,8 +1316,9 @@ knowing before extending the system:
   the real-world rate is likely worse, especially for faces far from the camera.
   The `_already_recognizable` skip (§2.1 step 5) removes those false alarms for
   anyone enrolled; they can still reach an **unenrolled** person with an
-  uncovered face, who may be shown "please uncover your face" (and logged as
-  face covered) instead of being flagged Unknown. The fix for that is more and
+  uncovered face, who may be shown "please uncover your face" instead of being
+  flagged Unknown — and since covered faces aren't logged, that person then
+  leaves no log entry at all. The fix for that is more and
   better training data — more clean photos taken at the real gate camera and
   distance, until clean and covered are roughly balanced — then retraining.
 - The FAR/FRR evaluation (§5.7) covers identity matching only — there is no
@@ -1337,10 +1341,10 @@ knowing before extending the system:
   hardcoded true — there's no reliable, general way to detect a HID-emulation
   reader's presence versus its absence while it's already running as a virtual
   keyboard. The system launcher now does a narrower, one-time version of this
-  check *before* opening the gate monitor: a best-effort, model-specific search
-  for an ACS ACR122U (this deployment's actual reader) in Windows' own connected-
-  device list, by USB vendor/product ID (§9.1) — real for that one specific
-  reader, but not a general "is any NFC reader plugged in" answer, and it only
+  check *before* opening the gate monitor: a best-effort search for a known
+  reader in Windows' own connected-device list, by USB vendor/product ID
+  (§9.1, configurable with `NFC_READER_USB_IDS`) — real for the readers on
+  that list, but not a general "is any NFC reader plugged in" answer, and it only
   ever produces a one-time warning, never a live indicator that updates if the
   reader is unplugged mid-shift.
 - Only HID-keyboard-emulation NFC readers are supported; genuine PC/SC smart-card

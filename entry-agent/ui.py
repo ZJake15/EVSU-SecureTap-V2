@@ -1403,10 +1403,9 @@ class GateMonitorWindow:
                 self._show_alert_banner("spoof")
                 _play_alert_sound()
             elif item.get("occlusion_suspected"):
-                # Counted and logged, but no banner and no alarm sound -
-                # covering your face isn't inherently adversarial (a scarf, a
-                # cough, a phone call). The face's own "PLEASE UNCOVER YOUR
-                # FACE" label on the feed is the prompt.
+                # Only reached by an older backend - covered faces no longer
+                # come with a log_id (see IdentifyView._occlusion_prompt), so
+                # the face's own "PLEASE UNCOVER YOUR FACE" label is all they get.
                 self.stats["occlusion"] += 1
             elif item["matched"]:
                 key = "exits" if item["direction"] == "exit" else "entries"

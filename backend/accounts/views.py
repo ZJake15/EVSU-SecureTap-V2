@@ -94,7 +94,6 @@ class SystemSettingsView(APIView):
             "recognition_cooldown_seconds": settings.RECOGNITION_COOLDOWN_SECONDS,
             "unenrolled_capture_cooldown_seconds": settings.UNENROLLED_CAPTURE_COOLDOWN_SECONDS,
             "spoof_capture_cooldown_seconds": settings.SPOOF_CAPTURE_COOLDOWN_SECONDS,
-            "occlusion_capture_cooldown_seconds": settings.OCCLUSION_CAPTURE_COOLDOWN_SECONDS,
             "max_embeddings_per_person": MAX_EMBEDDINGS_PER_PERSON,
             "max_embeddings_per_confusable_person": MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON,
             "editable": False,

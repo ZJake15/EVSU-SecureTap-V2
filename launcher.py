@@ -216,13 +216,19 @@ LAST_SESSION_PATH = ENTRY_AGENT_DIR / "last_session.json"
 # construct, which isn't needed for a read-only pending-count peek.
 OFFLINE_QUEUE_DB_PATH = ENTRY_AGENT_DIR / "offline_queue.db"
 
-# ACS ACR122U NFC reader's USB vendor:product ID - the specific reader this
-# deployment uses. It identifies to Windows as a generic HID keyboard (that's
-# how it "types" a scanned card's ID), so there's no NFC-specific API to ask
-# "is a reader plugged in" - matching this VID:PID via Windows' own device
-# list is a heuristic for THIS reader model specifically, not a general
-# "is any NFC reader present" check.
-ACR122U_VID_PID_PATTERN = "VID_072F.*PID_2200"
+# USB vendor:product IDs of the NFC card readers the pre-flight check looks
+# for. The gate's reader identifies to Windows as a generic HID keyboard
+# (that's how it "types" a scanned card's ID), so there's no NFC-specific API
+# to ask "is a reader plugged in" - matching known VID:PIDs in Windows' own
+# device list is the only practical check, and it only knows the readers
+# listed here:
+#   072F:2200 - a genuine ACS ACR122U.
+#   FFFF:0035 - the unbranded keyboard-emulation reader actually in use at
+#               this gate. Low-cost readers sold under the ACR122U name often
+#               report a generic ID like this rather than ACS's own.
+# Override per machine with NFC_READER_USB_IDS in entry-agent/.env
+# (comma-separated VID:PID pairs) - see _nfc_reader_usb_ids.
+DEFAULT_NFC_READER_USB_IDS = ("072F:2200", "FFFF:0035")
 
 
 def _load_settings():
@@ -297,20 +303,47 @@ def _format_last_session_line(summary):
     )
 
 
-def _detect_acr122u_reader(timeout=2.0):
-    """Best-effort ACR122U presence check via Windows' own PnP device list.
-    Returns True/False, or None when the check itself couldn't run (not
-    Windows, powershell missing/timed out) - None is deliberately NOT treated
-    as "absent" by callers, since a failed check saying "no reader found"
-    would be actively misleading during a demo."""
-    if os.name != "nt":
+_USB_ID_PATTERN = re.compile(r"^\s*([0-9A-Fa-f]{4})\s*:\s*([0-9A-Fa-f]{4})\s*$")
+
+
+def _nfc_reader_usb_ids():
+    """The VID:PID pairs the pre-flight check accepts as "a card reader is
+    plugged in": NFC_READER_USB_IDS from entry-agent/.env if it's set (and has
+    at least one well-formed pair), otherwise DEFAULT_NFC_READER_USB_IDS.
+    Malformed entries are skipped rather than failing the check."""
+    configured = None
+    env_path = ENTRY_AGENT_DIR / ".env"
+    if env_path.exists():
+        try:
+            configured = dotenv_values(env_path).get("NFC_READER_USB_IDS")
+        except Exception:
+            configured = None
+    ids = []
+    for entry in (configured or "").split(","):
+        match = _USB_ID_PATTERN.match(entry)
+        if match:
+            ids.append(f"{match.group(1).upper()}:{match.group(2).upper()}")
+    return tuple(ids) or DEFAULT_NFC_READER_USB_IDS
+
+
+def _detect_nfc_reader(usb_ids, timeout=4.0):
+    """Best-effort check that one of the known card readers (usb_ids, as
+    VID:PID pairs) is plugged in, via Windows' own PnP device list. Returns
+    True/False, or None when the check itself couldn't run (not Windows,
+    powershell missing/timed out) - None is deliberately NOT treated as
+    "absent" by callers, since a failed check saying "no reader found" would
+    be actively misleading during a demo."""
+    if os.name != "nt" or not usb_ids:
         return None
+    # usb_ids only ever holds validated hex pairs (see _nfc_reader_usb_ids),
+    # so they're safe to put straight into the PowerShell pattern.
+    pattern = "|".join(f"VID_{vid}&PID_{pid}" for vid, pid in (usb_id.split(":") for usb_id in usb_ids))
     try:
         result = subprocess.run(
             [
                 "powershell", "-NoProfile", "-NonInteractive", "-Command",
                 "(Get-PnpDevice -PresentOnly | Where-Object "
-                f"{{ $_.InstanceId -match '{ACR122U_VID_PID_PATTERN}' }}).Count",
+                f"{{ $_.InstanceId -match '{pattern}' }}).Count",
             ],
             capture_output=True, text=True, timeout=timeout, creationflags=_NO_WINDOW,
         )
@@ -1134,8 +1167,13 @@ class LauncherWindow:
         warnings = []
         if not service_responds(HEALTH_URL, timeout=1.5):
             warnings.append(("plugs", "The backend isn't responding yet — entry/exit logging won't work until it is."))
-        if _detect_acr122u_reader() is False:
-            warnings.append(("identification-card", "No ACR122U NFC reader was detected (best-effort check)."))
+        reader_ids = _nfc_reader_usb_ids()
+        if _detect_nfc_reader(reader_ids) is False:
+            warnings.append((
+                "identification-card",
+                "No NFC card reader was detected (looked for USB IDs " + ", ".join(reader_ids) + "). "
+                "If yours is plugged in, add its ID to NFC_READER_USB_IDS in entry-agent/.env.",
+            ))
         if not warnings:
             return True
         self._append_log("[launcher] pre-flight check: " + " | ".join(text for _name, text in warnings))

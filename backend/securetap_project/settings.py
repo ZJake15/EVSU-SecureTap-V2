@@ -262,12 +262,9 @@ FACE_MAX_YAW_RATIO = env.float("FACE_MAX_YAW_RATIO", default=0.35)
 # midpoint, deliberately: it will likely MISS lighter/partial occlusion
 # (a hand covering just the chin, say) - the safe failure mode, since a
 # missed occlusion just falls through to normal matching/Unknown handling,
-# same as before this existed. A single frame reading below this threshold
-# also isn't enough on its own - see IdentifyView._confirm_or_vote_occlusion,
-# which requires the same VOTE_REQUIRED_AGREEMENT/VOTE_WINDOW_SIZE agreement
-# a face match or spoof suspicion already needs, so one anomalous frame
-# (a genuinely narrow-mouthed person, a bad angle) can't misclassify someone
-# on its own either.
+# same as before this existed. A covered face is never logged either (see
+# IdentifyView._occlusion_prompt) - a wrong read only costs a brief "please
+# uncover your face" prompt, never a log entry.
 #
 # Treat this exactly like FACE_MATCH_SIMILARITY_THRESHOLD: a starting point
 # for a specific detector and a small test set, not a validated value - watch
@@ -369,13 +366,3 @@ UNENROLLED_CAPTURE_COOLDOWN_SECONDS = env.int("UNENROLLED_CAPTURE_COOLDOWN_SECON
 # spoof-suspected faces so it can be tuned independently once real
 # spoof-attempt data exists.
 SPOOF_CAPTURE_COOLDOWN_SECONDS = env.int("SPOOF_CAPTURE_COOLDOWN_SECONDS", default=30)
-
-# Same "same situation still there" dedup idea again, for a confirmed
-# occlusion_detected row - but time-based only, not embedding-similarity
-# based like the two above. Comparing embeddings would lean on the exact
-# thing an occluded frame's embedding is unreliable for (see
-# insightface_utils.mouth_visibility_ratio) - "is this still the same
-# covered face" isn't a question this system can honestly answer from a
-# distorted embedding, so it just asks "was there an occlusion_detected row
-# at this gate recently" instead.
-OCCLUSION_CAPTURE_COOLDOWN_SECONDS = env.int("OCCLUSION_CAPTURE_COOLDOWN_SECONDS", default=30)

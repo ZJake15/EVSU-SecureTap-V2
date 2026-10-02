@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+import traceback
 import tkinter.font as tkfont
 import winsound
 from datetime import datetime
@@ -142,6 +143,11 @@ ICONS = {
     "speaker-high": "\ue44a",
     "clock-counter-clockwise": "\ue1a0",
     "user-focus": "\ue6fc",
+    # Student display (student_display.py) and its toggle in the status bar
+    "monitor": "\ue32e",
+    "monitor-arrow-up": "\ue58a",
+    "scan-smiley": "\uebb4",
+    "hand": "\ue298",
     # Launcher (launcher.py)
     "squares-four": "\ue464",
     "video-camera": "\ue4da",
@@ -468,7 +474,7 @@ class GateMonitorWindow:
     """
 
     MIN_VIDEO_SIZE = (320, 240)
-    VIDEO_PANEL_CORNER_RADIUS = 14
+    VIDEO_PANEL_CORNER_RADIUS = 8
     # How long with no frame at all before the video panel gives up waiting
     # and shows "No camera connected" instead of just sitting blank - long
     # enough that a real webcam's normal startup delay never trips it.
@@ -482,6 +488,7 @@ class GateMonitorWindow:
         "deactivated": "Deactivated",
         "read_error": "Read error",
         "offline": "Offline",
+        "server_error": "Server error",
     }
 
     # (key, label, color, icon) - "today" is the hero number, the rest sit
@@ -546,6 +553,9 @@ class GateMonitorWindow:
         self._card_images = {}
         self._last_card_id = None
         self._font_cache = {}
+        # The student-facing second screen, while it's open - see
+        # student_display.py and _toggle_student_display.
+        self._student = None
 
         # This IS the application window, not a child of some menu - the
         # entry-agent opens straight into the monitor. Being the CTk root (not
@@ -1059,6 +1069,7 @@ class GateMonitorWindow:
         self.camera_label = self._label(camera, "Camera OK", (FONT, 14, "bold"), VERIFIED)
         self.camera_label.pack(side="left")
         self._build_camera_picker(inner)
+        self._build_student_toggle(inner)
 
         identity = " · ".join(part for part in (self.officer_name, self.version) if part)
         if identity:
@@ -1120,6 +1131,66 @@ class GateMonitorWindow:
         if index is not None and self._on_camera_change:
             self._on_camera_change(index)
 
+    def _build_student_toggle(self, bar):
+        """"Open student display" / "Student display open · Close" - opens
+        the student-facing second screen (student_display.py) or closes it.
+        A frame with an icon and a word rather than a CTkButton, which can't
+        mix the icon font with the text font in one label."""
+        # A 1px design border, but CTk scales border widths too, and below
+        # one real pixel it draws nothing - so ask for enough to land on 1+.
+        toggle = ctk.CTkFrame(bar, corner_radius=8, border_width=math.ceil(1 / self._scale), height=34,
+                              cursor="hand2")
+        toggle.pack(side="left", padx=(12, 0))
+        self._student_icon = self._icon_label(toggle, "monitor-arrow-up", 16, MAROON, height=20)
+        self._student_icon.pack(side="left", padx=(12, 8), pady=6)
+        self._student_label = self._label(toggle, "Open student display", (FONT, 14, "bold"), MAROON, height=20)
+        self._student_label.pack(side="left", padx=(0, 12), pady=6)
+        for widget in (toggle, self._student_icon, self._student_label):
+            widget.bind("<Button-1>", lambda _e: self._toggle_student_display())
+            widget.configure(cursor="hand2")
+        self._student_toggle = toggle
+        self._refresh_student_toggle()
+
+    def _refresh_student_toggle(self):
+        is_open = self._student is not None
+        bg, fg = (INK, SURFACE) if is_open else (SURFACE, MAROON)
+        self._student_toggle.configure(fg_color=bg, border_color=INK if is_open else MAROON)
+        self._student_icon.configure(text=_icon("monitor" if is_open else "monitor-arrow-up"), text_color=fg,
+                                     fg_color=bg)
+        self._student_label.configure(
+            text="Student display open · Close" if is_open else "Open student display", text_color=fg, fg_color=bg,
+        )
+
+    def _toggle_student_display(self):
+        if self._student is not None:
+            self._student.close()  # its on_close clears self._student
+            return
+        # Imported here, not at the top: student_display imports this module.
+        from student_display import StudentDisplayWindow
+
+        self._student = StudentDisplayWindow(
+            self.window, self.gate_location, self.direction, self._get_preview_frame,
+            is_camera_down=lambda: self._showing_no_camera,
+            on_card_key=self._forward_card_key,
+            on_close=self._student_closed,
+        )
+        self._student.update_recognitions(self._latest_recognitions, self._latest_image_size)
+        self._refresh_student_toggle()
+
+    def _student_closed(self):
+        self._student = None
+        if not self._closed:
+            self._refresh_student_toggle()
+
+    def _forward_card_key(self, event):
+        """A card tap typed into the student display (it had focus) goes to
+        the same hidden field the reader normally types into."""
+        if event.keysym in ("Return", "KP_Enter"):
+            self._handle_card_input(event)
+        elif event.char and event.char.isprintable():
+            self._card_input_var.set(self._card_input_var.get() + event.char)
+        return "break"
+
     # ---- public API: camera side ------------------------------------------
 
     def show_recognitions(self, recognitions, image_size):
@@ -1176,39 +1247,48 @@ class GateMonitorWindow:
         try:
             while True:
                 kind, payload = self._queue.get_nowait()
-                if kind == "recognitions":
-                    recognitions, image_size = payload
-                    self._render_recognitions(recognitions, image_size)
-                elif kind == "offline":
-                    self._render_offline(payload)
-                elif kind == "seed":
-                    entries, exits, unknown, spoof, occlusion = payload
-                    self.stats["entries"], self.stats["exits"] = entries, exits
-                    self.stats["unknown"], self.stats["spoof"] = unknown, spoof
-                    self.stats["occlusion"] = occlusion
-                    self._refresh_stat_labels()
-                elif kind == "threshold":
-                    self.threshold_label.configure(text=f"{payload:.2f}")
-                elif kind == "card_match":
-                    self._render_card_match(payload)
-                elif kind == "card_failure":
-                    reason, reason_code = payload
-                    self._render_card_failure(reason, reason_code)
-                elif kind == "card_status":
-                    self._show_card_waiting()
-                elif kind == "queue_count":
-                    self.queue_label.configure(
-                        text=f"Queue {payload}", text_color=CAUTION if payload else INK_600
-                    )
-                elif kind == "backend_ok":
-                    self._set_status(self.backend_icon, self.backend_label, payload,
-                                     "Backend OK", "Backend not OK", DANGER, "x-circle")
-                elif kind == "camera_ok":
-                    self._set_status(self.camera_icon, self.camera_label, payload,
-                                     "Camera OK", "Camera not connected", CAUTION, "warning")
+                try:
+                    self._handle_queue_item(kind, payload)
+                except Exception:
+                    # One bad update is logged and dropped. Letting it escape
+                    # used to skip the reschedule below, and the whole window
+                    # then stopped updating for the rest of the shift.
+                    traceback.print_exc()
         except queue.Empty:
             pass
         self.window.after(100, self._process_queue)
+
+    def _handle_queue_item(self, kind, payload):
+        if kind == "recognitions":
+            recognitions, image_size = payload
+            self._render_recognitions(recognitions, image_size)
+        elif kind == "offline":
+            self._render_offline(payload)
+        elif kind == "seed":
+            entries, exits, unknown, spoof, occlusion = payload
+            self.stats["entries"], self.stats["exits"] = entries, exits
+            self.stats["unknown"], self.stats["spoof"] = unknown, spoof
+            self.stats["occlusion"] = occlusion
+            self._refresh_stat_labels()
+        elif kind == "threshold":
+            self.threshold_label.configure(text=f"{payload:.2f}")
+        elif kind == "card_match":
+            self._render_card_match(payload)
+        elif kind == "card_failure":
+            reason, reason_code = payload
+            self._render_card_failure(reason, reason_code)
+        elif kind == "card_status":
+            self._show_card_waiting()
+        elif kind == "queue_count":
+            self.queue_label.configure(
+                text=f"Queue {payload}", text_color=CAUTION if payload else INK_600
+            )
+        elif kind == "backend_ok":
+            self._set_status(self.backend_icon, self.backend_label, payload,
+                             "Backend OK", "Backend not OK", DANGER, "x-circle")
+        elif kind == "camera_ok":
+            self._set_status(self.camera_icon, self.camera_label, payload,
+                             "Camera OK", "Camera not connected", CAUTION, "warning")
 
     def _set_status(self, icon_label, text_label, ok, ok_text, bad_text, bad_color, bad_icon):
         color = VERIFIED if ok else bad_color
@@ -1242,8 +1322,15 @@ class GateMonitorWindow:
         # stay focused for a tap to land anywhere at all. Nothing else in
         # this window takes typed input, so reclaiming focus can't interrupt
         # the guard - and mouse-wheel scrolling of the live log is bound to
-        # the pointer, not focus, so the log still scrolls freely.
-        if self.window.focus_get() is not self._card_input:
+        # the pointer, not focus, so the log still scrolls freely. The one
+        # exception is the student display: pulling focus back from it would
+        # also pull the gate monitor over it, and it forwards taps itself.
+        try:
+            focused = self.window.focus_get()
+        except (KeyError, tk.TclError):
+            focused = None
+        student_has_focus = self._student is not None and self._student.owns(focused)
+        if focused is not self._card_input and not student_has_focus:
             self._card_input.focus_force()
         self.window.after(FOCUS_CHECK_MS, self._keep_focus)
 
@@ -1311,6 +1398,8 @@ class GateMonitorWindow:
         self.card_time.pack(anchor="e")
         self.card_right.grid()
         self._schedule_card_reset()
+        if self._student is not None:
+            self._student.show_card_result("accepted")
 
         self._push_log_row(
             kind="card", name=name, id_text=profile.get("student_id") or "—", time=timestamp,
@@ -1358,6 +1447,12 @@ class GateMonitorWindow:
             self.card_right.grid()
             kind = "card_rejected"
         self._schedule_card_reset()
+        if self._student is not None:
+            # Only a card the system actually looked up and refused reads as
+            # "not registered" - a misread or a server hiccup asks for a retap.
+            outcome = {"offline": "queued", "not_registered": "rejected",
+                       "deactivated": "deactivated"}.get(reason_code, "error")
+            self._student.show_card_result(outcome)
 
         self._push_log_row(
             kind=kind, name=label if kind == "card_rejected" else "Card tap queued",
@@ -1417,6 +1512,8 @@ class GateMonitorWindow:
             self._push_log_entry(item)
 
         self._refresh_stat_labels()
+        if self._student is not None:
+            self._student.update_recognitions(recognitions, image_size)
 
     def _show_alert_banner(self, kind):
         """Docks the alarm banner across the top of the video panel - fires
@@ -1612,6 +1709,15 @@ class GateMonitorWindow:
     def _update_video(self):
         if self._closed:
             return
+        try:
+            self._refresh_video()
+        except Exception:
+            # Logged, then the next frame tries again - an escaped error here
+            # used to skip the reschedule and leave the feed frozen for good.
+            traceback.print_exc()
+        self.window.after(VIDEO_REFRESH_MS, self._update_video)
+
+    def _refresh_video(self):
         frame = self._get_preview_frame()
         if frame is not None:
             self._last_frame_at = time.monotonic()
@@ -1629,7 +1735,6 @@ class GateMonitorWindow:
                 self._showing_no_camera = True
                 self.stat_tiles["in_frame"].configure(text="—")
             self._draw_no_camera_placeholder()
-        self.window.after(VIDEO_REFRESH_MS, self._update_video)
 
     def _panel_size(self):
         return (
@@ -1860,6 +1965,8 @@ class GateMonitorWindow:
 
     def _handle_close(self):
         self._closed = True
+        if self._student is not None:
+            self._student.close()  # it's a child window - it goes when the monitor does
         if self._on_close:
             self._on_close()
         self.window.destroy()

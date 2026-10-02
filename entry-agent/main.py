@@ -1,6 +1,7 @@
 import json
 import sys
 import threading
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -231,6 +232,12 @@ def scan_loop(config, api_client, camera, ui, stop_event):
             # No offline queueing here - a stale queued frame from a live scan
             # has no value once connectivity returns; just keep sampling.
             ui.show_offline(True)
+        except Exception:
+            # Anything else (an unexpected response shape, a decoding error)
+            # is logged and skipped - letting it escape would end this thread,
+            # and the gate would silently stop recognizing anyone while the
+            # feed kept looking live.
+            traceback.print_exc()
 
         stop_event.wait(SCAN_INTERVAL_SECONDS)
 
@@ -244,20 +251,29 @@ def handle_tap(config, api_client, offline_queue, ui, nfc_id):
     try:
         result = api_client.verify(config.gate_location, config.direction, nfc_id=nfc_id)
     except requests.exceptions.HTTPError as exc:
-        ui.show_card_failure(_describe_http_error(exc.response))
+        ui.show_card_failure(_describe_http_error(exc.response), "server_error")
         return
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
         offline_queue.enqueue(nfc_id, config.gate_location, config.direction)
         ui.show_card_failure("Offline - tap queued, will sync automatically.", "offline")
         return
-
-    if not result.get("success"):
-        ui.show_card_failure(result.get("reason") or "Not enrolled.", result.get("reason_code"))
+    except requests.RequestException:
+        # Reached the server but got something unusable back (e.g. a non-JSON
+        # error page) - not worth queueing, but the guard must see that the
+        # tap didn't go through rather than nothing happening at all.
+        ui.show_card_failure("The server sent an unexpected reply - tap again.", "server_error")
         return
 
-    ui.show_card_match(
-        _build_profile(api_client, result, card_id=nfc_id, direction=config.direction)
-    )
+    try:
+        if not result.get("success"):
+            ui.show_card_failure(result.get("reason") or "Not enrolled.", result.get("reason_code"))
+            return
+        ui.show_card_match(
+            _build_profile(api_client, result, card_id=nfc_id, direction=config.direction)
+        )
+    except Exception:
+        traceback.print_exc()
+        ui.show_card_failure("Something went wrong reading this tap - tap again.", "server_error")
 
 
 def _describe_http_error(response):
@@ -355,17 +371,35 @@ def main():
         target=scan_loop, args=(config, api_client, camera, monitor, stop_event), daemon=True
     ).start()
 
+    status_busy = threading.Event()
+
+    def status_worker():
+        # Off the Tk thread: with the backend down, the health request takes
+        # ~4s to fail on Windows ("localhost" tries IPv6, then IPv4), and
+        # doing it on the Tk thread froze the whole gate monitor - video
+        # included - for most of every 5s cycle. The monitor's set_* calls
+        # are queue-based, so they're safe to make from here.
+        try:
+            monitor.set_camera_ok(camera.is_open())
+            try:
+                api_client.health()
+                server_ok = True
+            except requests.RequestException:
+                server_ok = False
+            monitor.set_backend_ok(server_ok)
+            monitor.set_queue_count(offline_queue.pending_count())
+        except Exception:
+            traceback.print_exc()
+        finally:
+            status_busy.clear()
+
     def check_status():
         if monitor.is_closed():
             return
-        monitor.set_camera_ok(camera.is_open())
-        try:
-            api_client.health()
-            server_ok = True
-        except requests.RequestException:
-            server_ok = False
-        monitor.set_backend_ok(server_ok)
-        monitor.set_queue_count(offline_queue.pending_count())
+        # One check at a time - a slow one is skipped over, not piled up.
+        if not status_busy.is_set():
+            status_busy.set()
+            threading.Thread(target=status_worker, daemon=True).start()
         # The NFC reader is a generic HID-keyboard-emulation device - Windows
         # sees it as just another keyboard, with no reliable, portable way to
         # query "is this specific reader plugged in" from Python, so it's shown

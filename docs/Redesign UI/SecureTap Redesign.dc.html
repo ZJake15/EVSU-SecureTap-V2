@@ -78,7 +78,17 @@
         <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">{{ g.id }}</span><span style="font-size:14px;color:#4B5157">{{ g.label }}</span></div>
         <div style="width:960px;height:540px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
           <div style="width:1920px;height:1080px;transform:scale(0.5);transform-origin:0 0">
-            <dc-import name="Gate Monitor" scenario="{{ g.scenario }}" style="width:1920px;height:1080px;display:block" hint-size="1920px,1080px"></dc-import>
+            <dc-import name="Gate Monitor" embedded="{{ true }}" scenario="{{ g.scenario }}" style="width:1920px;height:1080px;display:block" hint-size="1920px,1080px"></dc-import>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+    <sc-for list="{{ studentFrames }}" as="g" hint-placeholder-count="3">
+      <div id="{{ g.id }}" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">{{ g.id }}</span><span style="font-size:14px;color:#4B5157">{{ g.label }}</span></div>
+        <div style="width:960px;height:540px;overflow:hidden;border:1px solid #D9DCDF;background:#121416">
+          <div style="width:1920px;height:1080px;transform:scale(0.5);transform-origin:0 0">
+            <dc-import name="Student Display" embedded="{{ true }}" scenario="{{ g.scenario }}" style="width:1920px;height:1080px;display:block" hint-size="1920px,1080px"></dc-import>
           </div>
         </div>
       </div>
@@ -86,7 +96,7 @@
     <div id="B9" style="display:flex;flex-direction:column;gap:10px">
       <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">B9</span><span style="font-size:14px;color:#4B5157">Calm state, narrow window · 1100 × 700 at 100%</span></div>
       <div style="width:1100px;height:700px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
-        <dc-import name="Gate Monitor" scenario="calm" narrow="{{ true }}" style="width:1100px;height:700px;display:block" hint-size="1100px,700px"></dc-import>
+        <dc-import name="Gate Monitor" embedded="{{ true }}" scenario="calm" narrow="{{ true }}" style="width:1100px;height:700px;display:block" hint-size="1100px,700px"></dc-import>
       </div>
     </div>
   </div>
@@ -120,6 +130,11 @@ class Component extends DCLogic {
         {id:'C11',screen:'audit',label:'Audit Log — Admin'},
         {id:'C12',screen:'accounts',label:'Accounts — editing a Security Officer'},
         {id:'C13',screen:'settings',label:'Settings — read-only'}
+      ],
+      studentFrames:[
+        {id:'B10',scenario:'calm',label:'Student display — opened from the gate monitor; mirrored feed, first names only'},
+        {id:'B11',scenario:'unknown',label:'Student display — unknown person'},
+        {id:'B12',scenario:'tapcard',label:'Student display — tap card to confirm'}
       ],
       gateFrames:[
         {id:'B1',scenario:'calm',label:'Calm — two recognized people entering'},

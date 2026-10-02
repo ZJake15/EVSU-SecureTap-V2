@@ -96,11 +96,13 @@ currently in frame.
    it can't be separated from the camera's mounting height, so a fixed pitch
    threshold would reject everyone at a high-mounted gate camera and nobody at a
    low one.
-5. **Occlusion check.** A face that passes the quality gate is next checked for
-   whether its mouth/nose read as covered (a hand, mask, or high collar) - before
-   the liveness check and before ever being compared against anyone enrolled. If
+5. **Occlusion check.** A face that passes the quality gate *and the liveness
+   check* (step 6 — it runs first, so a photo or screen that also reads as
+   covered is still caught and logged as a spoof rather than quietly prompted) is
+   checked for whether its mouth/nose read as covered (a hand, mask, or high
+   collar) - before ever being compared against anyone enrolled. If
    *any* of three independent signals fires (below), the face stops here instead
-   of continuing to steps 6+: the entry-agent is told to show "Please uncover
+   of continuing to matching: the entry-agent is told to show "Please uncover
    your face" on it (`IdentifyView._occlusion_prompt`), and **nothing is logged** —
    no `EntryLog` row, no captured photo. Covering your face isn't inherently
    adversarial (a scarf, a cough, a phone call), so it's a prompt, not an event.
@@ -226,23 +228,22 @@ currently in frame.
    testing: `occlusion_detected` and `failed` alternating every few seconds for
    what was clearly one uninterrupted attempt to cover a face.
 
-   The fix: `_confirm_or_vote_unmatched` now checks whether occlusion was seen at
-   this gate within the last `VOTE_WINDOW_SECONDS` before ever counting a
-   non-match toward the Unknown vote. If so, this frame doesn't compete in that
-   vote at all - it's treated as more likely a continuation of the same
-   occlusion event than a newly-arrived stranger, and the entry-agent shows the
-   same "please uncover your face" box it would for a directly-detected
-   occlusion frame, so the display stays one stable signal instead of flickering
-   between the two. This gives the occlusion vote room to actually confirm,
-   without loosening any of the three per-frame thresholds above (which stay
-   exactly as calibrated). The tradeoff is bounded and deliberate: a genuine
-   stranger who happens to walk up within that window of someone else's
-   occlusion attempt has their own Unknown confirmation delayed by at most that
-   window, not blocked - the same few-seconds-to-get-it-right philosophy this
-   whole voting system already runs on everywhere else.
-6. **Liveness check.** A face that passes the quality gate and the occlusion check
-   is scored for liveness (§5.5) before it's ever compared against anyone
-   enrolled. A face scoring below `LIVENESS_SCORE_THRESHOLD` (default `0.5`) is
+   The fix: `_confirm_or_vote_unmatched` holds back the Unknown vote while
+   covered frames **outnumber** unrecognized ones at this gate within the last
+   `VOTE_WINDOW_SECONDS` (`_occlusion_dominates`) - it's treated as one
+   covering gesture rather than a newly-arrived stranger, and the entry-agent
+   shows the same "please uncover your face" box it would for a directly-detected
+   covered frame, so the display stays one stable signal instead of flickering
+   between the two. It takes a majority, not just any covered frame: covered
+   faces aren't logged, and the covered-face check sometimes misreads an
+   uncovered face (§10), so if one stray covered read were enough, an uncovered
+   stranger could keep their own Unknown vote held off and never reach the log.
+   Every non-match is still recorded while held, so once covered frames stop
+   dominating the Unknown vote already has them, and the stranger is logged
+   (with the alarm) within a frame or two.
+6. **Liveness check.** A face that passes the quality gate is scored for
+   liveness (§5.5) - before the occlusion check (step 5) and before it's ever
+   compared against anyone enrolled. A face scoring below `LIVENESS_SCORE_THRESHOLD` (default `0.5`) is
    routed to step 7a instead of 7b.
 7. **7a — Spoof voting** (low-liveness face). Tallied in `SpoofAttempt`, grouped by
    embedding similarity to recent low-liveness attempts at the same gate (there's
@@ -901,7 +902,10 @@ the page's main action beside it. See §8.1 for the visual design system.
   view. Full Person CRUD; profile-photo upload via webcam capture or file;
   **guided 5-shot enrollment** (front/left/right/neutral/smile, each live
   quality-checked against `/api/users/check-photo-quality`, shown as five tiles
-  that turn green/red as each shot passes or fails) or a single-photo fallback
+  that turn green/red as each shot passes or fails; until a shot is taken, its
+  tile shows an outline drawing of that pose — straight on, head turned slightly
+  left or right, no expression, smiling — and the shot being captured shows its
+  drawing larger beside the camera for the person to copy) or a single-photo fallback
   (flagged low-confidence); add extra photos to an existing person (up to 8 once
   flagged confusable — §5.8); an optional `distinguishing_note` field; **bulk
   CSV/XLSX import** with per-row error and confusable-pair-warning reporting.
@@ -1085,8 +1089,8 @@ owns the Tk root, so closing it ends the process.
     edge. An event whose encounter briefly included a covered face gets a
     "face briefly covered" note rather than losing that fact.
   - **Status bar** (bottom) — recognition threshold, **Camera OK / not
-    connected** next to a **camera-picker dropdown**, the officer name and app
-    version on the left; Backend OK/not OK, offline-queue depth and sync state on
+    connected** next to a **camera-picker dropdown**, the **Open student
+    display** button (below), the officer name and app version on the left; Backend OK/not OK, offline-queue depth and sync state on
     the right. The camera chip
     and the officer/version line moved here from the entry-agent's old launcher
     screen when that screen was removed — a camera that has stopped responding is
@@ -1105,10 +1109,40 @@ owns the Tk root, so closing it ends the process.
     grow 25% and push panels off the edge. An un-maximized, narrower window
     shrinks toward a compact variant of the same layout, and the stats row wraps
     to a 2×2 block rather than being cut off.
+  - **Student display** (`entry-agent/student_display.py`) — a second,
+    student-facing screen, opened and closed from the status bar's **Open
+    student display** button (it reads **Student display open · Close** while
+    up). The gate monitor is the guard's screen; this one is for the people
+    walking through, in large plain words: a maroon header ("EVSU · <gate>",
+    "Welcome to campus", the clock), the same camera feed **mirrored** like a
+    mirror so people find themselves in it, and a big message bar along the
+    bottom saying what to do. Each face gets a label — **Welcome, <first
+    name>** (green; first names only, since it's on public view), **Please see
+    the guard** (unknown), **Show your real face** (confirmed spoof), **Please
+    uncover your face**, **Tap your ID card** (tiebreak), or the backend's own
+    hint ("Hold steady", "Face the camera") while still checking. The message
+    bar speaks to whoever most needs to act (spoof, then unknown, tap, uncover,
+    welcome), stays up a few seconds so it doesn't flicker between frames, and
+    a card tap's result takes it over for 6 seconds — "Entry recorded", "This
+    card is not registered", "This card is no longer active" (deactivated), or
+    "Please tap your ID card again" for a misread or a server problem. With no camera it shows "Please tap your ID card".
+    It runs no scanning of its own — the gate monitor hands it every
+    `/api/identify` result and card tap, so the two screens never disagree. With
+    a second monitor connected (a TV at the gate) it opens fullscreen there;
+    otherwise it opens as a window to drag onto one — **F11** or a double-click
+    toggles fullscreen, **Esc** leaves it. Card taps still work while it has
+    focus (it passes the reader's typing to the gate monitor), and closing the
+    gate monitor closes it too. Drawn from the redesign's 1920×1080 Student
+    Display mockup and scaled to fit, letterboxed so its proportions never
+    change.
 
 **Offline resilience**: NFC tap lookups that fail due to a network error are
 queued in a local SQLite database (`offline_queue.db`) and automatically retried
-every 15 seconds once connectivity returns. Camera-scan frames are **not** queued
+every 15 seconds once connectivity returns. A queued tap the backend refuses
+outright (a malformed request, HTTP 4xx other than 401/403/408/429) is dropped
+with a note in the console rather than retried forever, so it can't hold up the
+taps queued behind it; a bad service token or a server error keeps the queue
+intact for the next retry. Camera-scan frames are **not** queued
 offline — a stale frame from minutes ago isn't considered worth logging once back
 online, so continuous scanning simply pauses/resumes with connectivity.
 
@@ -1316,9 +1350,10 @@ knowing before extending the system:
   the real-world rate is likely worse, especially for faces far from the camera.
   The `_already_recognizable` skip (§2.1 step 5) removes those false alarms for
   anyone enrolled; they can still reach an **unenrolled** person with an
-  uncovered face, who may be shown "please uncover your face" instead of being
-  flagged Unknown — and since covered faces aren't logged, that person then
-  leaves no log entry at all. The fix for that is more and
+  uncovered face, who may briefly be shown "please uncover your face". Since
+  covered faces aren't logged, the Unknown vote is only held back while covered
+  reads are the majority (§2.1 step 5), so a stranger misread only now and then
+  is still logged as Unknown, with the alarm. The fix for that is more and
   better training data — more clean photos taken at the real gate camera and
   distance, until clean and covered are roughly balanced — then retraining.
 - The FAR/FRR evaluation (§5.7) covers identity matching only — there is no

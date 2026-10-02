@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
 import apiClient from "../api/client";
 import { PHOTO_ACCEPT, photoFormatError, previewUrlFor, readPhotoInput } from "../lib/photoUpload";
+import PoseGuide from "./PoseGuide";
 import { Icon, Notice } from "./ui";
 import WebcamCapture from "./WebcamCapture";
 
 // Near-frontal variation only - NOT wide angles or true side-profile shots.
 // ArcFace (like the dlib model before it) matches best on near-frontal
-// faces; a true 90-degree profile often won't even detect.
+// faces; a true 90-degree profile often won't even detect. Each key is also
+// the PoseGuide drawing shown for that shot.
 const SLOTS = [
-  { key: "front", label: "Front", hint: "Straight on", icon: "user" },
-  { key: "left", label: "Slight left", hint: "Turn left a little", icon: "user" },
-  { key: "right", label: "Slight right", hint: "Turn right a little", icon: "user" },
-  { key: "neutral", label: "Neutral", hint: "No expression", icon: "user" },
-  { key: "smile", label: "Smile", hint: "Natural smile", icon: "smiley" },
+  { key: "front", label: "Front", hint: "Straight on" },
+  { key: "left", label: "Slight left", hint: "Turn left a little" },
+  { key: "right", label: "Slight right", hint: "Turn right a little" },
+  { key: "neutral", label: "Neutral", hint: "No expression" },
+  { key: "smile", label: "Smile", hint: "Natural smile" },
 ];
 
 const emptySlotState = () =>
@@ -194,10 +196,9 @@ export default function GuidedEnrollment({ onChange, disabled }) {
                       {state.status === "checking" ? (
                         <Icon name="circle-notch" size={24} className="animate-spin text-ink-400" />
                       ) : (
-                        <Icon
-                          name={isActive ? "user-focus" : slot.icon}
-                          size={isActive ? 28 : 20}
-                          className={isActive ? "text-prompt" : "text-ink-400"}
+                        <PoseGuide
+                          pose={slot.key}
+                          className={`h-full w-full p-s1 ${isActive ? "text-ink" : "text-ink-400"}`}
                         />
                       )}
                     </div>
@@ -221,12 +222,23 @@ export default function GuidedEnrollment({ onChange, disabled }) {
 
           {activeSlot ? (
             <div className="flex flex-col gap-s2 rounded-sm border border-line p-s3">
-              <span className="text-sm font-bold">
-                Now capturing: <span className="text-prompt">{activeSlot.label}</span>
-                <span className="font-normal text-ink-600">
-                  {isCheckingActive ? " · checking photo quality…" : ` · ${activeSlot.hint}`}
-                </span>
-              </span>
+              <div className="flex items-center gap-s3">
+                <PoseGuide
+                  pose={activeSlot.key}
+                  className="h-28 w-24 shrink-0 rounded-sm border border-line bg-surface p-s1 text-ink"
+                />
+                <div className="flex min-w-0 flex-col gap-s1">
+                  <span className="text-sm font-bold">
+                    Now capturing: <span className="text-prompt">{activeSlot.label}</span>
+                    <span className="font-normal text-ink-600">
+                      {isCheckingActive ? " · checking photo quality…" : ` · ${activeSlot.hint}`}
+                    </span>
+                  </span>
+                  <span className="text-xs leading-snug text-ink-600">
+                    Have the person copy this pose, facing the camera.
+                  </span>
+                </div>
+              </div>
               <WebcamCapture onCapture={(file) => captureIntoSlot(activeSlot.key, file)} />
               <span className="text-xs text-ink-600">or upload a file instead (JPEG, PNG or HEIC only):</span>
               <input

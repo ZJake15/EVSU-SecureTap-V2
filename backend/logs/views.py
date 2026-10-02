@@ -299,22 +299,23 @@ class VerifyView(APIView):
             )
 
         verification_method = EntryLog.VerificationMethod.NFC_ONLY
+        # An expired tiebreak gets its "not resolved in time" row first -
+        # this used to delete it here, before IdentifyView's sweep ever saw
+        # it, so a tap after the timeout silently erased that record.
+        IdentifyView._expire_stale_tiebreak(gate_location)
+        # Whatever is left is still live. Any successful tap resolves it,
+        # whoever tapped - the tap itself, not a check against the
+        # tiebreak's candidate list, is what's trusted (see documentation.md
+        # §2.2 step 4).
         tiebreak = PendingTiebreak.objects.filter(gate_location=gate_location).first()
         if tiebreak is not None:
-            cutoff = timezone.now() - timezone.timedelta(seconds=settings.TIEBREAK_TIMEOUT_SECONDS)
-            still_active = tiebreak.created_at >= cutoff
-            tiebreak_direction = tiebreak.direction
+            direction = tiebreak.direction
+            verification_method = (
+                EntryLog.VerificationMethod.CONFUSABLE_PAIR_TIEBREAK
+                if tiebreak.reason == PendingTiebreak.Reason.CONFUSABLE_PAIR
+                else EntryLog.VerificationMethod.FACE_AND_CARD_TIEBREAK
+            )
             tiebreak.delete()
-            if still_active:
-                direction = tiebreak_direction
-                verification_method = (
-                    EntryLog.VerificationMethod.CONFUSABLE_PAIR_TIEBREAK
-                    if tiebreak.reason == PendingTiebreak.Reason.CONFUSABLE_PAIR
-                    else EntryLog.VerificationMethod.FACE_AND_CARD_TIEBREAK
-                )
-            # Expired - IdentifyView's own sweep already logs the unresolved
-            # attempt on its next call; this tap is treated as a plain
-            # successful NFC entry below, not a tiebreak resolution.
 
         return self._confirm_and_respond(person, direction, gate_location, verification_method)
 
@@ -484,24 +485,13 @@ class IdentifyView(APIView):
             if skip_result is not None:
                 results.append(skip_result)
                 continue
-            # Checked before liveness and before matching, same position as
-            # the skip checks above - an occluded face is never given a fair
-            # ArcFace comparison (it would just produce a distorted, unusable
-            # embedding) or a fair liveness read. Like those checks it's never
-            # logged, but it carries its own "please uncover your face" prompt
-            # instead of a generic "Checking..." - see _occlusion_prompt.
-            #
-            # Skipped outright for a face that already matches an enrolled
-            # person - see _already_recognizable.
-            if not self._already_recognizable(embedding, known_matrix) and self._occlusion_reason(
-                mouth_ratio, texture_ratio, det_score
-            ):
-                results.append(self._occlusion_prompt(box, gate_location))
-                continue
             # Liveness (anti-spoofing) runs after quality checks but before
             # this face is ever compared against enrolled embeddings - a
             # face that looks like a photo/screen replay is never given the
-            # chance to match anyone. See users/liveness_utils.py.
+            # chance to match anyone. See users/liveness_utils.py. It also
+            # runs before the covered-face check below, because a covered
+            # face isn't logged: a photo or screen that happens to read as
+            # covered must still be caught (and logged) as a spoof.
             liveness_score = liveness_utils.compute_liveness_score(bgr_image, box)
             if liveness_score < settings.LIVENESS_SCORE_THRESHOLD:
                 results.append(
@@ -509,6 +499,19 @@ class IdentifyView(APIView):
                         embedding, bgr_image, box, direction, gate_location, request, liveness_score
                     )
                 )
+                continue
+            # Checked before matching - an occluded face is never given a
+            # fair ArcFace comparison (it would just produce a distorted,
+            # unusable embedding). Never logged, but it carries its own
+            # "please uncover your face" prompt instead of a generic
+            # "Checking..." - see _occlusion_prompt.
+            #
+            # Skipped outright for a face that already matches an enrolled
+            # person - see _already_recognizable.
+            if not self._already_recognizable(embedding, known_matrix) and self._occlusion_reason(
+                mouth_ratio, texture_ratio, det_score
+            ):
+                results.append(self._occlusion_prompt(box, gate_location))
                 continue
             results.append(
                 self._match_one_face(
@@ -894,22 +897,20 @@ class IdentifyView(APIView):
         every few seconds for what was clearly one uninterrupted attempt to
         cover a face.
 
-        So: if occlusion was seen at this gate moments ago (_recent_
-        occlusion_seen, the same helper that notes occlusion on a
-        following success), this frame's non-match doesn't get to compete
-        in the Unknown vote at all - it's far more likely a continuation of
-        that same event than a newly-arrived, genuinely unenrolled
-        stranger. Not counting it (rather than, say, loosening the
-        occlusion thresholds further) keeps the person on the "please
-        uncover your face" prompt instead of "Unknown" winning on a
-        technicality, without touching the carefully-calibrated per-frame thresholds
-        themselves. The tradeoff is bounded and deliberate: a genuine
-        stranger who happens to walk up within VOTE_WINDOW_SECONDS of
-        someone else's occlusion attempt has their own "Unknown"
-        confirmation delayed by at most that window, not blocked - the same
-        few-seconds-to-get-it-right philosophy this whole voting system
-        already runs on."""
-        if self._recent_occlusion_seen(gate_location):
+        So: while covered frames outnumber unrecognized ones at this gate
+        in the last few seconds (_occlusion_dominates), the Unknown vote
+        is held back and the person stays on the "please uncover your
+        face" prompt - it's far more likely one covering gesture than a
+        newly-arrived stranger. A majority, not "any covered frame at
+        all": covered faces aren't logged, so if one stray covered read
+        were enough, an uncovered stranger whose face the covered-face
+        check sometimes misreads (it does, for small/soft faces - see
+        documentation §10) could keep the Unknown vote held off and never
+        reach the log. Every non-match is still recorded below, so once
+        the covered frames stop dominating, the vote already has them."""
+        UnmatchedAttempt.objects.create(gate_location=gate_location, embedding=embedding)
+
+        if self._occlusion_dominates(gate_location):
             # occlusion_suspected (not just retry+hint) so the entry-agent's
             # box stays a consistent teal "please uncover your face" for the
             # whole gesture, rather than flickering between this and the
@@ -927,8 +928,6 @@ class IdentifyView(APIView):
                 "liveness_score": liveness_score,
                 "box": _box_to_dict(box),
             }
-
-        UnmatchedAttempt.objects.create(gate_location=gate_location, embedding=embedding)
 
         query = np.array(embedding, dtype=np.float32)
         window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
@@ -1045,8 +1044,7 @@ class IdentifyView(APIView):
     @staticmethod
     def _recent_occlusion_seen(gate_location):
         """Whether an occluded frame was seen at this gate recently enough
-        to still count as "the same encounter" - used two ways: to hold back
-        an "Unknown" vote in between covered frames, and to decide
+        to still count as "the same encounter" - used to decide
         whether a face match or non-match that follows should carry the
         occlusion_detected note (see EntryLog.occlusion_detected). Reuses
         VOTE_WINDOW_SECONDS rather than inventing a separate "recent"
@@ -1057,6 +1055,18 @@ class IdentifyView(APIView):
             gate_location=gate_location, timestamp__gte=window_cutoff
         ).exists()
 
+    @staticmethod
+    def _occlusion_dominates(gate_location):
+        """Whether covered frames outnumber unrecognized ones at this gate
+        within VOTE_WINDOW_SECONDS - the hold-back condition for the
+        Unknown vote (see _confirm_or_vote_unmatched)."""
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
+        covered = OcclusionAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff).count()
+        if not covered:
+            return False
+        unmatched = UnmatchedAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff).count()
+        return covered > unmatched
+
     def _occlusion_prompt(self, box, gate_location):
         """A covered face is never logged - no EntryLog row, no captured
         photo - it only gets the on-screen "Please uncover your face" prompt
@@ -1064,9 +1074,10 @@ class IdentifyView(APIView):
         your face isn't inherently adversarial (a scarf, a cough, a phone
         call), so it isn't treated as an event worth a log entry.
 
-        An OcclusionAttempt is still recorded: _recent_occlusion_seen reads
+        An OcclusionAttempt is still recorded: _occlusion_dominates reads
         these to hold back an "Unknown" that flickers in between covered
-        frames, and to note occlusion_detected on the entry that follows
+        frames, and _recent_occlusion_seen to note occlusion_detected on
+        the entry that follows
         (see EntryLog.occlusion_detected). They're working state for that,
         not a log - the dashboard never shows them."""
         OcclusionAttempt.objects.create(gate_location=gate_location)

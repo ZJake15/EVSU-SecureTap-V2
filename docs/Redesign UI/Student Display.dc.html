@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Atkinson+Hyperlegible+Next:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css">
+<style>body{margin:0;background:#121416}a{color:#C89B3C}a:hover{color:#FFFFFF}</style>
+</helmet>
+<div style="width:{{ outerW }};height:{{ outerH }};overflow:hidden;background:#121416;position:relative">
+<div style="position:absolute;left:{{ offX }}px;top:{{ offY }}px;width:{{ rootW }};height:{{ rootH }};transform:scale({{ k }});transform-origin:0 0;background:#121416;display:flex;flex-direction:column;font-family:'Atkinson Hyperlegible Next',sans-serif;color:#FFFFFF;overflow:hidden">
+
+  <div style="flex:none;height:96px;background:#7B1113;border-bottom:3px solid #C89B3C;display:flex;align-items:center;gap:20px;padding:0 42px">
+    <img src="assets/evsu-seal.png" alt="EVSU seal" style="width:56px;height:56px;flex:none"></img>
+    <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:0">
+      <span style="font-family:'Archivo';font-stretch:125%;font-weight:900;font-size:14px;letter-spacing:0.14em;line-height:1">EVSU · MAIN GATE</span>
+      <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:36px;line-height:1;letter-spacing:-0.01em">Welcome to campus</span>
+    </div>
+    <span style="font-family:'IBM Plex Mono';font-weight:500;font-size:36px;line-height:1">{{ clock }}</span>
+  </div>
+
+  <div style="flex:1;min-height:0;position:relative;container-type:size;background:#4B5157;overflow:hidden">
+    <sc-if value="{{ noCamera }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;inset:0;background:#121416;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;text-align:center;padding:42px">
+        <i class="ph ph-identification-card" style="font-size:96px;color:#C89B3C"></i>
+        <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:56px;line-height:1.1">Please tap your ID card</span>
+        <span style="font-size:28px;color:#D9DCDF">The camera is unavailable right now.</span>
+      </div>
+    </sc-if>
+    <sc-for list="{{ faces }}" as="f" hint-placeholder-count="2">
+      <div style="position:absolute;left:{{ f.sl }}%;top:calc({{ f.t }}% + {{ f.st }}cqw);width:{{ f.sw }}%;height:100%;background:#8A9097;border-radius:40% 40% 0 0"></div>
+      <div style="position:absolute;left:{{ f.hl }}%;top:calc({{ f.t }}% + {{ f.ht }}cqw);width:{{ f.hw }}%;height:{{ f.hh }}cqw;background:#8A9097;border-radius:50%"></div>
+      <div style="position:absolute;left:{{ f.l }}%;top:{{ f.t }}%;width:{{ f.w }}%;height:{{ f.h }}cqw;border:4px solid {{ f.fg }};border-radius:8px;box-sizing:border-box">
+        <div style="position:absolute;left:-4px;bottom:100%;margin-bottom:6px;display:flex;align-items:center;gap:10px;background:{{ f.fg }};color:#FFFFFF;padding:10px 16px;border-radius:8px;white-space:nowrap;font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:32px;line-height:1">
+          <i class="ph-bold ph-{{ f.icon }}" style="font-size:32px"></i>{{ f.label }}
+        </div>
+      </div>
+    </sc-for>
+    <div style="position:absolute;top:20px;right:26px;display:flex;align-items:center;gap:10px;background:#121416;padding:8px 14px;border-radius:3px;font-family:'Archivo';font-stretch:75%;font-weight:800;font-size:18px;letter-spacing:0.12em"><span style="width:10px;height:10px;background:{{ liveDot }}"></span>{{ liveWord }}</div>
+  </div>
+
+  <div style="flex:none;height:132px;background:{{ msg.bg }};color:{{ msg.fg }};display:flex;align-items:center;gap:26px;padding:0 42px">
+    <i class="ph-bold ph-{{ msg.icon }}" style="font-size:64px;flex:none"></i>
+    <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+      <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:48px;line-height:1">{{ msg.title }}</span>
+      <span style="font-size:24px">{{ msg.sub }}</span>
+    </div>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1920,&quot;height&quot;:1080},&quot;scenario&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;idle&quot;,&quot;calm&quot;,&quot;unknown&quot;,&quot;spoof&quot;,&quot;covered&quot;,&quot;tapcard&quot;,&quot;rejected&quot;,&quot;nocamera&quot;],&quot;default&quot;:&quot;calm&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;embedded&quot;:{&quot;editor&quot;:null,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;}}">
+const C={i9:'#121416',v:'#1E7B45',c:'#9A5B00',d:'#C62828',p:'#1D5FA8',i6:'#4B5157',brass:'#C89B3C',sf:'#FFFFFF'};
+const FIRST={maria:'Maria',juan:'Juan',mark:'Mark',rhea:'Rhea'};
+const K={
+  entry:w=>({fg:C.v,icon:'check-circle',label:'Welcome, '+FIRST[w]}),
+  unknown:()=>({fg:C.c,icon:'user-circle-dashed',label:'Please see the guard'}),
+  spoof:()=>({fg:C.d,icon:'warning-octagon',label:'Show your real face'}),
+  uncover:()=>({fg:C.p,icon:'hand-palm',label:'Please uncover your face'}),
+  tap:()=>({fg:C.p,icon:'identification-card',label:'Tap your ID card'}),
+  checking:()=>({fg:C.i6,icon:'circle-notch',label:'Checking…'})
+};
+const MSG={
+  ok:{bg:C.sf,fg:C.i9,icon:'scan-smiley',title:'Look at the camera as you walk in',sub:'Keep your face uncovered. Tap your ID card if asked.'},
+  welcome:{bg:C.v,fg:C.sf,icon:'check-circle',title:'Entry recorded',sub:'Have a good day.'},
+  guard:{bg:C.c,fg:C.sf,icon:'hand',title:'Please wait — the guard will assist you',sub:'We could not recognize you.'},
+  spoof:{bg:C.d,fg:C.sf,icon:'warning-octagon',title:'Photos and screens are not accepted',sub:'Please step forward and look at the camera yourself.'},
+  uncover:{bg:C.p,fg:C.sf,icon:'hand-palm',title:'Please uncover your face',sub:'Remove your mask, cap or hand so the camera can see you.'},
+  tap:{bg:C.p,fg:C.sf,icon:'identification-card',title:'Tap your ID card on the reader',sub:'This confirms who you are.'},
+  card:{bg:C.d,fg:C.sf,icon:'identification-card',title:'This card is not registered',sub:'Please see the guard.'},
+  nocam:{bg:C.p,fg:C.sf,icon:'identification-card',title:'Tap your ID card on the reader',sub:'Hold it flat against the reader until it beeps.'}
+};
+const SC={
+  calm:{clock:'07:42:21 AM',msg:'welcome',faces:[{k:'entry',who:'maria',l:26,t:30,w:11},{k:'entry',who:'juan',l:60,t:36,w:9.5}]},
+  unknown:{clock:'07:43:04 AM',msg:'guard',faces:[{k:'unknown',l:30,t:30,w:11},{k:'checking',l:64,t:40,w:8.5}]},
+  spoof:{clock:'07:43:07 AM',msg:'spoof',faces:[{k:'spoof',l:40,t:28,w:12}]},
+  covered:{clock:'07:44:33 AM',msg:'uncover',faces:[{k:'uncover',l:24,t:32,w:10.5},{k:'entry',who:'mark',l:60,t:30,w:10}]},
+  tapcard:{clock:'07:45:13 AM',msg:'tap',faces:[{k:'tap',l:40,t:30,w:11}]},
+  rejected:{clock:'07:45:41 AM',msg:'card',faces:[{k:'entry',who:'maria',l:44,t:30,w:11}]},
+  nocamera:{clock:'07:46:20 AM',msg:'nocam',noCamera:true,faces:[]},
+  offline:{clock:'07:46:05 AM',msg:'welcome',faces:[{k:'entry',who:'maria',l:26,t:30,w:11},{k:'entry',who:'juan',l:60,t:36,w:9.5}]},
+  idle:{clock:'07:41:00 AM',msg:'ok',faces:[]}
+};
+class Component extends DCLogic {
+  state={vw:typeof window!=='undefined'?window.innerWidth:1920,vh:typeof window!=='undefined'?window.innerHeight:1080};
+  componentDidMount(){this._r=()=>this.setState({vw:innerWidth,vh:innerHeight});addEventListener('resize',this._r);this._r();}
+  componentWillUnmount(){removeEventListener('resize',this._r);}
+  fit(){
+    if(this.props.embedded??false) return {outerW:'100%',outerH:'100%',rootW:'100%',rootH:'100%',k:1,offX:0,offY:0};
+    const W=1920,H=1080,{vw,vh}=this.state,k=Math.min(vw/W,vh/H);
+    return {outerW:'100vw',outerH:'100vh',rootW:W+'px',rootH:H+'px',k,offX:Math.round((vw-W*k)/2),offY:Math.round((vh-H*k)/2)};
+  }
+  renderVals(){
+    let key=this.props.scenario;
+    if(!key&&typeof location!=='undefined') key=new URLSearchParams(location.search).get('scenario');
+    const sc=SC[key]||SC.calm;
+    const faces=sc.faces.map(f=>{
+      const l=+(100-f.l-f.w).toFixed(2); // mirrored, like a mirror for the student
+      const h=f.w*1.18;
+      return {...K[f.k](f.who),l,t:f.t,w:f.w,h:+h.toFixed(2),
+        hl:l+f.w*0.1,ht:+(h*0.06).toFixed(2),hw:f.w*0.8,hh:+(h*0.9).toFixed(2),
+        sl:l-f.w*0.65,st:+(h*0.9).toFixed(2),sw:f.w*2.3};
+    });
+    return {...this.fit(),clock:sc.clock,faces,noCamera:!!sc.noCamera,msg:MSG[sc.msg],
+      liveDot:sc.noCamera?'#8A9097':C.brass,liveWord:sc.noCamera?'NO SIGNAL':'LIVE'};
+  }
+}
+</script>
+</body>
+</html>

@@ -14,7 +14,8 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css">
 <style>body{margin:0}</style>
 </helmet>
-<div style="width:100%;height:100%;background:#EEF0F2;display:flex;flex-direction:column;font-family:'Atkinson Hyperlegible Next',sans-serif;color:#121416;overflow:hidden;box-sizing:border-box">
+<div style="width:{{ outerW }};height:{{ outerH }};overflow:hidden;background:#121416;position:relative">
+<div style="position:absolute;left:{{ offX }}px;top:{{ offY }}px;width:{{ rootW }};height:{{ rootH }};transform:scale({{ k }});transform-origin:0 0;background:#EEF0F2;display:flex;flex-direction:column;font-family:'Atkinson Hyperlegible Next',sans-serif;color:#121416;overflow:hidden;box-sizing:border-box">
 
   <div style="flex:none;height:{{ s.headerH }}px;background:#7B1113;border-bottom:3px solid #C89B3C;display:flex;align-items:center;gap:26px;padding:0 {{ s.pad }}px;box-sizing:border-box">
     <img src="assets/evsu-seal.png" alt="EVSU seal" style="width:{{ s.seal }}px;height:{{ s.seal }}px;flex:none"></img>
@@ -37,22 +38,22 @@
     </div>
   </div>
 
-  <div style="flex:none;display:flex;flex-wrap:wrap;align-items:flex-end;row-gap:10px;padding:{{ s.statTop }}px {{ s.pad }}px 16px">
-    <div style="display:flex;flex-direction:column;gap:4px;padding-right:68px">
-      <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:14px;letter-spacing:0.08em;color:#4B5157">TODAY</span>
-      <span style="font-family:'Archivo';font-stretch:125%;font-weight:800;font-size:{{ s.hero }}px;line-height:0.9;letter-spacing:-0.02em">{{ sc.stats.today }}</span>
-    </div>
-    <sc-for list="{{ stats }}" as="st" hint-placeholder-count="4">
-      <div style="display:flex;flex-direction:column;gap:6px;padding:0 42px 4px 26px;border-left:1px solid #D9DCDF">
-        <span style="display:flex;align-items:center;gap:6px;font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:14px;letter-spacing:0.08em;color:{{ st.fg }}"><i class="ph-bold ph-{{ st.icon }}" style="font-size:16px"></i>{{ st.label }}</span>
-        <span style="font-family:'Archivo';font-stretch:125%;font-weight:700;font-size:56px;line-height:0.9;color:{{ st.fg }}">{{ st.val }}</span>
-      </div>
-    </sc-for>
-  </div>
-
-  <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:{{ s.colGap }}px;padding:10px {{ s.pad }}px 16px">
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:{{ s.colGap }}px;padding:{{ s.statTop }}px {{ s.pad }}px 16px">
     <div style="display:flex;flex-direction:column;gap:10px;min-height:0">
-      <div style="flex:1;min-height:0;background:#121416;border-radius:14px;overflow:hidden;display:flex;flex-direction:column">
+      <div style="flex:none;display:flex;flex-wrap:wrap;align-items:flex-end;row-gap:10px;padding:0 0 6px">
+        <div style="display:flex;flex-direction:column;gap:4px;padding-right:68px">
+          <span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:14px;letter-spacing:0.08em;color:#4B5157">TODAY</span>
+          <span style="font-family:'Archivo';font-stretch:125%;font-weight:800;font-size:{{ s.hero }}px;line-height:0.9;letter-spacing:-0.02em">{{ sc.stats.today }}</span>
+        </div>
+        <sc-for list="{{ stats }}" as="st" hint-placeholder-count="4">
+          <div style="display:flex;flex-direction:column;gap:6px;padding:0 42px 4px 26px;border-left:1px solid #D9DCDF">
+            <span style="display:flex;align-items:center;gap:6px;font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:14px;letter-spacing:0.08em;color:{{ st.fg }}"><i class="ph-bold ph-{{ st.icon }}" style="font-size:16px"></i>{{ st.label }}</span>
+            <span style="font-family:'Archivo';font-stretch:125%;font-weight:700;font-size:56px;line-height:0.9;color:{{ st.fg }}">{{ st.val }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="flex:1;min-height:0;background:#121416;border-radius:8px;overflow:hidden;display:flex;flex-direction:column">
         <sc-if value="{{ sc.banner }}" hint-placeholder-val="{{ false }}">
           <div style="flex:none;height:{{ s.bannerH }}px;background:{{ banner.fg }};color:#FFFFFF;display:flex;align-items:center;gap:16px;padding:0 26px">
             <i class="ph-bold ph-{{ banner.icon }}" style="font-size:36px"></i>
@@ -77,11 +78,11 @@
             </div>
           </sc-if>
           <sc-if value="{{ hasCamera }}" hint-placeholder-val="{{ true }}">
-            <div style="position:relative;width:min(100cqw, 177.78cqh);height:min(100cqh, 56.25cqw);background:#4B5157;overflow:hidden">
+            <div style="position:relative;width:100%;height:100%;background:#4B5157;overflow:hidden">
               <sc-for list="{{ faces }}" as="f" hint-placeholder-count="2">
-                <div style="position:absolute;left:{{ f.sl }}%;top:{{ f.st }}%;width:{{ f.sw }}%;height:{{ f.sh }}%;background:#8A9097;border-radius:40% 40% 0 0"></div>
-                <div style="position:absolute;left:{{ f.hl }}%;top:{{ f.ht }}%;width:{{ f.hw }}%;height:{{ f.hh }}%;background:#8A9097;border-radius:50%"></div>
-                <div style="position:absolute;left:{{ f.l }}%;top:{{ f.t }}%;width:{{ f.w }}%;height:{{ f.h }}%;border:2px solid {{ f.fg }};border-radius:3px;box-sizing:border-box">
+                <div style="position:absolute;left:{{ f.sl }}%;top:calc({{ f.t }}% + {{ f.st }}cqw);width:{{ f.sw }}%;height:100%;background:#8A9097;border-radius:40% 40% 0 0"></div>
+                <div style="position:absolute;left:{{ f.hl }}%;top:calc({{ f.t }}% + {{ f.ht }}cqw);width:{{ f.hw }}%;height:{{ f.hh }}cqw;background:#8A9097;border-radius:50%"></div>
+                <div style="position:absolute;left:{{ f.l }}%;top:{{ f.t }}%;width:{{ f.w }}%;height:{{ f.h }}cqw;border:2px solid {{ f.fg }};border-radius:3px;box-sizing:border-box">
                   <div style="position:absolute;left:-2px;bottom:100%;display:flex;align-items:center;gap:6px;background:{{ f.fg }};color:#FFFFFF;padding:6px 10px;border-radius:3px 3px 0 0;white-space:nowrap;font-weight:700;font-size:{{ s.tab }}px;line-height:1.1">
                     <i class="ph-bold ph-{{ f.icon }}" style="font-size:20px"></i>{{ f.label }}
                   </div>
@@ -144,7 +145,7 @@
     </div>
 
     <div style="display:flex;flex-direction:column;min-height:0;min-width:0">
-      <div style="flex:none;display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:6px 0 10px">
+      <div style="flex:none;display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:0 0 10px">
         <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:700;font-size:20px">Live log</span>
         <span style="font-family:'IBM Plex Mono';font-size:14px;color:#4B5157">Newest first · last 60</span>
       </div>
@@ -192,6 +193,7 @@
     <span>Recognition threshold <span style="font-family:'IBM Plex Mono';font-weight:500;color:#121416">0.45</span></span>
     <span style="display:flex;align-items:center;gap:6px;font-weight:700;color:{{ camFg }}"><i class="ph-bold ph-{{ camIcon }}" style="font-size:16px"></i>{{ camWord }}</span>
     <span style="display:flex;align-items:center;gap:10px;border:1px solid #D9DCDF;border-radius:3px;padding:6px 10px;color:#121416;font-family:'IBM Plex Mono';font-size:14px">0: Integrated Webcam<i class="ph-bold ph-caret-down" style="font-size:14px"></i></span>
+    <span onClick="{{ toggleStudent }}" style="display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border-radius:8px;border:1px solid {{ stu.border }};background:{{ stu.bg }};color:{{ stu.fg }};font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;box-sizing:border-box"><i class="ph-bold ph-{{ stu.icon }}" style="font-size:16px"></i>{{ stu.label }}</span>
     <span>Noel B. Cortez · v1.0</span>
     <span style="flex:1"></span>
     <span style="display:flex;align-items:center;gap:6px;font-weight:700;color:{{ beFg }}"><i class="ph-bold ph-{{ beIcon }}" style="font-size:16px"></i>{{ beWord }}</span>
@@ -199,8 +201,9 @@
     <span style="display:flex;align-items:center;gap:6px;font-weight:700;color:{{ syFg }}"><i class="ph-bold ph-{{ syIcon }}" style="font-size:16px"></i>{{ syWord }}</span>
   </div>
 </div>
+</div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1920,&quot;height&quot;:1080},&quot;scenario&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;calm&quot;,&quot;unknown&quot;,&quot;spoof&quot;,&quot;covered&quot;,&quot;tapcard&quot;,&quot;rejected&quot;,&quot;nocamera&quot;,&quot;offline&quot;],&quot;default&quot;:&quot;calm&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;narrow&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;}}">
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1920,&quot;height&quot;:1080},&quot;scenario&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;calm&quot;,&quot;unknown&quot;,&quot;spoof&quot;,&quot;covered&quot;,&quot;tapcard&quot;,&quot;rejected&quot;,&quot;nocamera&quot;,&quot;offline&quot;],&quot;default&quot;:&quot;calm&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;narrow&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;embedded&quot;:{&quot;editor&quot;:null,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;studentOpen&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;}}">
 const C={i9:'#121416',i6:'#4B5157',i4:'#8A9097',line:'#D9DCDF',cv:'#EEF0F2',sf:'#FFFFFF',brass:'#C89B3C',v:'#1E7B45',vt:'#E3F2E9',c:'#9A5B00',ct:'#FBEFD9',d:'#C62828',dt:'#FBE4E4',p:'#1D5FA8'};
 const K={
   entry:{fg:C.v,icon:'sign-in',word:'ENTRY'},
@@ -243,6 +246,22 @@ function view(e){
     thumbBg:crop?C.i9:C.cv,thumbFg:crop?C.i4:C.i6};
 }
 class Component extends DCLogic {
+  state={studentOpen:false,vw:typeof window!=='undefined'?window.innerWidth:1920,vh:typeof window!=='undefined'?window.innerHeight:1080};
+  componentDidMount(){this._r=()=>this.setState({vw:innerWidth,vh:innerHeight});addEventListener('resize',this._r);this._r();}
+  componentWillUnmount(){removeEventListener('resize',this._r);clearInterval(this._poll);}
+  toggleStudent=()=>{
+    if(this.state.studentOpen){try{this._win&&this._win.close();}catch(e){}this.setState({studentOpen:false});return;}
+    const sc=this.props.scenario??'calm';
+    this._win=window.open('Student Display.dc.html?scenario='+sc,'securetap-student','popup,width=1280,height=720');
+    this.setState({studentOpen:true});
+    clearInterval(this._poll);
+    this._poll=setInterval(()=>{if(!this._win||this._win.closed){clearInterval(this._poll);this.setState({studentOpen:false});}},1000);
+  };
+  fit(narrow){
+    if(this.props.embedded??false) return {outerW:'100%',outerH:'100%',rootW:'100%',rootH:'100%',k:1,offX:0,offY:0};
+    const W=narrow?1100:1920,H=narrow?700:1080,{vw,vh}=this.state,k=Math.min(vw/W,vh/H);
+    return {outerW:'100vw',outerH:'100vh',rootW:W+'px',rootH:H+'px',k,offX:Math.round((vw-W*k)/2),offY:Math.round((vh-H*k)/2)};
+  }
   renderVals(){
     const key=this.props.scenario??'calm';
     const narrow=this.props.narrow??false;
@@ -258,18 +277,22 @@ class Component extends DCLogic {
       {label:'IN FRAME',val:t.inFrame,fg:C.i6,icon:'users'}
     ];
     const faces=sc.faces.map(f=>{
-      const k=K[f.k];const h=f.w*16/9*1.18;
+      const k=K[f.k];const h=f.w*1.18;
       const label=f.who?`${P[f.who][0]} · ${f.conf}%`:k.word;
       return {...f,h:+h.toFixed(2),fg:k.fg,icon:k.icon,label,
-        hl:f.l+f.w*0.1,ht:f.t+h*0.06,hw:f.w*0.8,hh:h*0.9,
-        sl:f.l-f.w*0.65,st:f.t+h*0.9,sw:f.w*2.3,sh:100};
+        hl:f.l+f.w*0.1,ht:+(h*0.06).toFixed(2),hw:f.w*0.8,hh:+(h*0.9).toFixed(2),
+        sl:f.l-f.w*0.65,st:+(h*0.9).toFixed(2),sw:f.w*2.3};
     });
     const b=sc.banner?{...sc.banner,fg:K[sc.banner.k].fg,icon:K[sc.banner.k].icon}:null;
     const feat=view(sc.feat);
     const rows=sc.list.slice(0,s.rows).map(view);
     const scanBar={waiting:C.line,accepted:C.v,rejected:C.d,offline:C.c}[sc.scan];
     const n=faces.length;
+    const open=this.state.studentOpen||(this.props.studentOpen??false);
     return {
+      toggleStudent:this.toggleStudent,
+      stu:open?{label:'Student display open · Close',icon:'monitor',bg:'#121416',fg:'#FFFFFF',border:'#121416'}:{label:'Open student display',icon:'monitor-arrow-up',bg:'#FFFFFF',fg:'#7B1113',border:'#7B1113'},
+      ...this.fit(narrow),
       s,sc,stats,faces,feat,rows,banner:b||{},noBanner:!b,hasCamera:!sc.noCamera,
       liveDot:sc.noCamera?C.i4:C.brass,liveWord:sc.noCamera?'NO SIGNAL':'LIVE',
       caption:sc.noCamera?'Camera 0 · waiting for device':`1280×720 · ${n} face${n===1?'':'s'} tracked`,

@@ -448,6 +448,9 @@ class LauncherWindow:
         self._backend_external = False
         self._dashboard_external = False
         self._spinners = {}
+        # True while the Entry Agent's pre-flight checks run in the background,
+        # so a second click can't start a second round of them.
+        self._preflight_running = False
         # Set by the entry-agent's output-reader thread, acted on by the Tk
         # main thread in _flush_log - same rule as the Vite URL above.
         self._entry_agent_ready = False
@@ -1116,18 +1119,57 @@ class LauncherWindow:
         self._set_card_state("dashboard", "running", f"Running at {url.split('://', 1)[-1]} — click to open")
         webbrowser.open(url)
 
+    def _run_in_background(self, work, on_done):
+        """Runs work() off the Tk thread, then on_done(result) back on it.
+        For the network and device checks: on Windows a connection to a port
+        nothing is listening on takes about 2s to fail, and doing that on
+        the Tk thread froze the whole window for that long. on_done gets
+        None if work() raised (the error goes to the log)."""
+        box = {}
+
+        def runner():
+            try:
+                box["result"] = work()
+            except Exception as exc:  # a failed check must never take the launcher down
+                box["error"] = exc
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+
+        def check():
+            if thread.is_alive():
+                self.root.after(50, check)
+                return
+            if "error" in box:
+                self._append_log(f"[launcher] background check failed: {box['error']}")
+            on_done(box.get("result"))
+
+        self.root.after(50, check)
+
     def _open_entry_agent(self):
         if self.entry_agent.is_running():
             self._append_log("[launcher] entry-agent is already running")
             return
+        if self._preflight_running:
+            return  # already checking from an earlier click
         if not (ENTRY_AGENT_DIR / "main.py").exists():
             self._append_log(f"[launcher] entry-agent not found at {ENTRY_AGENT_DIR}")
             return
 
         self._save_current_settings()
-        if not self._run_entry_agent_preflight_checks():
-            self._append_log("[launcher] opening the gate monitor was cancelled at the pre-flight warning")
-            return
+        self._preflight_running = True
+        self._start_spinner("entry-agent", "Checking the backend and card reader…")
+        self._run_in_background(self._entry_agent_preflight_warnings, self._finish_opening_entry_agent)
+
+    def _finish_opening_entry_agent(self, warnings):
+        self._preflight_running = False
+        if warnings:
+            self._append_log("[launcher] pre-flight check: " + " | ".join(text for _name, text in warnings))
+            if not self._preflight_dialog(warnings):
+                self._stop_spinner("entry-agent")
+                self._set_card_state("entry-agent", None)
+                self._append_log("[launcher] opening the gate monitor was cancelled at the pre-flight warning")
+                return
 
         self._append_log(
             f"[launcher] starting entry-agent (gate={self.settings['gate_location']!r}, "
@@ -1154,9 +1196,10 @@ class LauncherWindow:
         # rather than as the button having missed the click.
         self._start_spinner("entry-agent", "Starting the camera and opening the gate monitor…")
 
-    def _run_entry_agent_preflight_checks(self):
-        """Fast, best-effort checks before opening the gate monitor. Returns
-        whether to go ahead. A warning never *stops* it on its own - a false
+    def _entry_agent_preflight_warnings(self):
+        """Fast, best-effort checks before opening the gate monitor, run off
+        the Tk thread (see _run_in_background) - returns the warnings to
+        show, if any. A warning never *stops* it on its own - a false
         negative here (backend slow to answer, the NFC check itself failing)
         mustn't be able to block a live demo - it just gives the guard the
         choice. Camera presence is NOT checked here on purpose: the gate
@@ -1174,10 +1217,7 @@ class LauncherWindow:
                 "No NFC card reader was detected (looked for USB IDs " + ", ".join(reader_ids) + "). "
                 "If yours is plugged in, add its ID to NFC_READER_USB_IDS in entry-agent/.env.",
             ))
-        if not warnings:
-            return True
-        self._append_log("[launcher] pre-flight check: " + " | ".join(text for _name, text in warnings))
-        return self._preflight_dialog(warnings)
+        return warnings
 
     def _preflight_dialog(self, warnings):
         """A modal "Before you open the gate monitor" dialog in the app's own
@@ -1335,8 +1375,27 @@ class LauncherWindow:
     def _poll_health(self):
         """Backend liveness plus a liveness check on each child process, so a
         service that died (MySQL down, a port already taken) turns red here
-        instead of just never becoming ready."""
-        if service_responds(HEALTH_URL, timeout=1.5):
+        instead of just never becoming ready. The two network probes run off
+        the Tk thread (see _run_in_background) - while the backend is down or
+        still starting, each one takes up to 1.5s to give up, which used to
+        freeze the window on every poll."""
+        dashboard_external = self._dashboard_external
+
+        def probe():
+            return (
+                service_responds(HEALTH_URL, timeout=1.5),
+                dashboard_external and service_responds(FALLBACK_DASHBOARD_URL),
+            )
+
+        def apply(result):
+            backend_up, dashboard_up = result or (False, False)
+            self._apply_health(backend_up, dashboard_up)
+            self.root.after(HEALTH_POLL_MS, self._poll_health)
+
+        self._run_in_background(probe, apply)
+
+    def _apply_health(self, backend_up, external_dashboard_up):
+        if backend_up:
             if not self._backend_ok:
                 self._append_log("[launcher] backend is up")
             self._backend_ok = True
@@ -1352,7 +1411,7 @@ class LauncherWindow:
 
         if self.dashboard.is_running():
             self._set_status("dashboard", "running")
-        elif self._dashboard_external and service_responds(FALLBACK_DASHBOARD_URL):
+        elif self._dashboard_external and external_dashboard_up:
             self._set_status("dashboard", "running")
         else:
             if self._spinning("dashboard"):
@@ -1388,8 +1447,6 @@ class LauncherWindow:
                 # that isn't.
                 self._entry_agent_started = False
                 self._set_card_state("entry-agent", None)
-
-        self.root.after(HEALTH_POLL_MS, self._poll_health)
 
     # ---- log ------------------------------------------------------------
 

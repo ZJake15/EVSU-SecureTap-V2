@@ -1,5 +1,7 @@
 import sqlite3
+import sys
 import threading
+import traceback
 from datetime import datetime, timezone
 
 import requests
@@ -13,6 +15,10 @@ class OfflineQueue:
     use this - a stale queued frame has no value once connectivity returns.)
     This is the offline-mode risk mitigation from the capstone proposal - a
     dropped connection should never stop entry logging outright."""
+
+    # 4xx answers that mean "try again later", not "this tap is invalid":
+    # a wrong/rotated service token (fixable in .env), a timeout, rate limiting.
+    RETRYABLE_STATUSES = (401, 403, 408, 429)
 
     def __init__(self, db_path, api_client):
         self.db_path = db_path
@@ -74,7 +80,12 @@ class OfflineQueue:
 
     def _sync_loop(self, interval_seconds):
         while not self._stop_event.is_set():
-            self._flush_once()
+            try:
+                self._flush_once()
+            except Exception:
+                # A locked or unreadable queue file must not end this thread -
+                # queued taps would then never sync for the rest of the run.
+                traceback.print_exc()
             self._stop_event.wait(interval_seconds)
 
     def _flush_once(self):
@@ -92,6 +103,17 @@ class OfflineQueue:
         for row_id, nfc_id, gate_location, direction in rows:
             try:
                 self.api_client.verify(gate_location, direction, nfc_id=nfc_id)
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status is not None and 400 <= status < 500 and status not in self.RETRYABLE_STATUSES:
+                    # The backend got the tap and refused it for good (a
+                    # malformed request) - retrying can never succeed, and
+                    # leaving it at the head of the queue would block every
+                    # tap queued after it forever.
+                    print(f"offline queue: dropping tap {row_id}, rejected with HTTP {status}", file=sys.stderr)
+                    self._delete(row_id)
+                    continue
+                break  # a server-side problem or a bad token - keep it, retry next interval
             except requests.RequestException:
                 break  # still offline - stop this cycle, the next interval will retry
             else:

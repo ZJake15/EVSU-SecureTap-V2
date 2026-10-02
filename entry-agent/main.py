@@ -166,6 +166,10 @@ def _build_recognition(direction, result, api_client, photo_cache):
         "confidence": confidence,
         "log_id": result.get("log_id"),
         "deduped": bool(result.get("deduped")),
+        # Settings page: "Alert on repeated unknown faces" - the backend sets
+        # this when the same unrecognized face keeps coming back.
+        "repeated_unknown": bool(result.get("repeated_unknown")),
+        "repeated_unknown_count": result.get("repeated_unknown_count"),
         "direction": direction,
         "photo_bytes": _fetch_photo_cached(api_client, photo_cache, photo_url),
     }
@@ -204,7 +208,11 @@ def scan_loop(config, api_client, camera, ui, stop_event):
     the primary gate check, no card tap required, and handles several
     people walking through together in the same frame. Kept off the Tk
     thread so a burst of faces during class change can't freeze the UI."""
-    threshold_shown = False
+    # The backend sends its current Settings-page values with every answer,
+    # so a change made on the dashboard reaches this gate monitor within a
+    # frame or two - no restart. Only passed on to the UI when they change.
+    last_threshold = None
+    last_alerts = None
     photo_cache = {}  # URL -> bytes, lives for this scan session
     while not stop_event.is_set():
         try:
@@ -216,9 +224,14 @@ def scan_loop(config, api_client, camera, ui, stop_event):
         try:
             response = api_client.identify(config.gate_location, config.direction, image_bytes)
             ui.show_offline(False)
-            if not threshold_shown and response.get("threshold") is not None:
-                ui.set_threshold(response["threshold"])
-                threshold_shown = True
+            threshold = response.get("threshold")
+            if threshold is not None and threshold != last_threshold:
+                ui.set_threshold(threshold)
+                last_threshold = threshold
+            alerts = response.get("alerts")
+            if alerts is not None and alerts != last_alerts:
+                ui.set_alert_settings(alerts)
+                last_alerts = alerts
             recognitions = [
                 r
                 for r in (

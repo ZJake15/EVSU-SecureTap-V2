@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from securetap_project.media_auth import build_signed_media_url
+from configuration import store as system_settings
 
 from .confusable_utils import (
     MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON,
@@ -149,6 +150,15 @@ class PersonSerializer(serializers.ModelSerializer):
 
     def validate_photo(self, value):
         return self._validate_image_format(value)
+
+    def validate_fallback_enrollment(self, value):
+        # Settings page: "Allow single-photo registration". Checked here on
+        # the server, not just by hiding the dashboard's single-photo tab.
+        if value and not system_settings.get("allow_single_photo"):
+            raise serializers.ValidationError(
+                "Single-photo registration is turned off in Settings - use the guided 5-photo capture."
+            )
+        return value
 
     def validate_profile_picture(self, value):
         # Applies to the display photo too: it never goes through face

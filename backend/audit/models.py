@@ -43,6 +43,13 @@ class AuditLogEntry(models.Model):
         # specific people going forward, not routine enroll/edit noise.
         CONFUSABLE_PAIR_FLAGGED = "confusable_pair_flagged", "Confusable pair flagged"
         CONFUSABLE_PAIR_REMOVED = "confusable_pair_removed", "Confusable pair removed"
+        # A change saved from the dashboard's Settings page - one entry per
+        # setting, with the old and new value in `detail`.
+        SETTING_CHANGED = "setting_changed", "Setting changed"
+        # The scheduled clean-up (manage.py purge_old_data) - what it deleted.
+        DATA_PURGED = "data_purged", "Old data deleted"
+        # Failed login lockout tripped (Settings page, off by default).
+        ACCOUNT_LOCKED = "account_locked", "Account locked"
 
     # Nullable only in case a user account is later deleted out from under an
     # old entry (SET_NULL, not CASCADE) - the row (and its description of what

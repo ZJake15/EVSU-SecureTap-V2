@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "logs",
     "reports",
     "audit",
+    "configuration",
 ]
 
 MIDDLEWARE = [

@@ -3,7 +3,7 @@ from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from accounts.views import DashboardAccountViewSet, LoginView, SystemSettingsView
+from accounts.views import DashboardAccountViewSet, LoginView
 from audit.views import AuditLogViewSet
 from logs.views import (
     EntryLogViewSet,
@@ -16,6 +16,7 @@ from logs.views import (
 )
 from reports.views import FarFrrView, SummaryView
 from securetap_project.media_views import protected_media_serve
+from configuration.views import SessionPolicyView, SettingsView
 from users.views import (
     BulkImportView,
     ConfusablePairViewSet,
@@ -46,7 +47,8 @@ urlpatterns = [
     path("api/users/check-photo-quality", PhotoQualityCheckView.as_view(), name="users-check-photo-quality"),
     path("api/reports/summary", SummaryView.as_view(), name="reports-summary"),
     path("api/reports/far-frr", FarFrrView.as_view(), name="reports-far-frr"),
-    path("api/settings", SystemSettingsView.as_view(), name="system-settings"),
+    path("api/settings", SettingsView.as_view(), name="system-settings"),
+    path("api/session-policy", SessionPolicyView.as_view(), name="session-policy"),
     path("api/", include(router.urls)),
     # Was `if settings.DEBUG: urlpatterns += static(...)` - that served every
     # file under MEDIA_ROOT (enrollment photos, gate-capture photos) to

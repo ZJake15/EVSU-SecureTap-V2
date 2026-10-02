@@ -27,6 +27,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import webbrowser
 from collections import deque
@@ -86,6 +87,8 @@ FALLBACK_DASHBOARD_URL = "http://localhost:5173"
 VITE_URL_PATTERN = re.compile(r"https?://(?:localhost|127\.0\.0\.1):\d+")
 
 HEALTH_POLL_MS = 2000
+# How often the launcher re-runs the data clean-up while it stays open.
+CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 LOG_MAX_LINES = 500
 LOG_REFRESH_MS = 700
 
@@ -451,6 +454,10 @@ class LauncherWindow:
         # True while the Entry Agent's pre-flight checks run in the background,
         # so a second click can't start a second round of them.
         self._preflight_running = False
+        # The daily data clean-up (backend/manage.py purge_old_data) - see
+        # _maybe_run_cleanup.
+        self._cleanup_running = False
+        self._last_cleanup_at = None
         # Set by the entry-agent's output-reader thread, acted on by the Tk
         # main thread in _flush_log - same rule as the Vite URL above.
         self._entry_agent_ready = False
@@ -1394,8 +1401,36 @@ class LauncherWindow:
 
         self._run_in_background(probe, apply)
 
+    def _maybe_run_cleanup(self):
+        """Runs the data clean-up once the backend is up, then once a day
+        while the launcher stays open - this project has no job scheduler,
+        and the launcher is how the system is started. The command itself
+        does nothing unless "Automatic deletion" is on in the dashboard's
+        Settings page, so this is harmless while that's off."""
+        now = time.monotonic()
+        if self._cleanup_running or (
+            self._last_cleanup_at is not None and now - self._last_cleanup_at < CLEANUP_INTERVAL_SECONDS
+        ):
+            return
+        self._cleanup_running = True
+        self._last_cleanup_at = now
+
+        def work():
+            result = subprocess.run(
+                [venv_python(), "manage.py", "purge_old_data"], cwd=BACKEND_DIR, capture_output=True,
+                text=True, timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            return (result.stdout + result.stderr).strip()
+
+        def done(output):
+            self._cleanup_running = False
+            self._append_log(f"[launcher] daily data clean-up: {output or 'could not run - see above'}")
+
+        self._run_in_background(work, done)
+
     def _apply_health(self, backend_up, external_dashboard_up):
         if backend_up:
+            self._maybe_run_cleanup()
             if not self._backend_ok:
                 self._append_log("[launcher] backend is up")
             self._backend_ok = True

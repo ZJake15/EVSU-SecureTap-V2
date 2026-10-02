@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import logo from "../assets/logo.png";
-import { useAuth } from "../auth/AuthContext";
+import { IDLE_NOTICE_KEY, useAuth } from "../auth/AuthContext";
 import { Field, Icon, Notice } from "../components/ui";
 
 export default function Login() {
@@ -12,6 +12,12 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Read once: set by "Automatic logout" when it signed this user out.
+  const [idleMinutes] = useState(() => {
+    const value = sessionStorage.getItem(IDLE_NOTICE_KEY);
+    if (value) sessionStorage.removeItem(IDLE_NOTICE_KEY);
+    return value;
+  });
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -22,10 +28,13 @@ export default function Login() {
       const redirectTo = location.state?.from?.pathname || "/";
       navigate(redirectTo, { replace: true });
     } catch (err) {
+      const status = err.response?.status;
       setError(
-        err.response?.status === 401
+        status === 401
           ? "Invalid username or password."
-          : "Unable to reach the server. Please try again."
+          : status === 403 && err.response.data?.detail
+            ? err.response.data.detail // e.g. locked after too many wrong passwords
+            : "Unable to reach the server. Please try again."
       );
     } finally {
       setIsSubmitting(false);
@@ -61,6 +70,11 @@ export default function Login() {
           {error && (
             <Notice tone="danger">
               <span className="font-bold">{error}</span>
+            </Notice>
+          )}
+          {!error && idleMinutes && (
+            <Notice tone="prompt" icon="clock">
+              You were signed out after {idleMinutes} minute{idleMinutes === "1" ? "" : "s"} with no activity.
             </Notice>
           )}
 

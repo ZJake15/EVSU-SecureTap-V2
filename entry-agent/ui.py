@@ -424,6 +424,11 @@ ALERTS = {
         "color": DANGER, "icon": "warning-octagon", "title": "SPOOF SUSPECTED",
         "sub": "Photo or screen held to the camera — not a live face",
     },
+    # Settings page: "Alert on repeated unknown faces".
+    "repeated": {
+        "color": CAUTION, "icon": "user-circle-dashed", "title": "SAME UNKNOWN PERSON AGAIN",
+        "sub": "Seen again and again at this gate — check this person",
+    },
 }
 
 
@@ -547,7 +552,10 @@ class GateMonitorWindow:
         self._log_entries = []  # newest first
         self._log_photo_images = []  # keeps CTkImage refs alive for the log list
         self.stats = {"entries": 0, "exits": 0, "unknown": 0, "spoof": 0, "occlusion": 0}
-        self._alert = None  # {"kind": ..., "time": ...} while the alarm banner shows
+        self._alert = None  # {"kind": ..., "time": ..., "sub": ...} while the alarm banner shows
+        # Settings page: "Alert on suspected fake face" - on until the
+        # backend says otherwise (see set_alert_settings).
+        self._alert_spoof = True
         self._alert_hide_job = None
         self._card_reset_job = None
         self._card_images = {}
@@ -1209,6 +1217,11 @@ class GateMonitorWindow:
     def set_threshold(self, threshold):
         self._queue.put(("threshold", threshold))
 
+    def set_alert_settings(self, alerts):
+        """alerts: {"spoof": bool} from the backend (Settings page) - whether
+        a suspected fake gets the alarm banner and sound."""
+        self._queue.put(("alert_settings", alerts))
+
     # ---- public API: card side --------------------------------------------
 
     def show_card_status(self, message):
@@ -1272,6 +1285,8 @@ class GateMonitorWindow:
             self._refresh_stat_labels()
         elif kind == "threshold":
             self.threshold_label.configure(text=f"{payload:.2f}")
+        elif kind == "alert_settings":
+            self._alert_spoof = bool(payload.get("spoof", True))
         elif kind == "card_match":
             self._render_card_match(payload)
         elif kind == "card_failure":
@@ -1495,8 +1510,11 @@ class GateMonitorWindow:
             self._seen_log_ids.add(log_id)
             if item.get("spoof_suspected"):
                 self.stats["spoof"] += 1
-                self._show_alert_banner("spoof")
-                _play_alert_sound()
+                # Still counted and logged either way - the Settings page's
+                # "Alert on suspected fake face" only silences the alarm.
+                if self._alert_spoof:
+                    self._show_alert_banner("spoof")
+                    _play_alert_sound()
             elif item.get("occlusion_suspected"):
                 # Only reached by an older backend - covered faces no longer
                 # come with a log_id (see IdentifyView._occlusion_prompt), so
@@ -1507,7 +1525,12 @@ class GateMonitorWindow:
                 self.stats[key] += 1
             else:
                 self.stats["unknown"] += 1
-                self._show_alert_banner("unknown")
+                if item.get("repeated_unknown"):
+                    count = item.get("repeated_unknown_count")
+                    sub = f"Seen {count} times at this gate recently — check this person" if count else None
+                    self._show_alert_banner("repeated", sub)
+                else:
+                    self._show_alert_banner("unknown")
                 _play_alert_sound()
             self._push_log_entry(item)
 
@@ -1515,13 +1538,13 @@ class GateMonitorWindow:
         if self._student is not None:
             self._student.update_recognitions(recognitions, image_size)
 
-    def _show_alert_banner(self, kind):
+    def _show_alert_banner(self, kind, sub=None):
         """Docks the alarm banner across the top of the video panel - fires
         once per genuinely new unknown-face or spoof event (the same log_id
         dedup the stats/log rely on), not on every ~0.2s poll while the
         person is still in frame. Just sets state here - _draw_overlays,
         called on every video refresh tick, is what draws it."""
-        self._alert = {"kind": kind, "time": datetime.now().strftime("%I:%M:%S %p")}
+        self._alert = {"kind": kind, "time": datetime.now().strftime("%I:%M:%S %p"), "sub": sub}
         if self._alert_hide_job:
             self.window.after_cancel(self._alert_hide_job)
         self._alert_hide_job = self.window.after(self.ALERT_DISPLAY_MS, self._hide_alert_banner)
@@ -1833,7 +1856,7 @@ class GateMonitorWindow:
                 speaker_id = self._canvas_text(right_x, cy, speaker, ICON_FONT_BOLD, 28 * s["strip"] / 64, "white", anchor="e")
                 right_x = self.video_canvas.bbox(speaker_id)[0] - self._px(16)
             sub_font = self._tkfont(FONT, s["banner_sub"])
-            sub = _ellipsize(sub_font, alert["sub"], right_x - x)
+            sub = _ellipsize(sub_font, self._alert.get("sub") or alert["sub"], right_x - x)
             if sub and right_x - x > self._px(40):
                 self._canvas_text(x, cy, sub, FONT, s["banner_sub"], "white")
             return

@@ -28,6 +28,7 @@ import threading
 import joblib
 import numpy as np
 from django.conf import settings
+from configuration import store as system_settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +76,9 @@ def rule_based_occluded(mouth_ratio, texture_ratio, det_score):
     """The original check: covered if ANY of the three signals trips. A
     measurement that couldn't be taken (None) is simply left out, never
     counted as a trip."""
-    mouth_flagged = mouth_ratio is not None and mouth_ratio < settings.FACE_MIN_MOUTH_VISIBILITY_RATIO
-    texture_flagged = texture_ratio is not None and texture_ratio < settings.FACE_MAX_MOUTH_TEXTURE_RATIO
-    det_score_flagged = det_score < settings.FACE_MIN_DET_SCORE_UNOCCLUDED
+    mouth_flagged = mouth_ratio is not None and mouth_ratio < system_settings.get("covered_rule_mouth")
+    texture_flagged = texture_ratio is not None and texture_ratio < system_settings.get("covered_rule_texture")
+    det_score_flagged = det_score < system_settings.get("covered_rule_det_score")
     return mouth_flagged or texture_flagged or det_score_flagged
 
 
@@ -98,21 +99,19 @@ def classifier_occlusion_probability(mouth_ratio, texture_ratio, det_score):
 def is_occluded(mouth_ratio, texture_ratio, det_score):
     """The single yes/no IdentifyView acts on, using whichever rule
     OCCLUSION_DETECTION_MODE selects (with the fallbacks described above)."""
-    if settings.OCCLUSION_DETECTION_MODE == MODE_CLASSIFIER:
+    if system_settings.get("covered_face_mode") == MODE_CLASSIFIER:
         probability = classifier_occlusion_probability(mouth_ratio, texture_ratio, det_score)
         if probability is not None:
-            return probability >= settings.OCCLUSION_CLASSIFIER_THRESHOLD
+            return probability >= system_settings.get("covered_face_cutoff")
     return rule_based_occluded(mouth_ratio, texture_ratio, det_score)
 
 
 def active_mode_description():
     """What's actually making the decision right now, in plain words - shown on
-    the dashboard's System Settings page so a silent fallback is visible."""
-    configured = settings.OCCLUSION_DETECTION_MODE
+    the dashboard's Settings page so a silent fallback is visible."""
+    configured = system_settings.get("covered_face_mode")
     if configured == MODE_CLASSIFIER:
         if _get_model() is not None:
-            return MODE_CLASSIFIER
-        return "rules (classifier selected, but the model file is missing or unreadable)"
-    if configured != MODE_RULES:
-        return f"rules (unrecognized mode '{configured}')"
-    return MODE_RULES
+            return "In use now: Trained model."
+        return "In use now: Simple rules - the trained model's file is missing or unreadable."
+    return "In use now: Simple rules."

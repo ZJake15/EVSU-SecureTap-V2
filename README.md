@@ -187,13 +187,15 @@ Equivalent manual commands, if you prefer them or you're on a machine without th
 
 Then: log into the dashboard and register a real person via the Users page - guided capture walks through 5 near-frontal shots (front, slight left/right turn, neutral, smile), or use the single-photo fallback if you're staging one for bulk import instead. The entry-agent should recognize them automatically within a few seconds of facing the webcam, after enough frames agree - no tap needed. Optionally tap their NFC card too and confirm their photo pops up on the entry-agent window. Both should appear on the dashboard's Live Monitoring page and in Logs.
 
+**Settings page (Admin only):** match strictness, the fake-face check, card-tap rules, photo-quality checks, data retention, login lockout, automatic logout and gate alerts are all changed from the dashboard's **Settings** page - no `.env` editing or restarts; changes reach every gate within a few seconds and each one is recorded in the Audit Log. Risky changes need confirming. The values in `backend/.env` are only each setting's starting value. New features (automatic deletion, lockout, automatic logout, repeated-unknown alerts) start switched off. See documentation.md section 8.2.
+
 ## Data privacy notice
 
 This system processes **biometric data** (face embeddings, reference photos) on **everyone who passes the gate**, not just people who choose to tap a card - the continuous camera scan identifies every face it sees, including visitors and anyone else in view. This is a meaningfully bigger privacy footprint than a purely tap-triggered check, and falls under the **Philippine Data Privacy Act of 2012 (RA 10173)**. Before deploying this at an actual gate:
 
 - Collect explicit written consent for biometric data collection and processing from every student/staff member being enrolled.
 - Post clear, visible notice at the gate that facial recognition is in continuous operation, covering anyone who passes through - not just enrolled students/staff.
-- Explain how the data will be used, stored, retained, and for how long.
+- Explain how the data will be used, stored, retained, and for how long - and set those periods under Settings → Privacy & Data Retention, then switch on Automatic deletion (it's off until you do, so nothing is ever deleted by default).
 - Provide a documented way to request correction or deletion.
 - Confirm this broader always-on scanning scope (versus a consent-gated tap-triggered check) is something the institution's data protection officer/process has actually signed off on.
 

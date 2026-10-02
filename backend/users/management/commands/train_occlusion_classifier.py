@@ -9,6 +9,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
 
+from configuration import store as system_settings
 from users.management.commands.collect_occlusion_training_data import EXCLUDED_FROM_TRAINING
 # The exact three inputs the classifier sees, in a fixed order - imported from
 # the live check (users/occlusion_utils.py) rather than kept as a separate
@@ -88,7 +89,7 @@ class Command(BaseCommand):
 
         joblib.dump(classifier, options["output"])
         self.stdout.write(self.style.SUCCESS(f"\nModel saved to {options['output']}"))
-        if settings.OCCLUSION_DETECTION_MODE == "classifier":
+        if system_settings.get("covered_face_mode") == "classifier":
             self.stdout.write(
                 "The live gate scan is set to classifier mode. Restart the backend so it loads this "
                 "new model - it keeps whichever model it loaded at startup until then."
@@ -204,9 +205,9 @@ class Command(BaseCommand):
         same three numbers, just two different decision rules applied to
         them."""
         mouth_ratio, texture_ratio, det_score = X_test[:, 0], X_test[:, 1], X_test[:, 2]
-        mouth_flagged = mouth_ratio < settings.FACE_MIN_MOUTH_VISIBILITY_RATIO
-        texture_flagged = texture_ratio < settings.FACE_MAX_MOUTH_TEXTURE_RATIO
-        det_score_flagged = det_score < settings.FACE_MIN_DET_SCORE_UNOCCLUDED
+        mouth_flagged = mouth_ratio < system_settings.get("covered_rule_mouth")
+        texture_flagged = texture_ratio < system_settings.get("covered_rule_texture")
+        det_score_flagged = det_score < system_settings.get("covered_rule_det_score")
         return (mouth_flagged | texture_flagged | det_score_flagged).astype(np.int64)
 
     def _print_feature_importances(self, classifier):

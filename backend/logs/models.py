@@ -155,6 +155,9 @@ class PendingTiebreak(models.Model):
         # someone else (see users.models.ConfusablePair). Runs independently
         # of, and takes priority over, the ambiguous-match check above.
         CONFUSABLE_PAIR = "confusable_pair", "Confusable pair"
+        # The fake-face check was unsure (within the Settings page's
+        # "Ask-for-card range" of its limit) - see IdentifyView.post.
+        LIVENESS_UNSURE = "liveness_unsure", "Spoof check unsure"
 
     gate_location = models.CharField(max_length=100, unique=True)
     candidate_person_ids = models.JSONField()

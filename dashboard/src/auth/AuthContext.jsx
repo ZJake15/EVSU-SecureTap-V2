@@ -4,6 +4,12 @@ import apiClient, { tokenStore } from "../api/client";
 
 const AuthContext = createContext(null);
 
+// Set when "Automatic logout" signs someone out - the Login page reads it
+// (once) to explain why they're back there.
+export const IDLE_NOTICE_KEY = "securetap_idle_logout";
+const ACTIVITY_EVENTS = ["mousedown", "mousemove", "keydown", "scroll", "touchstart"];
+const POLICY_REFRESH_MS = 5 * 60 * 1000;
+
 function decodeUser(accessToken) {
   if (!accessToken) return null;
   try {
@@ -47,7 +53,54 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener("securetap:logout", handleForcedLogout);
   }, []);
 
-  const value = useMemo(() => ({ user, login, logout }), [user, login, logout]);
+  // The few Settings-page values every signed-in page needs (inactivity
+  // logout, single-photo registration). Re-read every few minutes, so an
+  // Admin's change reaches people who are already signed in.
+  const [policy, setPolicy] = useState(null);
+  useEffect(() => {
+    if (!user) {
+      setPolicy(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const load = () =>
+      apiClient
+        .get("/session-policy")
+        .then(({ data }) => !cancelled && setPolicy(data))
+        .catch(() => {});
+    load();
+    const timer = setInterval(load, POLICY_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [user]);
+
+  // Settings page: "Automatic logout". Any mouse, key, scroll or touch
+  // activity restarts the countdown; when it runs out the user is signed
+  // out and the Login page says why.
+  const idleMinutes = policy?.idle_logout_minutes || 0;
+  useEffect(() => {
+    if (!user || !idleMinutes) return undefined;
+    let timer;
+    const signOut = () => {
+      sessionStorage.setItem(IDLE_NOTICE_KEY, String(idleMinutes));
+      tokenStore.clear();
+      setUser(null);
+    };
+    const restart = () => {
+      clearTimeout(timer);
+      timer = setTimeout(signOut, idleMinutes * 60 * 1000);
+    };
+    ACTIVITY_EVENTS.forEach((name) => window.addEventListener(name, restart, { passive: true }));
+    restart();
+    return () => {
+      clearTimeout(timer);
+      ACTIVITY_EVENTS.forEach((name) => window.removeEventListener(name, restart));
+    };
+  }, [user, idleMinutes]);
+
+  const value = useMemo(() => ({ user, login, logout, policy }), [user, login, logout, policy]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

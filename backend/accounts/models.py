@@ -55,6 +55,10 @@ class AdminProfile(models.Model):
     # not silently worked around.
     assigned_gate_location = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Failed login lockout (Settings page, off by default): wrong passwords
+    # in a row since the last successful sign-in, and when a lock ends.
+    failed_login_count = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.user.username} ({self.role})"

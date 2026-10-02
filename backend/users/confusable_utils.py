@@ -1,5 +1,6 @@
 import numpy as np
-from django.conf import settings
+
+from configuration import store as system_settings
 
 from .models import ConfusablePair, Person
 
@@ -43,7 +44,7 @@ def find_confusable_candidates(new_embedding, exclude_person_id):
             float(np.dot(np.array(face_embedding.embedding, dtype=np.float32), query))
             for face_embedding in embeddings
         )
-        if best_similarity >= settings.CONFUSABLE_SIMILARITY_THRESHOLD:
+        if best_similarity >= system_settings.get("lookalike_sensitivity"):
             matches.append((person, best_similarity))
     matches.sort(key=lambda pair: pair[1], reverse=True)
     return matches

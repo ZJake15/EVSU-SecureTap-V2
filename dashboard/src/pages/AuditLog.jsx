@@ -12,6 +12,11 @@ const ACTIONS = {
   deactivation_rejected: { label: "Deactivation rejected", icon: "x-circle" },
   manual_override: { label: "Manual override logged", icon: "hand-pointing" },
   person_deleted_permanently: { label: "Person deleted permanently", icon: "trash", danger: true },
+  confusable_pair_flagged: { label: "Look-alike pair flagged", icon: "users" },
+  confusable_pair_removed: { label: "Look-alike pair removed", icon: "users" },
+  setting_changed: { label: "Setting changed", icon: "sliders-horizontal" },
+  data_purged: { label: "Old data deleted", icon: "broom" },
+  account_locked: { label: "Account locked", icon: "lock-simple", danger: true },
 };
 
 const COLS = "170px 140px minmax(0,1.3fr) minmax(0,1.6fr) minmax(0,1.6fr)";

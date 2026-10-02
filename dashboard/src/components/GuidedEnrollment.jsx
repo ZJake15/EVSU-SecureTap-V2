@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import apiClient from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import { PHOTO_ACCEPT, photoFormatError, previewUrlFor, readPhotoInput } from "../lib/photoUpload";
 import PoseGuide from "./PoseGuide";
 import { Icon, Notice } from "./ui";
@@ -54,6 +55,12 @@ function ModeTab({ selected, disabled, onClick, children }) {
 
 export default function GuidedEnrollment({ onChange, disabled }) {
   const [mode, setMode] = useState("guided"); // "guided" | "fallback"
+  // Settings page: "Allow single-photo registration" (the server enforces
+  // it too - this just doesn't offer an option that would be refused).
+  const singlePhotoAllowed = useAuth().policy?.allow_single_photo !== false;
+  useEffect(() => {
+    if (!singlePhotoAllowed && mode === "fallback") setMode("guided");
+  }, [singlePhotoAllowed, mode]);
   const [slots, setSlots] = useState(emptySlotState);
   const [fallback, setFallback] = useState({ file: null, previewUrl: null });
   const [fallbackError, setFallbackError] = useState("");
@@ -153,10 +160,17 @@ export default function GuidedEnrollment({ onChange, disabled }) {
         <ModeTab selected={mode === "guided"} disabled={disabled} onClick={() => setMode("guided")}>
           Guided 5-shot capture
         </ModeTab>
-        <ModeTab selected={mode === "fallback"} disabled={disabled} onClick={() => setMode("fallback")}>
+        <ModeTab
+          selected={mode === "fallback"}
+          disabled={disabled || !singlePhotoAllowed}
+          onClick={() => setMode("fallback")}
+        >
           Single-photo fallback
         </ModeTab>
       </div>
+      {!singlePhotoAllowed && (
+        <span className="text-xs text-ink-600">Single-photo registration is turned off in Settings.</span>
+      )}
 
       {mode === "guided" ? (
         <>

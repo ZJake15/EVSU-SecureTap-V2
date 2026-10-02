@@ -476,7 +476,14 @@ their single best-scoring embedding.
 > is explicitly not built to scale to a very large student body — a proper vector
 > index (e.g. FAISS) would be the next step if enrollment grew much larger.
 
-### 5.4 Decision thresholds (configurable, in `backend/.env`)
+### 5.4 Decision thresholds (configurable from the Settings page)
+
+These are now changed from the dashboard's **Settings** page (§8.2), which
+stores them in the database. The `backend/.env` names below are only where
+each value's *starting point* comes from: the first time the backend runs with
+the Settings page, it copies the current `.env`/default value into the
+database, so nothing changes on day one. After that the database wins — editing
+`.env` for these values no longer has any effect.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -838,7 +845,8 @@ entry-agent is treated as a trusted device, not a logged-in user.
 | `/api/confusable-pairs/` | GET/POST/DELETE | JWT (admin/SASO) | List, manually flag, or unflag a confusable pair (§5.8) |
 | `/api/accounts/` | GET/POST/PUT/PATCH/DELETE | JWT (admin only) | Dashboard account (Admin/SASO/Security Officer) CRUD — Account Management |
 | `/api/audit-log/` | GET | JWT (admin/SASO) | Admin sees every entry; SASO sees only entries where they're the actor (§13) |
-| `/api/settings` | GET | JWT (admin only) | Read-only snapshot of every match/liveness/occlusion/voting threshold currently in effect (§5.4/§5.8) — editing still means changing `.env` and restarting, not a form on this page |
+| `/api/settings` | GET, PATCH | JWT (admin only — 403 for other roles) | Every setting with its value, limits and wording; PATCH `{"values": {...}, "confirmed": bool}` saves all-or-nothing (400 with per-setting errors, 409 if a risky change wasn't confirmed). See §8.2 |
+| `/api/session-policy` | GET | JWT (any role) | The two settings every page needs: inactivity-logout minutes (0 = off) and whether single-photo registration is allowed |
 | `/api/reports/summary` | GET | JWT (admin/SASO) | Daily/weekly counts, peak hour, by-method breakdown, confidence histogram, busiest hours |
 | `/api/reports/far-frr` | GET | JWT (admin/SASO) | Preliminary FAR/FRR table (§5.7) |
 | `/admin/` | — | Django superuser | Full Django admin panel |
@@ -981,19 +989,105 @@ the page's main action beside it. See §8.1 for the visual design system.
   (manual overrides) already shows up distinctly in Logs, not here. See §13.
   Filterable by actor and action; each action shows with its own icon, a
   permanent deletion in red, and a manual override with a brass left edge.
-- **System Settings** *(admin only)* — a read-only snapshot of every match/
-  liveness/occlusion/voting/confusable-pair threshold currently in effect (§5.4/
-  §5.8), read straight from `backend/.env`/`settings.py` and grouped (Face
-  matching, Voting window, Gate-scan quality, Liveness, Occlusion detection,
-  Cooldowns, Enrollment). The Occlusion detection group also shows the **mode
-  actually in effect** (`classifier`, `rules`, or `rules` with the reason the
-  classifier isn't being used, e.g. a missing model file) and the classifier's
-  cutoff (§5.9). Explicitly not a live-editable form yet — changing a value
-  still means editing `backend/.env`; the backend's dev server restarts itself
-  when that file changes, so no manual restart is needed. The page says it's
-  read-only rather than implying otherwise.
+- **Settings** *(Admin only — SASO and Security Officer get a 403 from the
+  server)* — every setting that controls the system, in nine sections plus
+  Advanced, each with a plain-English description, changeable from the page
+  and in effect at every gate within a few seconds. See §8.2.
 
 There is currently no notification center in the dashboard.
+
+### 8.2 Settings page — how it works
+
+**What it is.** One page where an Admin can see and change every value that
+controls how the gates behave — how strict face matching is, when to ask for a
+card, how long records are kept, and so on. A change takes effect at every gate
+within a few seconds; nobody has to restart the backend or the gate monitor.
+
+**Where the values live.** In a database table, `configuration_systemsetting`,
+one row per setting. Every setting is also described once in code
+(`backend/configuration/registry.py`): what kind of value it is (a number, an
+on/off switch or a choice), the lowest and highest value allowed, the
+recommended range for the risky ones, its label and its plain-English
+description. The page draws itself from that list, so the wording on screen and
+the rules on the server can never disagree.
+
+**Day one changes nothing.** The first time the backend needs a setting, it
+fills its row with the value the system already used (from `backend/.env` or
+the code's default). New features start **off**: automatic deletion, failed
+login lockout, automatic logout, the ask-for-card range and the repeated-unknown
+alert all do nothing until an Admin turns them on, with recommended values
+already filled in (5 wrong passwords → 15-minute lock; logout after 15 idle
+minutes; keep entry records 365 days, unknown face data 30, gate photos 90;
+ask-for-card range 0.10; 3 sightings within 10 minutes).
+
+**Reset all to defaults.** A button at the top of the page puts every setting
+back to its starting value (the value the system used before the Settings page
+— `backend/.env` or the code's default — with the new features off). It asks
+for confirmation first, then only fills in the values: nothing is saved until
+the Admin reviews them and clicks "Save changes", which goes through the same
+checks and writes one audit entry per setting that actually changed.
+
+**How a change reaches the gates.**
+1. The Admin edits a value; a "Save changes" bar appears (and the page warns
+   before leaving with unsaved edits).
+2. The server checks the value against its rules — type, minimum and maximum,
+   and that "Frames that must agree" isn't more than "Out of the last". A bad
+   value is refused with a plain-English reason, even if someone bypasses the
+   page and calls the API directly.
+3. **Risky settings** (Match strictness, Spoof check strictness, Spoof checking
+   on/off) show their recommended range, warn when a value is outside it, need
+   an explicit "Save anyway" confirmation (enforced by the server too), and have
+   a "Reset to recommended" button.
+4. The value is saved and an **audit log entry** is written: who, which
+   setting, the old value, the new value, when. The page shows "Last changed by
+   ___ on ___" under the setting.
+5. The backend keeps settings in memory for at most 5 seconds, then re-reads
+   them, so the very next camera frames use the new value.
+6. Every `/api/identify` answer tells the gate monitor the current Match
+   strictness and alert switches, so its status bar and alarms follow the change
+   on the next frame — no restart.
+
+**Verified** (rolled-back test, real enrolled photo compared against the
+person's other poses): at Match strictness 0.45 the face (similarity 0.854) was
+matched; after an Admin saved 0.90, the same face was not accepted, and the
+value the gate monitor received and displayed changed from 0.45 to 0.90.
+
+**What lives where.** Decisions are made by the backend, so almost every
+setting is applied there. The gate monitor only applies the two alert switches
+(and displays the strictness). The camera choice stays on each guard PC — the
+camera number differs per machine, and only that PC can tell its camera works —
+so it's set in the launcher and the gate monitor's camera picker, not here.
+
+**Automatic deletion (Privacy & Data Retention).** `manage.py purge_old_data`
+deletes, each by its own period: gate photos (the record stays), the face data
+kept with Unknown/fake records plus the scan's short-lived working tables, whole
+entry records, and — only if a period is set — old audit entries. It never
+touches registered people, their face data or their registration photos (those
+tables aren't even used by the command). `--dry-run` reports what it would
+delete without deleting. It does nothing while "Automatic deletion" is off.
+There's no job scheduler in this project, so the **launcher runs it** when the
+backend comes up and once a day while it stays open. On a server that runs
+without the launcher, use Windows Task Scheduler instead, e.g.:
+
+    schtasks /Create /TN "SecureTap data clean-up" /SC DAILY /ST 02:00 /TR "cmd /c cd /d C:\path\to\EVSU-SecureTap-V2\backend && ..\.venv\Scripts\python.exe manage.py purge_old_data"
+
+**Security & Accounts.** Failed login lockout is checked by the server at
+sign-in (a locked account gets "Too many wrong passwords… try again in N
+minutes", and the lock is audit-logged). Automatic logout runs in the dashboard:
+any mouse, key, scroll or touch activity restarts the countdown, and the Login
+page says why the user was signed out.
+
+**Alerts.** "Alert on suspected fake face" only silences the gate monitor's
+banner and sound — the event is still counted and logged. "Alert on repeated
+unknown faces" makes the backend count how many times the same unrecognized
+face has been logged at that gate within the set minutes; once it reaches the
+set number, the gate monitor shows a "SAME UNKNOWN PERSON AGAIN" banner.
+
+**Ask-for-card range (fake-face check).** When the fake-face score is just
+under its limit — within this range — the face is matched as normal and, if it
+matches someone, the gate asks for that person's card instead of flagging a
+fake. If the card isn't tapped in time, it's logged as "Fake-face check unsure,
+not confirmed by card tap in time."
 
 ### 8.1 Visual design system
 
@@ -1299,12 +1393,15 @@ knowing before extending the system:
   (see the note at the end of §6): a typo in `assigned_gate_location` silently
   mismatches against `EntryLog.gate_location` rather than erroring, since there's
   no Gate model to validate either one against.
-- **System Settings (§8, §13) is read-only** — every threshold on the page is
-  read straight from `settings.py`/`.env`; there's no live-editable config path
-  yet. Doing that properly needs a DB-backed config table plus a cache-
-  invalidation story for already-running worker processes — a meaningfully
-  bigger change than the rest of the access-control work, so it's flagged as a
-  follow-up rather than partially built.
+- **Settings page (§8.2) limits** — there's still no gate list: gate names
+  remain free text typed on each guard PC and on each Security Officer account,
+  so "default direction per gate" isn't possible either (direction is set per
+  guard PC). The number of enrollment photos is fixed at 5 (one per guided
+  pose). Automatic logout is enforced in the dashboard, not by the server — a
+  stolen token still lasts until it expires (60 minutes, renewable for up to 12
+  hours). A second backend process (if one were ever run) can take up to 5
+  seconds to see a change. "Allow single-photo registration" covers the Add
+  Person form, not bulk import.
 - **Occlusion detection is three coarse proxies, not a validated classifier** —
   this project's detector (`buffalo_s`/SCRFD) exposes no per-landmark confidence
   or visibility score at all (checked directly in the installed package source,

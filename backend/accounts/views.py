@@ -1,13 +1,13 @@
-from django.conf import settings
+import math
+
+from django.utils import timezone
 from rest_framework import status, viewsets
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.response import Response
-from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from audit.utils import log_action
-from users import occlusion_utils
-from users.confusable_utils import MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON
-from users.serializers import MAX_EMBEDDINGS_PER_PERSON
+from configuration import store as system_settings
 
 from .models import AdminProfile
 from .permissions import IsAdmin
@@ -15,7 +15,55 @@ from .serializers import DashboardAccountSerializer, RoleTokenObtainPairSerializ
 
 
 class LoginView(TokenObtainPairView):
+    """Dashboard sign-in. With "Failed login lockout" switched on (Settings
+    page), too many wrong passwords in a row lock the account for a while -
+    checked here on the server, so it holds no matter what calls the API."""
+
     serializer_class = RoleTokenObtainPairSerializer
+
+    def post(self, request, *args, **kwargs):
+        username = request.data.get("username") if hasattr(request.data, "get") else None
+        profile = None
+        if isinstance(username, str) and username:
+            profile = AdminProfile.objects.select_related("user").filter(user__username=username).first()
+        lockout_on = system_settings.get("lockout_enabled")
+        now = timezone.now()
+
+        if lockout_on and profile and profile.locked_until and profile.locked_until > now:
+            minutes = max(1, math.ceil((profile.locked_until - now).total_seconds() / 60))
+            return Response(
+                {"detail": f"Too many wrong passwords. This account is locked - try again in {minutes} "
+                           f"minute{'s' if minutes != 1 else ''}."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            response = super().post(request, *args, **kwargs)
+        except AuthenticationFailed:
+            if lockout_on and profile:
+                self._record_failure(profile, now)
+            raise
+
+        if profile and (profile.failed_login_count or profile.locked_until):
+            profile.failed_login_count = 0
+            profile.locked_until = None
+            profile.save(update_fields=["failed_login_count", "locked_until"])
+        return response
+
+    @staticmethod
+    def _record_failure(profile, now):
+        attempts = system_settings.get("lockout_attempts")
+        profile.failed_login_count += 1
+        if profile.failed_login_count >= attempts:
+            minutes = system_settings.get("lockout_minutes")
+            profile.locked_until = now + timezone.timedelta(minutes=minutes)
+            profile.failed_login_count = 0
+            log_action(
+                None, "account_locked",
+                target_description=f"Account {profile.user.username}",
+                detail={"wrong_passwords": attempts, "locked_for_minutes": minutes},
+            )
+        profile.save(update_fields=["failed_login_count", "locked_until"])
 
 
 class DashboardAccountViewSet(viewsets.ModelViewSet):
@@ -56,50 +104,3 @@ class DashboardAccountViewSet(viewsets.ModelViewSet):
             target_description=f"Account {instance.user.username} ({instance.role})",
         )
 
-
-class SystemSettingsView(APIView):
-    """Admin-only, READ-ONLY for this pass. Surfaces the match/liveness/
-    quality thresholds that actually govern the gate scan, which today live
-    only in settings.py/.env, read once at process start - there is no
-    runtime-editable config path yet. Deliberately scoped this way rather
-    than building live editing: doing that properly needs a DB-backed config
-    table plus a cache-invalidation story for already-running worker
-    processes, which is a meaningfully bigger change than the rest of this
-    access-control pass. Flagged as a follow-up, not silently done partway."""
-
-    permission_classes = [IsAdmin]
-
-    def get(self, request):
-        return Response({
-            "face_match_similarity_threshold": settings.FACE_MATCH_SIMILARITY_THRESHOLD,
-            "confusable_similarity_threshold": settings.CONFUSABLE_SIMILARITY_THRESHOLD,
-            "liveness_score_threshold": settings.LIVENESS_SCORE_THRESHOLD,
-            "tiebreak_margin": settings.TIEBREAK_MARGIN,
-            "tiebreak_timeout_seconds": settings.TIEBREAK_TIMEOUT_SECONDS,
-            "vote_window_size": settings.VOTE_WINDOW_SIZE,
-            "vote_required_agreement": settings.VOTE_REQUIRED_AGREEMENT,
-            "vote_window_seconds": settings.VOTE_WINDOW_SECONDS,
-            "gate_scan_det_size": settings.GATE_SCAN_DET_SIZE,
-            "gate_scan_min_blur_variance": settings.GATE_SCAN_MIN_BLUR_VARIANCE,
-            "face_edge_margin_ratio": settings.FACE_EDGE_MARGIN_RATIO,
-            "face_max_yaw_ratio": settings.FACE_MAX_YAW_RATIO,
-            "face_min_mouth_visibility_ratio": settings.FACE_MIN_MOUTH_VISIBILITY_RATIO,
-            "face_max_mouth_texture_ratio": settings.FACE_MAX_MOUTH_TEXTURE_RATIO,
-            "face_min_det_score_unoccluded": settings.FACE_MIN_DET_SCORE_UNOCCLUDED,
-            # What's actually deciding occlusion right now - not just what's
-            # configured - so a classifier that silently fell back to the
-            # rules (missing model file) is visible here, not only in a log.
-            "occlusion_detection_mode": occlusion_utils.active_mode_description(),
-            "occlusion_classifier_threshold": settings.OCCLUSION_CLASSIFIER_THRESHOLD,
-            "recognition_cooldown_seconds": settings.RECOGNITION_COOLDOWN_SECONDS,
-            "unenrolled_capture_cooldown_seconds": settings.UNENROLLED_CAPTURE_COOLDOWN_SECONDS,
-            "spoof_capture_cooldown_seconds": settings.SPOOF_CAPTURE_COOLDOWN_SECONDS,
-            "max_embeddings_per_person": MAX_EMBEDDINGS_PER_PERSON,
-            "max_embeddings_per_confusable_person": MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON,
-            "editable": False,
-            "note": (
-                "These values are read from the backend's configuration (settings.py/.env) - "
-                "changing them today means editing that file and restarting the backend, not "
-                "editing them here. Live editing is a planned follow-up, not yet built."
-            ),
-        }, status=status.HTTP_200_OK)

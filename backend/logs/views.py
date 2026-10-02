@@ -1,5 +1,4 @@
 import numpy as np
-from django.conf import settings
 from django.core.files.base import ContentFile
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -19,6 +18,7 @@ from accounts.permissions import (
 )
 from audit.utils import log_action
 from securetap_project.media_auth import build_signed_media_url
+from configuration import store as system_settings
 from users import insightface_utils, liveness_utils, occlusion_utils
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
@@ -326,7 +326,7 @@ class VerifyView(APIView):
         resolution right after an ordinary tap) reuses the existing log row
         instead of creating a new one each time."""
         if verification_method == EntryLog.VerificationMethod.NFC_ONLY:
-            cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=settings.RECOGNITION_COOLDOWN_SECONDS)
+            cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("recognition_cooldown_seconds"))
             recent_log = (
                 EntryLog.objects.filter(
                     person=person,
@@ -461,8 +461,7 @@ class IdentifyView(APIView):
             # gate is simply unattended, burying genuine successes/failures.
             return Response({
                 "results": [self._transient_payload("No face detected.")],
-                "threshold": settings.FACE_MATCH_SIMILARITY_THRESHOLD,
-                "liveness_threshold": settings.LIVENESS_SCORE_THRESHOLD,
+                **self._agent_info(),
             })
 
         image_height, image_width = bgr_image.shape[:2]
@@ -474,8 +473,7 @@ class IdentifyView(APIView):
             payload = self._transient_payload("No enrolled faces to compare against.")
             return Response({
                 "results": [payload],
-                "threshold": settings.FACE_MATCH_SIMILARITY_THRESHOLD,
-                "liveness_threshold": settings.LIVENESS_SCORE_THRESHOLD,
+                **self._agent_info(),
             })
 
         known_matrix, owners = self._build_candidate_matrix(candidates)
@@ -492,14 +490,27 @@ class IdentifyView(APIView):
             # runs before the covered-face check below, because a covered
             # face isn't logged: a photo or screen that happens to read as
             # covered must still be caught (and logged) as a spoof.
-            liveness_score = liveness_utils.compute_liveness_score(bgr_image, box)
-            if liveness_score < settings.LIVENESS_SCORE_THRESHOLD:
-                results.append(
-                    self._confirm_or_vote_spoof(
-                        embedding, bgr_image, box, direction, gate_location, request, liveness_score
-                    )
-                )
-                continue
+            #
+            # Settings page: "Spoof checking" off skips this entirely; an
+            # "Ask-for-card range" above 0 treats a score just under the limit
+            # as unsure - matched as normal, then confirmed by a card tap
+            # (see _match_one_face) instead of being flagged as a fake.
+            liveness_score = None
+            liveness_unsure = False
+            if system_settings.get("spoof_check_enabled"):
+                liveness_score = liveness_utils.compute_liveness_score(bgr_image, box)
+                spoof_limit = system_settings.get("spoof_strictness")
+                if liveness_score < spoof_limit:
+                    unsure_range = system_settings.get("spoof_unsure_range")
+                    if unsure_range > 0 and liveness_score >= spoof_limit - unsure_range:
+                        liveness_unsure = True
+                    else:
+                        results.append(
+                            self._confirm_or_vote_spoof(
+                                embedding, bgr_image, box, direction, gate_location, request, liveness_score
+                            )
+                        )
+                        continue
             # Checked before matching - an occluded face is never given a
             # fair ArcFace comparison (it would just produce a distorted,
             # unusable embedding). Never logged, but it carries its own
@@ -507,24 +518,38 @@ class IdentifyView(APIView):
             # "Checking..." - see _occlusion_prompt.
             #
             # Skipped outright for a face that already matches an enrolled
-            # person - see _already_recognizable.
-            if not self._already_recognizable(embedding, known_matrix) and self._occlusion_reason(
-                mouth_ratio, texture_ratio, det_score
+            # person - see _already_recognizable - and when "Covered face
+            # detection" is switched off on the Settings page.
+            if (
+                system_settings.get("covered_face_enabled")
+                and not self._already_recognizable(embedding, known_matrix)
+                and self._occlusion_reason(mouth_ratio, texture_ratio, det_score)
             ):
                 results.append(self._occlusion_prompt(box, gate_location))
                 continue
             results.append(
                 self._match_one_face(
                     embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image,
-                    liveness_score,
+                    liveness_score, liveness_unsure=liveness_unsure,
                 )
             )
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},
-            "threshold": settings.FACE_MATCH_SIMILARITY_THRESHOLD,
-            "liveness_threshold": settings.LIVENESS_SCORE_THRESHOLD,
+            **self._agent_info(),
         })
+
+    @staticmethod
+    def _agent_info():
+        """Sent with every /api/identify answer, so the gate monitor always
+        shows - and acts on - the current Settings-page values without a
+        restart: the match strictness it displays, and whether to sound
+        the alarm for a suspected fake."""
+        return {
+            "threshold": system_settings.get("match_strictness"),
+            "liveness_threshold": system_settings.get("spoof_strictness"),
+            "alerts": {"spoof": system_settings.get("alert_spoof")},
+        }
 
     @staticmethod
     def _active_candidates():
@@ -562,7 +587,9 @@ class IdentifyView(APIView):
         the checks a person could actually act on come first, so the hint
         shown over their box is the most useful one when several apply.
         """
-        if insightface_utils.box_touches_edge(box, image_width, image_height, settings.FACE_EDGE_MARGIN_RATIO):
+        if system_settings.get("whole_face_required") and insightface_utils.box_touches_edge(
+            box, image_width, image_height, system_settings.get("edge_margin")
+        ):
             return {
                 "success": False,
                 "retry": True,
@@ -580,7 +607,7 @@ class IdentifyView(APIView):
         # the scan just waits for the frame where they look at the camera.
         # yaw_ratio is None when the detector gave no usable keypoints - fall
         # through rather than reject on a measurement that never happened.
-        if yaw_ratio is not None and yaw_ratio > settings.FACE_MAX_YAW_RATIO:
+        if yaw_ratio is not None and yaw_ratio > system_settings.get("max_turn"):
             return {
                 "success": False,
                 "retry": True,
@@ -589,7 +616,7 @@ class IdentifyView(APIView):
                 "log_id": None,
                 "box": _box_to_dict(box),
             }
-        if blur_variance < settings.GATE_SCAN_MIN_BLUR_VARIANCE:
+        if blur_variance < system_settings.get("blur_min"):
             return {
                 "success": False,
                 "retry": True,
@@ -661,10 +688,11 @@ class IdentifyView(APIView):
         afterwards, including the near-threshold tiebreak (card tap), so a
         weak match here can't wave anyone through on its own."""
         query = np.array(embedding, dtype=np.float32)
-        return float((known_matrix @ query).max()) >= settings.FACE_MATCH_SIMILARITY_THRESHOLD
+        return float((known_matrix @ query).max()) >= system_settings.get("match_strictness")
 
     def _match_one_face(
         self, embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image, liveness_score,
+        liveness_unsure=False,
     ):
         query = np.array(embedding, dtype=np.float32)
         similarities = known_matrix @ query  # both sides are unit-normalized -> cosine similarity
@@ -672,7 +700,7 @@ class IdentifyView(APIView):
         best_similarity = float(similarities[best_index])
         best_person = owners[best_index]
 
-        if best_similarity < settings.FACE_MATCH_SIMILARITY_THRESHOLD:
+        if best_similarity < system_settings.get("match_strictness"):
             return self._confirm_or_vote_unmatched(
                 embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score
             )
@@ -687,7 +715,18 @@ class IdentifyView(APIView):
         # small). No 2D face system can be expected to tell them apart
         # visually, so this doesn't try to - it routes to the one check that
         # doesn't share that weakness.
-        confusable_partner_ids = get_confusable_partner_ids(best_person.id)
+        # The fake-face check was unsure about this face (Settings page,
+        # "Ask-for-card range"): it matched someone, so their card settles it.
+        if liveness_unsure:
+            return self._start_tiebreak(
+                gate_location, direction, [best_person.id], box, best_similarity,
+                reason=PendingTiebreak.Reason.LIVENESS_UNSURE,
+            )
+
+        # Settings page: "Always ask look-alikes for a card".
+        confusable_partner_ids = (
+            get_confusable_partner_ids(best_person.id) if system_settings.get("lookalikes_always_tap") else []
+        )
         if confusable_partner_ids:
             candidate_ids = [best_person.id] + confusable_partner_ids
             return self._start_tiebreak(
@@ -703,9 +742,10 @@ class IdentifyView(APIView):
             if other_best is None or sim > other_best:
                 other_best, other_owner = float(sim), owner
 
-        borderline = best_similarity < settings.FACE_MATCH_SIMILARITY_THRESHOLD + settings.TIEBREAK_MARGIN
-        close_second = other_best is not None and (best_similarity - other_best) < settings.TIEBREAK_MARGIN
-        if borderline or close_second:
+        borderline = best_similarity < system_settings.get("match_strictness") + system_settings.get("unsure_margin")
+        close_second = other_best is not None and (best_similarity - other_best) < system_settings.get("unsure_margin")
+        # Settings page: "Ask for card when unsure".
+        if (borderline or close_second) and system_settings.get("ask_card_when_unsure"):
             candidate_ids = [best_person.id] + ([other_owner.id] if close_second else [])
             return self._start_tiebreak(gate_location, direction, candidate_ids, box, best_similarity)
 
@@ -721,14 +761,14 @@ class IdentifyView(APIView):
         event yet" with no entry-agent changes needed."""
         RecognitionAttempt.objects.create(gate_location=gate_location, person=person, similarity=similarity)
 
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
         recent_attempts = list(
             RecognitionAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
-            .order_by("-timestamp")[: settings.VOTE_WINDOW_SIZE]
+            .order_by("-timestamp")[: system_settings.get("frames_considered")]
         )
         agreement = sum(1 for attempt in recent_attempts if attempt.person_id == person.id)
 
-        if agreement < settings.VOTE_REQUIRED_AGREEMENT:
+        if agreement < system_settings.get("frames_must_agree"):
             return {
                 "success": True,
                 "retry": False,
@@ -740,7 +780,7 @@ class IdentifyView(APIView):
                 **person_payload(person, request),
             }
 
-        cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=settings.RECOGNITION_COOLDOWN_SECONDS)
+        cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("recognition_cooldown_seconds"))
         recent_log = (
             EntryLog.objects.filter(
                 person=person,
@@ -819,6 +859,8 @@ class IdentifyView(APIView):
                 "This match is confirmed but flagged as easily confused with someone similar - "
                 "please tap your card to confirm."
                 if is_confusable
+                else "The fake-face check was unsure - please tap your card to confirm."
+                if reason == PendingTiebreak.Reason.LIVENESS_UNSURE
                 else "Ambiguous match - please tap your card to confirm."
             ),
             "log_id": None,
@@ -833,7 +875,7 @@ class IdentifyView(APIView):
         """No Celery/cron in this project - the continuous scan's own
         polling is the heartbeat that notices a tiebreak nobody resolved in
         time and logs it as unresolved instead of leaving it in limbo."""
-        cutoff = timezone.now() - timezone.timedelta(seconds=settings.TIEBREAK_TIMEOUT_SECONDS)
+        cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("card_wait_seconds"))
         stale = PendingTiebreak.objects.filter(gate_location=gate_location, created_at__lt=cutoff).first()
         if stale is None:
             return
@@ -853,6 +895,8 @@ class IdentifyView(APIView):
                 "Confusable-pair match not confirmed by card tap in time - possibly one of: "
                 f"{', '.join(candidate_names)}. Needs manual guard/staff review."
             )
+        elif stale.reason == PendingTiebreak.Reason.LIVENESS_UNSURE:
+            failure_reason = "Fake-face check unsure, not confirmed by card tap in time."
         else:
             failure_reason = "Ambiguous match, not resolved by card tap in time."
         EntryLog.objects.create(
@@ -930,19 +974,19 @@ class IdentifyView(APIView):
             }
 
         query = np.array(embedding, dtype=np.float32)
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
         recent_attempts = list(
             UnmatchedAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
-            .order_by("-timestamp")[: settings.VOTE_WINDOW_SIZE]
+            .order_by("-timestamp")[: system_settings.get("frames_considered")]
         )
         agreement = sum(
             1
             for attempt in recent_attempts
             if float(np.dot(np.array(attempt.embedding, dtype=np.float32), query))
-            >= settings.FACE_MATCH_SIMILARITY_THRESHOLD
+            >= system_settings.get("match_strictness")
         )
 
-        if agreement < settings.VOTE_REQUIRED_AGREEMENT:
+        if agreement < system_settings.get("frames_must_agree"):
             return {
                 "success": False,
                 "retry": True,
@@ -969,7 +1013,7 @@ class IdentifyView(APIView):
         stranger still standing there" and reuses that log row rather than
         creating a new one and capturing another photo."""
         reason = "Not enrolled - no matching student/staff record."
-        cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=settings.UNENROLLED_CAPTURE_COOLDOWN_SECONDS)
+        cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("unknown_cooldown_seconds"))
         recent_unmatched = EntryLog.objects.filter(
             verification_method=EntryLog.VerificationMethod.FACE_ONLY,
             status=EntryLog.Status.FAILED,
@@ -980,7 +1024,7 @@ class IdentifyView(APIView):
         for log in recent_unmatched:
             stored = np.array(log.unmatched_encoding, dtype=np.float32)
             similarity = float(np.dot(stored, query))
-            if similarity >= settings.FACE_MATCH_SIMILARITY_THRESHOLD:
+            if similarity >= system_settings.get("match_strictness"):
                 payload = {
                     "success": False,
                     "retry": False,
@@ -1001,9 +1045,36 @@ class IdentifyView(APIView):
         # covered a moment earlier in this encounter, and that's worth
         # keeping on the record too, not just when the outcome is a success.
         occlusion_seen = self._recent_occlusion_seen(gate_location)
-        return self._failure_payload(
+        payload = self._failure_payload(
             direction, gate_location, reason, best_similarity, captured_photo_bytes, request, embedding, box,
             liveness_score, occlusion_seen,
+        )
+        # Settings page: "Alert on repeated unknown faces" - flag it for the
+        # gate monitor when this same face has now been logged as Unknown at
+        # this gate enough times within the set period.
+        if system_settings.get("alert_repeated_unknown"):
+            sightings = self._unknown_sightings(gate_location, embedding)
+            if sightings >= system_settings.get("repeated_unknown_count"):
+                payload["repeated_unknown"] = True
+                payload["repeated_unknown_count"] = sightings
+        return payload
+
+    @staticmethod
+    def _unknown_sightings(gate_location, embedding):
+        """How many Unknown rows at this gate within the "Within" period
+        (Settings page) are this same face - this one included."""
+        cutoff = timezone.now() - timezone.timedelta(minutes=system_settings.get("repeated_unknown_minutes"))
+        recent = EntryLog.objects.filter(
+            gate_location=gate_location,
+            person__isnull=True,
+            status=EntryLog.Status.FAILED,
+            verification_method=EntryLog.VerificationMethod.FACE_ONLY,
+            timestamp__gte=cutoff,
+        ).exclude(unmatched_encoding__isnull=True).values_list("unmatched_encoding", flat=True)
+        query = np.array(embedding, dtype=np.float32)
+        limit = system_settings.get("match_strictness")
+        return sum(
+            1 for stored in recent if float(np.dot(np.array(stored, dtype=np.float32), query)) >= limit
         )
 
     @staticmethod
@@ -1050,7 +1121,7 @@ class IdentifyView(APIView):
         VOTE_WINDOW_SECONDS rather than inventing a separate "recent"
         setting - that's already this system's definition of one continuous
         interaction at a gate."""
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
         return OcclusionAttempt.objects.filter(
             gate_location=gate_location, timestamp__gte=window_cutoff
         ).exists()
@@ -1060,7 +1131,7 @@ class IdentifyView(APIView):
         """Whether covered frames outnumber unrecognized ones at this gate
         within VOTE_WINDOW_SECONDS - the hold-back condition for the
         Unknown vote (see _confirm_or_vote_unmatched)."""
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
         covered = OcclusionAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff).count()
         if not covered:
             return False
@@ -1115,20 +1186,20 @@ class IdentifyView(APIView):
         SpoofAttempt.objects.create(gate_location=gate_location, embedding=embedding, liveness_score=liveness_score)
 
         query = np.array(embedding, dtype=np.float32)
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=settings.VOTE_WINDOW_SECONDS)
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
         recent_attempts = list(
             SpoofAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
-            .order_by("-timestamp")[: settings.VOTE_WINDOW_SIZE]
+            .order_by("-timestamp")[: system_settings.get("frames_considered")]
         )
         agreement = sum(
             1
             for attempt in recent_attempts
-            if attempt.liveness_score < settings.LIVENESS_SCORE_THRESHOLD
+            if attempt.liveness_score < system_settings.get("spoof_strictness")
             and float(np.dot(np.array(attempt.embedding, dtype=np.float32), query))
-            >= settings.FACE_MATCH_SIMILARITY_THRESHOLD
+            >= system_settings.get("match_strictness")
         )
 
-        if agreement < settings.VOTE_REQUIRED_AGREEMENT:
+        if agreement < system_settings.get("frames_must_agree"):
             # Unlike an unmatched face (which stays neutral "Checking..."
             # until confirmed, so a real person can't be flagged Unknown off
             # one bad frame), a suspected spoof is flagged red on the entry-
@@ -1160,7 +1231,7 @@ class IdentifyView(APIView):
         than creating a new one and capturing another photo - same pattern
         as _handle_unmatched_face's stranger-still-there dedup."""
         reason = "Possible spoof detected - photo, screen, or printout, not a live face."
-        cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=settings.SPOOF_CAPTURE_COOLDOWN_SECONDS)
+        cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("spoof_cooldown_seconds"))
         recent_spoof = EntryLog.objects.filter(
             status=EntryLog.Status.SPOOF_SUSPECTED, timestamp__gte=cooldown_cutoff
         ).exclude(unmatched_encoding__isnull=True)
@@ -1169,7 +1240,7 @@ class IdentifyView(APIView):
         for log in recent_spoof:
             stored = np.array(log.unmatched_encoding, dtype=np.float32)
             similarity = float(np.dot(stored, query))
-            if similarity >= settings.FACE_MATCH_SIMILARITY_THRESHOLD:
+            if similarity >= system_settings.get("match_strictness"):
                 payload = {
                     "success": False,
                     "retry": False,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import apiClient from "../api/client";
 import { Field, Icon, Notice, PageHeader } from "../components/ui";
 
@@ -19,6 +19,9 @@ const ROLE_LABELS = {
 
 const COLS = "minmax(0,1.2fr) minmax(0,1.4fr) minmax(0,1.3fr) minmax(0,96px) 96px";
 
+// How long the form keeps its red outline after "New account" is clicked.
+const FORM_HIGHLIGHT_MS = 3000;
+
 function extractErrorMessage(err) {
   const data = err.response?.data;
   if (!data) return "Could not reach the server. Check your connection and try again.";
@@ -36,6 +39,11 @@ export default function AccountManagement() {
   const [formError, setFormError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Bumped on every "New account" click, so a second click re-runs the
+  // highlight even while the first one is still showing. 0 = no highlight.
+  const [highlightKey, setHighlightKey] = useState(0);
+  const formRef = useRef(null);
+  const usernameRef = useRef(null);
 
   const editingAccount = editingId ? accounts.find((account) => account.id === editingId) : null;
 
@@ -47,6 +55,15 @@ export default function AccountManagement() {
   };
 
   useEffect(loadAccounts, []);
+
+  // Runs after the reset form has rendered, so the Username field is
+  // enabled again by the time it's focused (it's disabled while editing).
+  useEffect(() => {
+    if (!highlightKey) return undefined;
+    usernameRef.current?.focus({ preventScroll: true });
+    const timer = setTimeout(() => setHighlightKey(0), FORM_HIGHLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [highlightKey]);
 
   const handleChange = (field) => (event) => {
     const value = event.target.value;
@@ -66,7 +83,18 @@ export default function AccountManagement() {
     setFormError("");
   };
 
+  // "New account": clear the form, bring it into view (on a narrow screen
+  // it sits below the whole account list) and outline it in red for a
+  // moment so it's obvious where to type.
+  const startNewAccount = () => {
+    resetForm();
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    formRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    setHighlightKey((key) => key + 1);
+  };
+
   const handleEdit = (account) => {
+    setHighlightKey(0);
     setEditingId(account.id);
     setFormError("");
     setForm({
@@ -115,7 +143,7 @@ export default function AccountManagement() {
   return (
     <div className="flex flex-col">
       <PageHeader eyebrow="Dashboard sign-ins" title="Accounts">
-        <button type="button" onClick={resetForm} className="btn-primary">
+        <button type="button" onClick={startNewAccount} className="btn-primary">
           <Icon name="plus" bold size={16} />
           New account
         </button>
@@ -174,7 +202,13 @@ export default function AccountManagement() {
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="card flex flex-col gap-s4 p-s5">
+        <form
+          ref={formRef}
+          onSubmit={handleSubmit}
+          className={`card flex scroll-mt-s6 flex-col gap-s4 p-s5 outline outline-2 outline-offset-4 transition-[outline-color] duration-500 ${
+            highlightKey ? "outline-danger" : "outline-transparent"
+          }`}
+        >
           <div className="flex flex-col gap-s1">
             <span className="t-eyebrow">{editingId ? "Edit account" : "New account"}</span>
             <span className="t-section">{editingId ? form.username : "Create a dashboard sign-in"}</span>
@@ -182,6 +216,7 @@ export default function AccountManagement() {
 
           <Field label="Username">
             <input
+              ref={usernameRef}
               required
               disabled={Boolean(editingId)}
               value={form.username}

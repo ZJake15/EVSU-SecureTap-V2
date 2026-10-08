@@ -9,7 +9,11 @@ venv/
 # Django
 backend/staticfiles/
 backend/media/
+# The SQLite database (DB_ENGINE=sqlite) holds face data and passwords -
+# never commit it, its WAL/shared-memory companions, or its .bak backups.
 db.sqlite3
+db.sqlite3-*
+db.sqlite3.bak*
 
 # Env / secrets
 .env

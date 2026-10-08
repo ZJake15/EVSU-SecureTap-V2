@@ -25,7 +25,7 @@ The system has three independent programs that talk to each other over HTTP:
 ┌─────────────────┐        ┌──────────────────────┐        ┌───────────────────┐
 │   entry-agent     │  HTTP  │       backend          │  HTTP  │     dashboard        │
 │ (guard's PC,       │◄──────►│ (Django REST API +    │◄──────►│ (React web app,       │
-│  camera + NFC)     │        │  MySQL database)       │        │  browser)             │
+│  camera + NFC)     │        │  SQLite database)      │        │  browser)             │
 └─────────────────┘        └──────────────────────┘        └───────────────────┘
 ```
 
@@ -389,10 +389,10 @@ manual-override channel:
 
 | Component | Language | Framework / key libraries |
 |---|---|---|
-| **backend** | Python | Django 5.x, Django REST Framework, djangorestframework-simplejwt (JWT auth), django-filter, django-cors-headers, django-environ, MySQL (`mysqlclient`), **InsightFace** (ArcFace) + **MiniFASNetV2** on **ONNX Runtime**, OpenCV, NumPy, Pillow (+ `pillow-heif` for iPhone HEIC photos, registered in `users/apps.py`), pandas + openpyxl (bulk import), bcrypt |
-| **dashboard** | JavaScript (React, JSX) | React 19, React Router 7, Axios, Recharts (charts), Tailwind CSS, `@phosphor-icons/web` (icons), `jwt-decode`, Vite (dev server/bundler); fonts Archivo, Atkinson Hyperlegible Next and IBM Plex Mono from Google Fonts |
+| **backend** | Python | Django 5.x, Django REST Framework, djangorestframework-simplejwt (JWT auth), django-filter, django-cors-headers, django-environ, WhiteNoise (serves the built dashboard), SQLite (built into Python; MySQL via `mysqlclient` optional), **InsightFace** (ArcFace) + **MiniFASNetV2** on **ONNX Runtime**, OpenCV, NumPy, Pillow (+ `pillow-heif` for iPhone HEIC photos, registered in `users/apps.py`), pandas + openpyxl (bulk import), bcrypt |
+| **dashboard** | JavaScript (React, JSX) | React 19, React Router 7, Axios, Recharts (charts), Tailwind CSS, `@phosphor-icons/web` (icons), `jwt-decode`, Vite (bundler; builds `dashboard/dist`, which the backend serves at `http://localhost:8000/` — Node.js is only needed to build it, not to run it); fonts Archivo, Atkinson Hyperlegible Next and IBM Plex Mono from Google Fonts |
 | **entry-agent** | Python | CustomTkinter (UI), OpenCV (webcam capture only, no ML), Pillow, `requests` (HTTP client), `python-dotenv`, `winsound` (Windows alert tone), SQLite (offline queue); bundled fonts in `entry-agent/assets/fonts/` (see §8.1) |
-| **Database** | — | MySQL 8.0+ |
+| **Database** | — | **SQLite** by default — one file (`backend/db.sqlite3`, or `DB_PATH`), nothing to install, WAL mode so the gate's frequent writes and the dashboard's reads don't block each other. **MySQL 8.0+** optional (`DB_ENGINE=mysql`), e.g. for a deployment with a separate database server; `manage.py copy_mysql_to_sqlite` moves existing data across |
 | **Face recognition model** | — | InsightFace `buffalo_s` model pack (ArcFace recognition + RetinaFace-family detection), run via ONNX Runtime, CPU only |
 | **Liveness/anti-spoofing model** | — | MiniFASNetV2 (Minivision AI, Silent-Face-Anti-Spoofing project), from-source ONNX export, run via the same ONNX Runtime, CPU only |
 
@@ -1262,9 +1262,13 @@ actually a choice — **Dashboard** or **Entry Agent**. The backend deliberately
 isn't a third button: both front ends are useless without it, so presenting it as
 an option would just be a step everyone has to perform every time.
 
-- **Dashboard** — runs `npm run dev` in `dashboard/`, parses the URL Vite prints
-  (Vite walks up a port when 5173 is taken, so the real one is read from its
-  output rather than assumed), and opens the browser there.
+- **Dashboard** — opens the browser at `http://localhost:8000/`, where the
+  backend itself serves the dashboard's ready-made build (`dashboard/dist`) — no
+  separate dashboard server, and no Node.js needed to use the system. If the
+  dashboard's code is newer than its build, the launcher runs `npm run build`
+  first (only possible where Node.js is installed; otherwise it opens the
+  existing build). Clicked before the backend is up, it waits and opens once it
+  answers.
 - **Entry Agent** — spawns `entry-agent/main.py` as its own process, which opens
   **straight onto the gate monitor**: the feed, the card scanner and the live log,
   with no intermediate menu. Kept a separate process rather than imported, since
@@ -1330,46 +1334,59 @@ windows always agree on it.
 
 **Loading animation.** Both choices take several seconds before anything visible
 happens — the entry-agent measured ~3.6–4.2s (importing `cv2`, opening the webcam
-through DirectShow, building the window), and the dev server's first start is
-comparable. While that runs, the card grows a status strip — "Starting the
+through DirectShow, building the window), and a dashboard rebuild (only after its
+code changed) takes a similar time. While that runs, the card grows a status strip — "Starting the
 camera and opening the gate monitor…" over a moving progress bar — so the wait
 reads as work rather than as a button that missed the click. The strip then
-settles to a green "Gate monitor is open" / "Running at localhost:5173 — click to
-open", a red "Failed to start — open the log below to see why", or, after 45
+settles to a green "Gate monitor is open" / "Open at localhost:8000 — click to
+open it again", a red "Failed to start — open the log below to see why", or, after 45
 seconds with no signal, an amber "Still not up after 45s".
 
 It ends on a real signal, not a timer. `main.py` prints
 `SECURETAP_ENTRY_AGENT_READY` on the line immediately before handing off to its
 Tk loop; the launcher watches its output for that marker and stops the animation
-when the window is genuinely up. The dashboard uses the URL Vite prints the same
-way. Three ways out, so a spinner can never outlive what it's waiting for:
+when the window is genuinely up. The dashboard's strip ends when its rebuild
+finishes and the backend answers. Three ways out, so a spinner can never outlive what it's waiting for:
 the ready marker, the process dying (the status poll notices and shows "Failed to
 start"), or a 45-second timeout.
 
 Design points worth knowing:
 
-- **Adopts already-running services.** Before starting anything it probes
-  `/api/health` and the dev-server port. A developer who already has `runserver`
+- **Adopts an already-running backend.** Before starting anything it probes
+  `/api/health`. A developer who already has `runserver`
   open in a terminal would otherwise get a second one that dies on "port already
   in use" — while the health probe kept answering from the *first* instance, so
   the launcher would show a green light beside a dead child. Adopted services are
   never killed on quit; only what the launcher started is.
 - **Process trees, not processes.** Children are stopped with `taskkill /T`,
   because `npm` spawns `node` as a child and terminating `npm` alone would leave
-  the dev server holding its port.
+  a dashboard build running on.
 - **Output is captured, not discarded.** Each child's stdout+stderr is drained on
   its own thread into a rolling buffer behind a "Show log" panel. Draining isn't
   optional: an unread pipe fills at ~64KB and the child then blocks forever on its
-  next write. The log is also where a backend that failed to start (MySQL down,
-  bad `.env`) explains itself, instead of the button just appearing to do nothing.
+  next write. The log is also where a backend that failed to start (a bad
+  `.env`, a port already taken) explains itself, instead of the button just appearing to do nothing.
 - **Threading follows the same rule as the gate monitor** — output readers only
   touch plain data; every widget update happens on the Tk main thread.
 - The design system (color tokens, fonts, icons — §8.1) is imported from
   `entry-agent/ui.py` rather than duplicated, so the launcher and the gate monitor
   can't drift into looking like two different products.
 
-MySQL is out of scope — it's a Windows service, so the launcher reports the
-backend's state but can't start the database.
+There's no database server for the launcher to start: the default SQLite
+database is a file the backend opens itself. (With the optional
+`DB_ENGINE=mysql`, MySQL runs as its own Windows service, outside the
+launcher's control.)
+
+**Why SQLite (and how MySQL compares).** For one laptop running the whole
+system — the capstone defense — a separate database server is only something
+extra to install, configure and keep running. SQLite stores everything in one
+file with nothing to install, and with WAL mode it handled a 90-second
+busy-gate test (two gates scanning ~5 frames a second each, card taps, the
+dashboard's live page and settings saves at once — 857 requests) with zero
+errors and zero "database is locked". It also fixed a hidden MySQL problem:
+filtering the Logs page by date returned nothing on a MySQL server without its
+time-zone tables loaded, while SQLite returns the right records. MySQL remains
+an option for a real deployment with several gates and a dedicated server.
 
 ---
 

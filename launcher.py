@@ -13,7 +13,7 @@ only decision this window asks for.
 Every child process it spawns is tracked and killed on quit (via taskkill /T,
 so npm's node child goes with it), and their merged output is kept in a rolling
 buffer that the "Show log" panel reveals - otherwise a backend that dies
-because MySQL isn't running would just look like a button that does nothing.
+because its port is taken would just look like a button that does nothing.
 
 Run it with the repo's venv:  .venv\\Scripts\\python.exe launcher.py
 or double-click SecureTap.bat, which does the same thing.
@@ -80,11 +80,9 @@ DASHBOARD_DIR = ROOT / "dashboard"
 ENTRY_AGENT_DIR = ROOT / "entry-agent"
 
 HEALTH_URL = "http://127.0.0.1:8000/api/health"
-FALLBACK_DASHBOARD_URL = "http://localhost:5173"
-# Vite prints the URL it actually bound to, which isn't always 5173 - it walks
-# up a port at a time when one's taken. Parsing the real one beats opening a
-# browser at a guess.
-VITE_URL_PATTERN = re.compile(r"https?://(?:localhost|127\.0\.0\.1):\d+")
+# The backend serves the dashboard itself, from its ready-made build
+# (backend/securetap_project/spa_views.py) - no separate dashboard server.
+DASHBOARD_URL = "http://localhost:8000/"
 
 HEALTH_POLL_MS = 2000
 # How often the launcher re-runs the data clean-up while it stays open.
@@ -173,11 +171,28 @@ def npm_command():
     return shutil.which("npm.cmd") or shutil.which("npm")
 
 
+def _dashboard_build_exists():
+    return (DASHBOARD_DIR / "dist" / "index.html").exists()
+
+
+def _dashboard_build_is_current():
+    """True when dashboard/dist (from `npm run build`) exists and is newer
+    than every dashboard source file - so the backend is serving the latest
+    dashboard. An out-of-date build gets rebuilt first (see _open_dashboard),
+    so a dashboard code change can't silently go missing."""
+    if not _dashboard_build_exists():
+        return False
+    built_at = (DASHBOARD_DIR / "dist" / "index.html").stat().st_mtime
+    sources = [DASHBOARD_DIR / name for name in ("index.html", "package.json", "vite.config.js", "tailwind.config.js")]
+    sources += list((DASHBOARD_DIR / "src").rglob("*"))
+    return all(path.stat().st_mtime <= built_at for path in sources if path.is_file())
+
+
 def service_responds(url, timeout=1.0):
     """Whether something is already serving this URL.
 
     Checked before starting anything, because plenty of people already have
-    `runserver` or `npm run dev` open in a terminal. Spawning a second one
+    `runserver` open in a terminal. Spawning a second one
     fails on "port already in use" and dies - but the health probe would still
     get an answer from the *other* instance, so the launcher would show a
     cheerful green light next to a child process that's already dead. Adopting
@@ -443,13 +458,15 @@ class LauncherWindow:
         self._log = deque(maxlen=LOG_MAX_LINES)
         self._log_dirty = False
         self._log_lock = threading.Lock()
-        self._dashboard_url = None
         self._browser_opened = False
         self._backend_ok = False
         # "External" = already running when we got here, so it's not ours to
         # start and not ours to kill on quit.
         self._backend_external = False
-        self._dashboard_external = False
+        # Dashboard button: clicked before the backend was up (open it once it
+        # is), and whether its last rebuild failed - see _open_dashboard.
+        self._open_when_backend_ready = False
+        self._dashboard_failed = False
         self._spinners = {}
         # True while the Entry Agent's pre-flight checks run in the background,
         # so a second click can't start a second round of them.
@@ -1062,69 +1079,57 @@ class LauncherWindow:
         self._set_status("backend", "starting")
 
     def _open_dashboard(self):
+        """The backend serves the dashboard at DASHBOARD_URL, so this only
+        makes sure the dashboard's ready-made build is up to date - rebuilding
+        it when its code has changed since, which needs Node.js (a computer
+        that only runs SecureTap never does) - then opens the browser as soon
+        as the backend answers."""
         if self.dashboard.is_running():
-            self._launch_browser()
-            return
-        if service_responds(FALLBACK_DASHBOARD_URL):
-            self._dashboard_external = True
-            self._dashboard_url = FALLBACK_DASHBOARD_URL
-            self._append_log("[launcher] a dashboard dev server is already running - using that one")
-            self._launch_browser()
-            return
-
-        npm = npm_command()
-        if npm is None:
-            self._append_log("[launcher] npm not found on PATH - install Node.js to run the dashboard")
-            messagebox.showerror(
-                "Node.js not found",
-                "npm isn't on your PATH, so the dashboard's dev server can't start.\n\n"
-                "Install Node.js from https://nodejs.org, then reopen this launcher.",
+            return  # already rebuilding - the browser opens when it's done
+        self._dashboard_failed = False
+        if not _dashboard_build_is_current():
+            npm = npm_command()
+            if npm is not None and (DASHBOARD_DIR / "node_modules").exists():
+                self._append_log("[launcher] the dashboard's code changed since its last build - rebuilding it")
+                self._dashboard_started = True
+                self.dashboard.start([npm, "run", "build"], DASHBOARD_DIR)
+                self._set_status("dashboard", "starting")
+                self._start_spinner("dashboard", "Preparing the dashboard (only after its code changed)…")
+                return
+            if not _dashboard_build_exists():
+                self._append_log("[launcher] dashboard/dist is missing and Node.js isn't available to build it")
+                messagebox.showerror(
+                    "Dashboard not built",
+                    "The dashboard's ready-made files (dashboard/dist) are missing.\n\n"
+                    "On a computer with Node.js, run 'npm install' and then 'npm run build' "
+                    "in the dashboard folder.",
+                )
+                return
+            self._append_log(
+                "[launcher] the dashboard's code is newer than its build, but Node.js isn't available to "
+                "rebuild it - opening the existing build"
             )
-            return
-        if not (DASHBOARD_DIR / "node_modules").exists():
-            self._append_log("[launcher] dashboard/node_modules missing - run 'npm install' in dashboard/ first")
-            messagebox.showerror(
-                "Dashboard not installed",
-                "dashboard/node_modules is missing.\n\n"
-                "Open a terminal in the dashboard folder and run 'npm install' once, "
-                "then reopen this launcher.",
-            )
-            return
+        self._request_dashboard_open()
 
-        self._append_log("[launcher] starting dashboard dev server")
-        self._dashboard_url = None
-        self._browser_opened = False
-        self._dashboard_started = True
-        self.dashboard.start([npm, "run", "dev"], DASHBOARD_DIR)
-        self._set_status("dashboard", "starting")
-        self._start_spinner("dashboard", "Starting the dashboard… your browser will open shortly")
-        # If Vite never prints a URL we can parse, open the conventional one
-        # anyway rather than leaving the user staring at a button.
-        self.root.after(20000, self._launch_browser_fallback)
+    def _request_dashboard_open(self):
+        if self._backend_ok:
+            self._launch_browser()
+        else:
+            self._open_when_backend_ready = True
+            self._start_spinner("dashboard", "Waiting for the backend to finish starting…")
 
     def _handle_dashboard_output(self, line):
-        """Runs on the output-reader thread, so it does nothing but record the
-        URL - Tk isn't safe to touch from another thread, even via after().
-        The main loop notices the URL in _flush_log and opens the browser
-        there, the same way the gate monitor hands work back to its Tk thread."""
+        """The dashboard rebuild's output, from its reader thread - log only;
+        _apply_health notices when it's finished, on the Tk thread."""
         self._append_log(line)
-        if self._dashboard_url is None:
-            match = VITE_URL_PATTERN.search(line)
-            if match:
-                self._dashboard_url = match.group(0)
-
-    def _launch_browser_fallback(self):
-        if self.dashboard.is_running() and self._dashboard_url is None:
-            self._dashboard_url = FALLBACK_DASHBOARD_URL
-            self._launch_browser()
 
     def _launch_browser(self):
-        url = self._dashboard_url or FALLBACK_DASHBOARD_URL
         self._browser_opened = True
-        self._append_log(f"[launcher] opening {url}")
+        self._open_when_backend_ready = False
+        self._append_log(f"[launcher] opening {DASHBOARD_URL}")
         self._stop_spinner("dashboard")
-        self._set_card_state("dashboard", "running", f"Running at {url.split('://', 1)[-1]} — click to open")
-        webbrowser.open(url)
+        self._set_card_state("dashboard", "running", "Open at localhost:8000 — click to open it again")
+        webbrowser.open(DASHBOARD_URL)
 
     def _run_in_background(self, work, on_done):
         """Runs work() off the Tk thread, then on_done(result) back on it.
@@ -1381,22 +1386,16 @@ class LauncherWindow:
 
     def _poll_health(self):
         """Backend liveness plus a liveness check on each child process, so a
-        service that died (MySQL down, a port already taken) turns red here
+        service that died (a bad .env, a port already taken) turns red here
         instead of just never becoming ready. The two network probes run off
         the Tk thread (see _run_in_background) - while the backend is down or
         still starting, each one takes up to 1.5s to give up, which used to
         freeze the window on every poll."""
-        dashboard_external = self._dashboard_external
-
         def probe():
-            return (
-                service_responds(HEALTH_URL, timeout=1.5),
-                dashboard_external and service_responds(FALLBACK_DASHBOARD_URL),
-            )
+            return service_responds(HEALTH_URL, timeout=1.5)
 
-        def apply(result):
-            backend_up, dashboard_up = result or (False, False)
-            self._apply_health(backend_up, dashboard_up)
+        def apply(backend_up):
+            self._apply_health(bool(backend_up))
             self.root.after(HEALTH_POLL_MS, self._poll_health)
 
         self._run_in_background(probe, apply)
@@ -1428,7 +1427,7 @@ class LauncherWindow:
 
         self._run_in_background(work, done)
 
-    def _apply_health(self, backend_up, external_dashboard_up):
+    def _apply_health(self, backend_up):
         if backend_up:
             self._maybe_run_cleanup()
             if not self._backend_ok:
@@ -1444,25 +1443,26 @@ class LauncherWindow:
             self._set_status("backend", "stopped")
             self._set_status_message("The backend stopped — open the log below to see why.")
 
+        # The dashboard is served by the backend, so it's ready whenever the
+        # backend is and its build exists; "Starting…" only while rebuilding.
         if self.dashboard.is_running():
-            self._set_status("dashboard", "running")
-        elif self._dashboard_external and external_dashboard_up:
-            self._set_status("dashboard", "running")
-        else:
-            if self._spinning("dashboard"):
-                self._stop_spinner("dashboard", "Failed to start — open the log below to see why", "failed")
-                self._set_status("dashboard", "failed")
-                # Clearing this is what keeps the message on screen: leave it
-                # set and the very next poll takes the reset branch below and
-                # quietly clears the failure.
-                self._dashboard_started = False
+            self._set_status("dashboard", "starting")
+        elif self._dashboard_started:
+            # A rebuild just finished.
+            self._dashboard_started = False
+            if _dashboard_build_is_current():
+                self._append_log("[launcher] dashboard rebuilt")
+                self._request_dashboard_open()
             else:
-                self._set_status("dashboard", "off")
-                if self._dashboard_started:
-                    self._dashboard_started = False
-                    self._browser_opened = False
-                    self._dashboard_url = None
-                    self._set_card_state("dashboard", None)
+                self._dashboard_failed = True
+                self._stop_spinner("dashboard", "Couldn't prepare the dashboard — open the log below to see why",
+                                   "failed")
+        if self._dashboard_failed:
+            self._set_status("dashboard", "failed")
+        elif not self.dashboard.is_running():
+            self._set_status("dashboard", "ready" if backend_up and _dashboard_build_exists() else "off")
+        if backend_up and self._open_when_backend_ready:
+            self._launch_browser()
 
         if self.entry_agent.is_running():
             self._entry_agent_started = True
@@ -1495,8 +1495,6 @@ class LauncherWindow:
     def _flush_log(self):
         # Also where signals spotted by the output-reader threads get acted on,
         # since this already runs on the Tk main thread.
-        if self._dashboard_url and not self._browser_opened:
-            self._launch_browser()
         if self._entry_agent_ready and self._spinning("entry-agent"):
             self._stop_spinner("entry-agent", "Gate monitor is open — check your taskbar if you don't see it")
         with self._log_lock:
@@ -1559,7 +1557,7 @@ class LauncherWindow:
             # Ctrl+C in the console that started us. Without catching it the
             # exception unwinds straight past _handle_quit, so nothing gets
             # stopped and every child we spawned is orphaned - a Django server
-            # and an npm dev server left holding ports 8000/5173 with no window
+            # left holding port 8000 (and maybe a dashboard build) with no window
             # left to stop them from, and Task Manager as the only way out.
             print("\nInterrupted - stopping everything the launcher started...", file=sys.stderr)
         finally:

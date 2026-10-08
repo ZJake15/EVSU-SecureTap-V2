@@ -4,7 +4,11 @@ djangorestframework-simplejwt>=5.3
 django-filter>=24.2
 django-cors-headers>=4.4
 django-environ>=0.11
-mysqlclient>=2.2
+# Serves the dashboard's ready-made files from the backend itself.
+whitenoise>=6.7
+# The database is SQLite by default (built into Python - nothing to
+# install). MySQL is optional: for DB_ENGINE=mysql, or to run
+# copy_mysql_to_sqlite, also install requirements-mysql.txt.
 # Face recognition: InsightFace (ArcFace, buffalo_l model) via ONNX Runtime,
 # not dlib. Install with --only-binary=:all: - a plain `pip install` can look
 # stuck for several minutes on a very new Python version (pip's resolver has

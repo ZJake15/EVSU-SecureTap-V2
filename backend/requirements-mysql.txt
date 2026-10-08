@@ -1,0 +1,5 @@
+# Only needed with DB_ENGINE=mysql in backend/.env, or to run
+# `manage.py copy_mysql_to_sqlite` (moving an existing MySQL database into
+# SQLite). The default SQLite database needs nothing extra.
+#   pip install -r requirements-mysql.txt
+mysqlclient>=2.2

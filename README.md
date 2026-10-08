@@ -12,7 +12,7 @@ Campus entry monitoring system for Eastern Visayas State University, with a real
 evsu-securetap/
 ├── SecureTap.bat  # double-click this - opens the launcher
 ├── launcher.py    # one menu: starts the backend, opens the dashboard or entry-agent
-├── backend/       # Django + DRF API (accounts, users, logs, reports apps) + MySQL
+├── backend/       # Django + DRF API (accounts, users, logs, reports apps) + SQLite database; also serves the dashboard
 ├── entry-agent/   # Windows app: webcam capture + NFC card read -> calls the API
 ├── dashboard/     # React + Tailwind admin dashboard
 ├── docs/          # SQL snippets, supplementary docs, UI redesign mockups + design brief
@@ -22,8 +22,8 @@ evsu-securetap/
 ## Prerequisites
 
 - Windows 10/11
-- MySQL Server 8.0+ running locally (as the `MySQL80` service, or similar)
-- Node.js 20 LTS or newer (developed/tested with Node 25) + npm
+- **No database server to install** - the database is SQLite, a single file the backend creates itself. (MySQL is still supported as an option - see "Using MySQL instead" below.)
+- Node.js 20 LTS or newer + npm - **only to build the dashboard** (once, and again after changing its code). Running SecureTap doesn't need it: the backend serves the built dashboard.
 - Python 3.11–3.14, plain CPython from [python.org](https://www.python.org/downloads/) - **no conda/Miniforge needed**. The old dlib-based face recognition required conda for a prebuilt binary; the current InsightFace/ONNX Runtime stack has normal prebuilt PyPI wheels, so plain `pip` works fine.
 - Git
 - A webcam
@@ -38,15 +38,11 @@ cd EVSU-SecureTap-V2
 
 ## 2. Database setup
 
-Open `docs/create_database.sql` and replace `CHANGE_ME_TO_A_STRONG_PASSWORD` with a password you choose (see "Getting your secrets" below for how to generate one), then run it against your MySQL server as an admin user (root):
+Nothing to install. The database is **SQLite** - one file, `backend/db.sqlite3`, created by `python manage.py migrate` in the next step. (`DB_ENGINE=sqlite` in `backend/.env`; `DB_PATH` can put the file elsewhere.) It's never committed to git - it holds face data and password hashes.
 
-```powershell
-mysql -u root -p < docs/create_database.sql
-```
+### Using MySQL instead (optional)
 
-(No `mysql` CLI on PATH? Paste the file's contents into MySQL Workbench or HeidiSQL instead - just make sure you've edited the password first.)
-
-This creates a dedicated `securetap` database and a least-privilege `securetap_app` user, so the Django backend never needs your root credentials. **Remember the password you chose** - it goes into `backend/.env` as `DB_PASSWORD` in the next step.
+For a real deployment with a separate database server: install MySQL 8.0+, `pip install -r backend\requirements-mysql.txt`, open `docs/create_database.sql` and replace `CHANGE_ME_TO_A_STRONG_PASSWORD` with a password you choose, run it as root (`mysql -u root -p < docs/create_database.sql`, or paste it into MySQL Workbench/HeidiSQL), then in `backend/.env` set `DB_ENGINE=mysql` and fill in the `DB_*` lines. Also load MySQL's time-zone tables (`mysql_tzinfo_to_sql`) - without them, filtering logs by date returns nothing. Moving an existing MySQL database into SQLite: `python manage.py copy_mysql_to_sqlite` (MySQL is only read; it stays as a backup), then set `DB_ENGINE=sqlite`.
 
 ## 3. Backend setup (Django)
 
@@ -69,8 +65,8 @@ pip install -r backend\requirements.txt --only-binary=:all:
 pip install -r entry-agent\requirements.txt
 
 copy backend\.env.example backend\.env
-# edit backend\.env now - see "Getting your secrets" below for DB_PASSWORD,
-# DJANGO_SECRET_KEY, and ENTRY_AGENT_SERVICE_TOKEN specifically.
+# edit backend\.env now - see "Getting your secrets" below for
+# DJANGO_SECRET_KEY and ENTRY_AGENT_SERVICE_TOKEN.
 
 cd backend
 python manage.py migrate
@@ -129,11 +125,12 @@ Requirements:
 ```powershell
 cd dashboard
 npm install
-copy .env.example .env
-npm run dev
+npm run build
 ```
 
-Dashboard runs at `http://localhost:5173` (Vite picks the next free port, e.g. `5174`, if that one's busy - check the terminal output).
+That builds the dashboard into `dashboard/dist`, which **the backend serves at `http://localhost:8000/`** - no separate dashboard server. The launcher rebuilds it by itself whenever the dashboard's code has changed since the last build.
+
+Editing the dashboard? `npm run dev` still works (live reload at `http://localhost:5173`); it forwards `/api` and `/media` to the backend on port 8000.
 
 The dashboard loads its fonts (Archivo, Atkinson Hyperlegible Next, IBM Plex Mono) from Google Fonts, so it needs internet access to look as designed; offline it still works, just in the browser's default fonts. Its icons come from the `@phosphor-icons/web` npm package and work offline. The entry-agent and launcher don't need internet for this - their fonts are bundled in `entry-agent/assets/fonts/`. See `documentation.md` §8.1 for the design system.
 
@@ -141,8 +138,8 @@ The dashboard loads its fonts (Archivo, Atkinson Hyperlegible Next, IBM Plex Mon
 
 Three values need to be filled in before anything will run - none of them are things you "look up" anywhere, they're generated or chosen locally:
 
-### `DB_PASSWORD` (`backend/.env`)
-Not a secret handed to you - **you choose it**. Pick a strong password, put it in `docs/create_database.sql`'s `CREATE USER ... IDENTIFIED BY '...'` line (replacing the placeholder), run that script, then put the exact same password in `backend/.env`'s `DB_PASSWORD`. To generate a random one instead of making one up:
+### `DB_PASSWORD` (`backend/.env`) - only with MySQL
+Not needed with the default SQLite database. With `DB_ENGINE=mysql`, **you choose it**: pick a strong password, put it in `docs/create_database.sql`'s `CREATE USER ... IDENTIFIED BY '...'` line (replacing the placeholder), run that script, then put the exact same password in `backend/.env`'s `DB_PASSWORD`. To generate a random one instead of making one up:
 ```powershell
 python -c "import secrets; print(secrets.token_urlsafe(24))"
 ```
@@ -169,21 +166,21 @@ Paste the **same value** into both `backend/.env`'s `ENTRY_AGENT_SERVICE_TOKEN` 
 
 It opens one window that starts the Django backend for you (its status bar at the top shows Backend / Dashboard / Entry Agent as Ready, Running, Starting…, Not running or Failed) and then asks the only question that's genuinely a choice:
 
-- **Dashboard** - starts the Vite dev server if it isn't already up, then opens your browser at whatever port it actually bound to.
+- **Dashboard** - opens your browser at `http://localhost:8000/`, served by the backend (rebuilding the dashboard first only if its code changed since the last build).
 - **Entry Agent** - opens the gate monitor (camera + NFC) in its own window.
 
 The backend isn't a third button because it isn't a choice - both front ends are useless without it, so it just starts.
 
 Worth knowing:
 
-- **MySQL still has to be running.** It's a Windows service, outside the launcher's control - if it's down, the backend starts but every page that touches data will error.
-- **Already have things running?** If `runserver` or `npm run dev` is already up in a terminal, the launcher detects that and uses those instead of starting duplicates that would die on "port already in use" - and it won't kill them when it quits.
-- **Show log** reveals the merged output of everything it started. That's where a backend that failed to start explains itself (MySQL down, bad `.env`, port taken).
+- **No database server to start** - the SQLite database is just a file the backend opens. (With the optional `DB_ENGINE=mysql`, the MySQL service has to be running.)
+- **Already have the backend running?** If `runserver` is already up in a terminal, the launcher detects that and uses it instead of starting a duplicate that would die on "port already in use" - and it won't kill it when it quits.
+- **Show log** reveals the merged output of everything it started. That's where a backend that failed to start explains itself (bad `.env`, port taken).
 - **Entry Agent settings** (gate, direction, guard name, auto-open) are remembered between launches. Before opening the gate monitor it also checks that the backend answers and that the NFC reader is plugged in; if either looks wrong you get a warning with **Open gate monitor** or **Cancel** - it never blocks you on its own.
 - **Quitting stops everything it started**, and asks first. Anything it merely adopted is left alone.
-- `npm install` in `dashboard/` is still a one-time manual step; the launcher says so plainly if it hasn't been done.
+- `npm install` and the first `npm run build` in `dashboard/` are one-time steps (only on a computer that builds the dashboard); the launcher says so plainly if the dashboard hasn't been built.
 
-Equivalent manual commands, if you prefer them or you're on a machine without the `.bat`: `python manage.py runserver` in `backend/`, `npm run dev` in `dashboard/`, `python main.py` in `entry-agent/` - all using the shared root venv.
+Equivalent manual commands, if you prefer them or you're on a machine without the `.bat`: `python manage.py runserver` in `backend/` (then open `http://localhost:8000/`), `python main.py` in `entry-agent/` - all using the shared root venv.
 
 Then: log into the dashboard and register a real person via the Users page - guided capture walks through 5 near-frontal shots (front, slight left/right turn, neutral, smile), or use the single-photo fallback if you're staging one for bulk import instead. The entry-agent should recognize them automatically within a few seconds of facing the webcam, after enough frames agree - no tap needed. Optionally tap their NFC card too and confirm their photo pops up on the entry-agent window. Both should appear on the dashboard's Live Monitoring page and in Logs.
 

@@ -16,6 +16,7 @@ from logs.views import (
 )
 from reports.views import FarFrrView, SummaryView
 from securetap_project.media_views import protected_media_serve
+from securetap_project.spa_views import dashboard_index
 from configuration.views import SessionPolicyView, SettingsView
 from users.views import (
     BulkImportView,
@@ -60,4 +61,6 @@ urlpatterns = [
     # (not behind `if settings.DEBUG`) so this keeps working the same way
     # regardless of DEBUG's value.
     re_path(r"^media/(?P<path>.*)$", protected_media_serve),
+    # Everything else is a dashboard page - must stay last.
+    re_path(r"^(?!api/|admin/|media/|static/).*$", dashboard_index, name="dashboard"),
 ]

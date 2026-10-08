@@ -1,6 +1,9 @@
 import axios from "axios";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
+// "/api" on the same address the dashboard is opened from - the backend
+// serves the dashboard itself (http://localhost:8000/). During development
+// (`npm run dev`), Vite forwards /api to the backend - see vite.config.js.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 
 const ACCESS_KEY = "securetap_access";
 const REFRESH_KEY = "securetap_refresh";

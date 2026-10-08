@@ -37,6 +37,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Serves the dashboard's ready-made files (see DASHBOARD_DIST below), so
+    # the backend alone runs the whole system - no Node.js needed to use it.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -66,17 +69,45 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "securetap_project.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": env("DB_NAME", default="securetap"),
-        "USER": env("DB_USER", default="securetap_app"),
-        "PASSWORD": env("DB_PASSWORD", default=""),
-        "HOST": env("DB_HOST", default="127.0.0.1"),
-        "PORT": env("DB_PORT", default="3306"),
-        "OPTIONS": {"charset": "utf8mb4"},
-    }
+# Which database to use: "sqlite" (one file, nothing to install - the default
+# for a new setup) or "mysql" (a separate server, for a real deployment).
+# Left unset, an older .env that already has DB_NAME keeps using MySQL, so
+# upgrading never switches databases by surprise. `manage.py
+# copy_mysql_to_sqlite` moves existing data across.
+DB_ENGINE = env("DB_ENGINE", default="").strip().lower() or ("mysql" if env("DB_NAME", default="") else "sqlite")
+
+# MySQL connection details - only used with DB_ENGINE=mysql (and as the
+# source for copy_mysql_to_sqlite).
+MYSQL_DATABASE = {
+    "ENGINE": "django.db.backends.mysql",
+    "NAME": env("DB_NAME", default="securetap"),
+    "USER": env("DB_USER", default="securetap_app"),
+    "PASSWORD": env("DB_PASSWORD", default=""),
+    "HOST": env("DB_HOST", default="127.0.0.1"),
+    "PORT": env("DB_PORT", default="3306"),
+    "OPTIONS": {"charset": "utf8mb4"},
 }
+
+# The SQLite database file. In the default backend/ folder for a normal
+# checkout; an installed copy of the app points it somewhere writable.
+SQLITE_DATABASE = {
+    "ENGINE": "django.db.backends.sqlite3",
+    "NAME": env("DB_PATH", default=str(BASE_DIR / "db.sqlite3")),
+    "OPTIONS": {
+        # The gate camera writes several times a second while the dashboard
+        # reads. WAL mode lets reads and a write happen at the same time;
+        # a write that does collide waits (up to `timeout` seconds) instead
+        # of failing with "database is locked"; IMMEDIATE claims the write
+        # lock at the start of a transaction, so two never deadlock midway.
+        "timeout": 20,
+        "transaction_mode": "IMMEDIATE",
+        "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+    },
+}
+
+if DB_ENGINE not in ("sqlite", "mysql"):
+    raise ValueError(f"DB_ENGINE must be 'sqlite' or 'mysql', not {DB_ENGINE!r}")
+DATABASES = {"default": MYSQL_DATABASE if DB_ENGINE == "mysql" else SQLITE_DATABASE}
 
 # bcrypt first so new passwords are hashed with bcrypt, per project spec.
 # The other hashers stay listed so Django can still verify against them if
@@ -110,6 +141,13 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# The dashboard's ready-made build (`npm run build` in dashboard/). The
+# backend serves it at http://localhost:8000/ - its files (scripts, styles,
+# icons) through WhiteNoise, and every page address through
+# securetap_project.spa_views - so using the system needs no Node.js.
+DASHBOARD_DIST = Path(env("DASHBOARD_DIST", default=str(BASE_DIR.parent / "dashboard" / "dist")))
+WHITENOISE_ROOT = DASHBOARD_DIST
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

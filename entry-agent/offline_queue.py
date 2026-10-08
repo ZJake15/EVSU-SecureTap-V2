@@ -102,7 +102,7 @@ class OfflineQueue:
         # blocks enqueue() from the main polling loop.
         for row_id, nfc_id, gate_location, direction in rows:
             try:
-                self.api_client.verify(gate_location, direction, nfc_id=nfc_id)
+                self.api_client.verify(gate_location, direction, nfc_id=nfc_id, replayed=True)
             except requests.exceptions.HTTPError as exc:
                 status = exc.response.status_code if exc.response is not None else None
                 if status is not None and 400 <= status < 500 and status not in self.RETRYABLE_STATUSES:

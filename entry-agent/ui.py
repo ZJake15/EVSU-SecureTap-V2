@@ -9,6 +9,7 @@ import traceback
 import tkinter.font as tkfont
 import winsound
 from datetime import datetime
+from tkinter import messagebox
 
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageTk
@@ -451,6 +452,42 @@ ALERTS = {
 }
 
 
+class _KeyBurst:
+    """Tells a card tap apart from a person typing into a text box. The card
+    reader "types" its whole number in a few hundredths of a second - keys
+    far closer together than any person types - so a fast burst of at least
+    MIN_LENGTH characters ending in Enter is a card, wherever focus was."""
+
+    GAP_SECONDS = 0.05
+    MIN_LENGTH = 4
+
+    def __init__(self, entry):
+        self._entry = entry
+        self._start = 0
+        self._last = 0.0
+        entry.bind("<KeyPress>", self._key, add=True)
+
+    def _key(self, event):
+        # Runs before the box inserts the character, so the burst starts at
+        # the box's current length.
+        if not (event.char and event.char.isprintable()):
+            return
+        now = time.monotonic()
+        if now - self._last > self.GAP_SECONDS:
+            self._start = len(self._entry.get())
+        self._last = now
+
+    def take_card(self):
+        """On Enter: the card number, removed from the box, if what was just
+        typed was a card burst - else None."""
+        text = self._entry.get()
+        if time.monotonic() - self._last > self.GAP_SECONDS * 3 or len(text) - self._start < self.MIN_LENGTH:
+            return None
+        card = text[self._start:].strip()
+        self._entry.delete(self._start, "end")
+        return card or None
+
+
 class GateMonitorWindow:
     """The entry-agent's only window, owning both credentials at once - the
     continuous camera check and the NFC card reader - so a guard watches one
@@ -513,6 +550,11 @@ class GateMonitorWindow:
         "read_error": "Read error",
         "offline": "Offline",
         "server_error": "Server error",
+        # A guard's own staff ID card (Settings -> "Guards sign in at the gate
+        # monitor") that couldn't sign them in - the reason is shown below.
+        "staff_sign_in_off": "Staff card",
+        "staff_not_allowed": "Can't sign in here",
+        "staff_replayed": "Staff card",
     }
 
     # (key, label, color, icon) - "today" is the hero number, the rest sit
@@ -533,8 +575,16 @@ class GateMonitorWindow:
     def __init__(self, gate_location, direction, get_preview_frame, on_tap,
                  officer_name="", version="", on_close=None,
                  camera_options=None, on_camera_change=None, initial_camera_index=None,
-                 video_fps=None, student_display_fps=None):
+                 video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None):
         self._get_preview_frame = get_preview_frame
+        # Guard sign-in (Settings -> "Guards sign in at the gate monitor"):
+        # on_sign_in(username, password) and on_sign_out(shift_id) are main.py's,
+        # run off the Tk thread; the answers come back through
+        # set_gate_sign_in() / show_sign_in_result().
+        self._on_sign_in = on_sign_in
+        self._on_sign_out = on_sign_out
+        self._sign_in = {"enabled": False, "on_duty": None}
+        self._sign_in_dialog = None
         # From the launcher's speed mode (config.py) - VIDEO_REFRESH_MS when
         # run without one.
         self._video_refresh_ms = round(1000 / video_fps) if video_fps else VIDEO_REFRESH_MS
@@ -1104,8 +1154,23 @@ class GateMonitorWindow:
         self._build_student_toggle(inner)
 
         identity = " · ".join(part for part in (self.officer_name, self.version) if part)
+        self._identity_label = None
         if identity:
-            self._label(inner, identity, (FONT, 14), INK_600).pack(side="left", padx=(26, 0))
+            self._identity_label = self._label(inner, identity, (FONT, 14), INK_600)
+            self._identity_label.pack(side="left", padx=(26, 0))
+
+        # Who's on duty - replaces the typed-in guard name above while guard
+        # sign-in is switched on (see _render_gate_sign_in). Clicking it signs
+        # in or out.
+        self._duty = ctk.CTkFrame(inner, fg_color="transparent", cursor="hand2")
+        self._duty_icon = self._icon_label(self._duty, "user-focus", 16, INK_600, cursor="hand2")
+        self._duty_icon.pack(side="left", padx=(0, 6))
+        self._duty_label = self._label(self._duty, "", (FONT, 14, "bold"), INK, cursor="hand2")
+        self._duty_label.pack(side="left")
+        self._duty_action = self._label(self._duty, "", (FONT, 14, "bold", "underline"), MAROON, cursor="hand2")
+        self._duty_action.pack(side="left", padx=(10, 0))
+        for widget in (self._duty, self._duty_icon, self._duty_label, self._duty_action):
+            widget.bind("<Button-1>", lambda _e: self._duty_clicked())
 
         # Right side, packed right-to-left: sync, queue, backend.
         sync = ctk.CTkFrame(inner, fg_color="transparent")
@@ -1261,6 +1326,27 @@ class GateMonitorWindow:
     def set_queue_count(self, count):
         self._queue.put(("queue_count", count))
 
+    # ---- public API: guard sign-in ------------------------------------------
+
+    def set_gate_sign_in(self, status):
+        """status: {"enabled": bool, "on_duty": None or {"shift_id", "name",
+        ...}} from the backend - shown in the status bar."""
+        self._queue.put(("gate_sign_in", status))
+
+    def show_sign_in_result(self, ok, message):
+        """The answer to a password sign-in from the sign-in window."""
+        self._queue.put(("sign_in_result", (ok, message)))
+
+    def show_staff_signed_in(self, name):
+        """A guard's staff ID card tap signed them in."""
+        self._queue.put(("staff_signed_in", name))
+
+    def current_shift_id(self):
+        """The shift on duty now (for signing out when the window closes) -
+        read from the Tk thread's last status, so it's safe from any thread."""
+        on_duty = self._sign_in.get("on_duty") or {}
+        return on_duty.get("shift_id")
+
     def set_backend_ok(self, ok):
         self._queue.put(("backend_ok", ok))
 
@@ -1329,6 +1415,13 @@ class GateMonitorWindow:
         elif kind == "camera_ok":
             self._set_status(self.camera_icon, self.camera_label, payload,
                              "Camera OK", "Camera not connected", CAUTION, "warning")
+        elif kind == "gate_sign_in":
+            self._render_gate_sign_in(payload)
+        elif kind == "sign_in_result":
+            ok, message = payload
+            self._render_sign_in_result(ok, message)
+        elif kind == "staff_signed_in":
+            self._render_staff_signed_in(payload)
 
     def _set_status(self, icon_label, text_label, ok, ok_text, bad_text, bad_color, bad_icon):
         color = VERIFIED if ok else bad_color
@@ -1342,6 +1435,160 @@ class GateMonitorWindow:
         else:
             self.sync_icon.configure(text=_icon("check-circle"), text_color=VERIFIED)
             self.sync_label.configure(text="Synced", text_color=VERIFIED)
+
+    # ---- guard sign-in --------------------------------------------------
+
+    def _render_gate_sign_in(self, status):
+        """Status bar: the typed-in guard name while sign-in is off; "On
+        duty: <name> · Sign out" or an amber "No guard signed in · Sign in"
+        while it's on."""
+        self._sign_in = status or {"enabled": False, "on_duty": None}
+        if not self._sign_in.get("enabled"):
+            self._duty.pack_forget()
+            if self._identity_label is not None and not self._identity_label.winfo_manager():
+                self._identity_label.pack(side="left", padx=(26, 0))
+            self._close_sign_in_dialog()
+            return
+        if self._identity_label is not None:
+            self._identity_label.pack_forget()
+        if not self._duty.winfo_manager():
+            self._duty.pack(side="left", padx=(26, 0))
+        on_duty = self._sign_in.get("on_duty")
+        if on_duty:
+            self._duty_icon.configure(text=_icon("user-focus"), text_color=VERIFIED)
+            self._duty_label.configure(text=f"On duty: {on_duty.get('name') or 'Guard'}", text_color=INK)
+            self._duty_action.configure(text="Sign out")
+            self._close_sign_in_dialog()
+        else:
+            self._duty_icon.configure(text=_icon("warning"), text_color=CAUTION)
+            self._duty_label.configure(text="No guard signed in", text_color=CAUTION)
+            self._duty_action.configure(text="Sign in")
+
+    def _duty_clicked(self):
+        on_duty = self._sign_in.get("on_duty")
+        if not on_duty:
+            self._open_sign_in_dialog()
+            return
+        name = on_duty.get("name") or "this guard"
+        if messagebox.askyesno(
+            "Sign out", f"Sign {name} out of {self.gate_location}?\n\nEntries after this are marked Unattended "
+                        "until the next guard signs in.", parent=self.window,
+        ) and self._on_sign_out:
+            self._on_sign_out(on_duty.get("shift_id"))
+
+    def _open_sign_in_dialog(self):
+        if self._sign_in_dialog is not None:
+            self._sign_in_dialog.lift()
+            return
+        dialog = ctk.CTkToplevel(self.window)
+        dialog.title(f"Sign in for duty - {self.gate_location}")
+        dialog.configure(fg_color=SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self.window)
+        dialog.protocol("WM_DELETE_WINDOW", self._close_sign_in_dialog)
+        _apply_icon(dialog)
+
+        body = ctk.CTkFrame(dialog, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=28, pady=24)
+        self._label(body, "Sign in for duty", (SEMI_HEAVY, 22), INK, anchor="w").pack(fill="x")
+        self._label(body, "Tap your staff ID card on the reader, or type your username and password.",
+                    (FONT, 14), INK_600, anchor="w", justify="left", wraplength=380).pack(fill="x", pady=(6, 16))
+        self._sign_in_fields = {}
+        for key, text, secret in (("username", "Username", False), ("password", "Password", True)):
+            self._label(body, text, (FONT, 14, "bold"), INK, anchor="w").pack(fill="x")
+            # A light fill and a border of at least one real pixel: this
+            # window is scaled with the monitor, and CTk draws nothing for a
+            # border scaled below one pixel (same fix as the student toggle).
+            entry = ctk.CTkEntry(body, width=380, height=40, corner_radius=3,
+                                 border_width=math.ceil(1 / self._scale), border_color=INK_400,
+                                 fg_color=CANVAS, text_color=INK, font=(FONT, 14), show="•" if secret else "")
+            entry.pack(fill="x", pady=(4, 12))
+            burst = _KeyBurst(entry)
+            entry.bind("<Return>", lambda _e, e=entry, b=burst: self._sign_in_enter(e, b))
+            self._sign_in_fields[key] = entry
+        self._sign_in_error = self._label(body, "", (FONT, 13, "bold"), DANGER, anchor="w", justify="left",
+                                          wraplength=380)
+        self._sign_in_error.pack(fill="x")
+        buttons = ctk.CTkFrame(body, fg_color="transparent")
+        buttons.pack(fill="x", pady=(14, 0))
+        self._sign_in_submit = ctk.CTkButton(
+            buttons, text="Sign in", font=(FONT, 14, "bold"), height=42, corner_radius=8, fg_color=MAROON,
+            hover_color=MAROON_DEEP, text_color="white", command=self._submit_sign_in,
+        )
+        self._sign_in_submit.pack(side="right")
+        ctk.CTkButton(
+            buttons, text="Cancel", font=(FONT, 14, "bold"), height=42, corner_radius=8, fg_color=SURFACE,
+            hover_color=CANVAS, text_color=INK, border_width=math.ceil(1 / self._scale), border_color=INK_400,
+            command=self._close_sign_in_dialog,
+        ).pack(side="right", padx=(0, 10))
+
+        self._sign_in_dialog = dialog
+        dialog.update_idletasks()
+        x = self.window.winfo_rootx() + (self.window.winfo_width() - dialog.winfo_width()) // 2
+        y = self.window.winfo_rooty() + (self.window.winfo_height() - dialog.winfo_height()) // 3
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.after(150, lambda: (dialog.lift(), self._sign_in_fields["username"].focus_force()))
+
+    def _sign_in_enter(self, entry, burst):
+        """Enter in the sign-in window: a card tap (the reader typed into the
+        focused box) signs in by card; otherwise username -> password ->
+        submit."""
+        card = burst.take_card()
+        if card:
+            self._last_card_id = card
+            if self.on_tap:
+                self.on_tap(card)
+            return "break"
+        if entry is self._sign_in_fields["username"]:
+            self._sign_in_fields["password"].focus_set()
+        else:
+            self._submit_sign_in()
+        return "break"
+
+    def _submit_sign_in(self):
+        username = self._sign_in_fields["username"].get().strip()
+        password = self._sign_in_fields["password"].get()
+        if not username or not password:
+            self._sign_in_error.configure(text="Type your username and password - or tap your staff ID card.")
+            return
+        self._sign_in_error.configure(text="")
+        self._sign_in_submit.configure(state="disabled", text="Signing in…")
+        if self._on_sign_in:
+            self._on_sign_in(username, password)
+
+    def _render_sign_in_result(self, ok, message):
+        if self._sign_in_dialog is None:
+            return
+        if ok:
+            self._close_sign_in_dialog()
+            return
+        self._sign_in_submit.configure(state="normal", text="Sign in")
+        self._sign_in_fields["password"].delete(0, "end")
+        self._sign_in_error.configure(text=message or "Couldn't sign in.")
+
+    def _close_sign_in_dialog(self):
+        if self._sign_in_dialog is not None:
+            self._sign_in_dialog.destroy()
+            self._sign_in_dialog = None
+
+    def _render_staff_signed_in(self, name):
+        """Card strip after a staff ID card tap signed its owner in."""
+        timestamp = datetime.now().strftime("%I:%M:%S %p")
+        tile = self._s["tile"]
+        self._set_card_body_color(SURFACE, VERIFIED)
+        self._set_card_tile(_glyph_tile(self._px(tile), VERIFIED, "user-focus", SURFACE, scale=0.56, bold=True),
+                            tile, 8)
+        self.card_title.configure(text=self._fit_card_text(name, (FONT, 28, "bold")), text_color=INK,
+                                  font=(FONT, 28, "bold"))
+        self.card_sub.configure(text=f"Signed in for duty at {self.gate_location}")
+        self._pack_card_lines(self.card_title, self.card_sub)
+        self.card_word_icon.configure(text=_icon("check-circle"), text_color=VERIFIED)
+        self.card_word.configure(text="ON DUTY", text_color=VERIFIED)
+        self.card_time.configure(text=timestamp)
+        self.card_time.pack(anchor="e")
+        self.card_right.grid()
+        self._schedule_card_reset()
+        self._close_sign_in_dialog()
 
     # ---- card scanner ---------------------------------------------------
 
@@ -1370,7 +1617,11 @@ class GateMonitorWindow:
         except (KeyError, tk.TclError):
             focused = None
         student_has_focus = self._student is not None and self._student.owns(focused)
-        if focused is not self._card_input and not student_has_focus:
+        # The sign-in window takes typing too - and catches a card tap
+        # itself (see _KeyBurst).
+        dialog_has_focus = (self._sign_in_dialog is not None and focused is not None
+                            and str(focused).startswith(str(self._sign_in_dialog)))
+        if focused is not self._card_input and not student_has_focus and not dialog_has_focus:
             self._card_input.focus_force()
         self.window.after(FOCUS_CHECK_MS, self._keep_focus)
 
@@ -1487,8 +1738,9 @@ class GateMonitorWindow:
             self.card_right.grid()
             kind = "card_rejected"
         self._schedule_card_reset()
-        if self._student is not None:
-            # Only a card the system actually looked up and refused reads as
+        if self._student is not None and not (reason_code or "").startswith("staff_"):
+            # A guard's own staff card is none of the student display's
+            # business. Only a card the system actually looked up and refused reads as
             # "not registered" - a misread or a server hiccup asks for a retap.
             outcome = {"offline": "queued", "not_registered": "rejected",
                        "deactivated": "deactivated"}.get(reason_code, "error")
@@ -2026,6 +2278,7 @@ class GateMonitorWindow:
 
     def _handle_close(self):
         self._closed = True
+        self._close_sign_in_dialog()
         if self._student is not None:
             self._student.close()  # it's a child window - it goes when the monitor does
         if self._on_close:

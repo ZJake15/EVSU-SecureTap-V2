@@ -1,14 +1,11 @@
-import math
-
-from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from audit.utils import log_action
-from configuration import store as system_settings
 
+from . import lockout
 from .models import AdminProfile
 from .permissions import IsAdmin
 from .serializers import DashboardAccountSerializer, RoleTokenObtainPairSerializer
@@ -26,44 +23,19 @@ class LoginView(TokenObtainPairView):
         profile = None
         if isinstance(username, str) and username:
             profile = AdminProfile.objects.select_related("user").filter(user__username=username).first()
-        lockout_on = system_settings.get("lockout_enabled")
-        now = timezone.now()
 
-        if lockout_on and profile and profile.locked_until and profile.locked_until > now:
-            minutes = max(1, math.ceil((profile.locked_until - now).total_seconds() / 60))
-            return Response(
-                {"detail": f"Too many wrong passwords. This account is locked - try again in {minutes} "
-                           f"minute{'s' if minutes != 1 else ''}."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        message = lockout.locked_message(profile)
+        if message:
+            return Response({"detail": message}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             response = super().post(request, *args, **kwargs)
         except AuthenticationFailed:
-            if lockout_on and profile:
-                self._record_failure(profile, now)
+            lockout.record_failure(profile)
             raise
 
-        if profile and (profile.failed_login_count or profile.locked_until):
-            profile.failed_login_count = 0
-            profile.locked_until = None
-            profile.save(update_fields=["failed_login_count", "locked_until"])
+        lockout.clear_failures(profile)
         return response
-
-    @staticmethod
-    def _record_failure(profile, now):
-        attempts = system_settings.get("lockout_attempts")
-        profile.failed_login_count += 1
-        if profile.failed_login_count >= attempts:
-            minutes = system_settings.get("lockout_minutes")
-            profile.locked_until = now + timezone.timedelta(minutes=minutes)
-            profile.failed_login_count = 0
-            log_action(
-                None, "account_locked",
-                target_description=f"Account {profile.user.username}",
-                detail={"wrong_passwords": attempts, "locked_for_minutes": minutes},
-            )
-        profile.save(update_fields=["failed_login_count", "locked_until"])
 
 
 class DashboardAccountViewSet(viewsets.ModelViewSet):

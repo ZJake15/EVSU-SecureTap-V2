@@ -1,4 +1,5 @@
 import numpy as np
+from django.contrib.auth import authenticate
 from django.core.files.base import ContentFile
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -8,6 +9,7 @@ from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts import lockout
 from accounts.models import AdminProfile
 from accounts.permissions import (
     HasServiceToken,
@@ -23,9 +25,11 @@ from users import insightface_utils, liveness_utils, occlusion_utils
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
+from . import gate_shifts
 from .filters import EntryLogFilter
 from .models import (
     EntryLog,
+    GateShift,
     OcclusionAttempt,
     PendingTiebreak,
     RecognitionAttempt,
@@ -34,6 +38,8 @@ from .models import (
 )
 from .serializers import (
     EntryLogSerializer,
+    GateSignInRequestSerializer,
+    GateSignOutRequestSerializer,
     IdentifyRequestSerializer,
     ManualOverrideRequestSerializer,
     VerifyRequestSerializer,
@@ -128,8 +134,66 @@ class GateSummaryView(APIView):
                 "unknown_today": unknown_today,
                 "spoof_today": spoof_today,
                 "occlusion_today": occlusion_today,
+                "gate_sign_in": gate_shifts.status(gate_location) if gate_location else None,
             }
         )
+
+
+class GateSignInView(APIView):
+    """A guard signing in at the gate monitor with their username and
+    password (Settings -> "Guards sign in at the gate monitor"). A tap of
+    their staff ID card does the same through VerifyView. Called by the
+    entry-agent, so it authenticates the device with the service token AND
+    the guard with their own password; wrong passwords count toward the
+    dashboard's failed login lockout. See logs/gate_shifts.py."""
+
+    permission_classes = [HasServiceToken]
+
+    def post(self, request):
+        serializer = GateSignInRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        gate_location = data["gate_location"]
+        if not gate_shifts.enabled():
+            return Response({"detail": "Gate sign-in is switched off on the Settings page."},
+                            status=http_status.HTTP_400_BAD_REQUEST)
+
+        profile = AdminProfile.objects.select_related("user").filter(user__username=data["username"]).first()
+        message = lockout.locked_message(profile)
+        if message:
+            return Response({"detail": message}, status=http_status.HTTP_403_FORBIDDEN)
+        user = authenticate(request, username=data["username"], password=data["password"])
+        if user is None:
+            lockout.record_failure(profile)
+            return Response({"detail": "Wrong username or password."}, status=http_status.HTTP_401_UNAUTHORIZED)
+        lockout.clear_failures(profile)
+        refusal = gate_shifts.refusal(user, gate_location)
+        if refusal:
+            return Response({"detail": refusal}, status=http_status.HTTP_403_FORBIDDEN)
+        gate_shifts.start_shift(user, gate_location, GateShift.Method.PASSWORD)
+        return Response(gate_shifts.status(gate_location))
+
+
+class GateSignOutView(APIView):
+    """The guard signing out at the gate monitor - or the gate monitor
+    closing/reopening, which ends whatever shift is open at that gate so
+    the next entries aren't credited to someone who has left."""
+
+    permission_classes = [HasServiceToken]
+
+    def post(self, request):
+        serializer = GateSignOutRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        gate_location = data["gate_location"]
+        if data.get("shift_id"):
+            shift = GateShift.objects.filter(id=data["shift_id"], gate_location=gate_location,
+                                             ended_at__isnull=True).first()
+            if shift is not None:
+                gate_shifts.end_shift(shift, data["reason"])
+        else:
+            gate_shifts.end_shifts_at(gate_location, data["reason"])
+        return Response(gate_shifts.status(gate_location))
 
 
 class EntryLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -157,7 +221,7 @@ class EntryLogViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_class = EntryLogFilter
 
     def get_queryset(self):
-        queryset = EntryLog.objects.select_related("person", "performed_by").all()
+        queryset = EntryLog.objects.select_related("person", "performed_by", "on_duty").all()
         if get_role(self.request.user) == AdminProfile.Role.SECURITY_OFFICER:
             gate = get_assigned_gate(self.request.user)
             today_start = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -174,7 +238,7 @@ class LiveLogsView(APIView):
         if since is None:
             since = timezone.now() - timezone.timedelta(minutes=1)
 
-        logs = EntryLog.objects.select_related("person", "performed_by").filter(timestamp__gt=since)
+        logs = EntryLog.objects.select_related("person", "performed_by", "on_duty").filter(timestamp__gt=since)
         if get_role(request.user) == AdminProfile.Role.SECURITY_OFFICER:
             # Same server-side gate-scoping as EntryLogViewSet above - a
             # missing assigned gate fails closed (matches nothing) rather
@@ -281,6 +345,9 @@ class VerifyView(APIView):
         manual_id = data.get("student_or_employee_id")
 
         if nfc_id:
+            staff = AdminProfile.objects.select_related("user").filter(staff_card_id=nfc_id).first()
+            if staff is not None:
+                return self._staff_card(staff, gate_location, replayed=data.get("replayed"))
             person = Person.objects.filter(nfc_id=nfc_id).first()
             not_found_reason = "Card not registered to any student or staff record."
         else:
@@ -367,6 +434,30 @@ class VerifyView(APIView):
             },
             status=http_status.HTTP_200_OK,
         )
+
+    def _staff_card(self, profile, gate_location, replayed=False):
+        """A guard's own staff ID card: signs them in at this gate (see
+        logs/gate_shifts.py) instead of being treated as a student's card.
+        Never logged as a gate entry - it isn't anyone passing through."""
+        def refused(reason, reason_code):
+            return Response({"success": False, "staff_card": True, "reason": reason, "reason_code": reason_code,
+                             **person_payload(None, self.request)})
+
+        if replayed:
+            # Tapped while the gate was offline and only sent now - signing
+            # in hours later would credit the wrong guard with what happened
+            # in between.
+            return refused("A staff card tap saved while the gate was offline doesn't sign anyone in.",
+                           "staff_replayed")
+        if not gate_shifts.enabled():
+            return refused("This is a staff ID card. To sign in with it, switch on \"Guards sign in at the gate "
+                           "monitor\" on the Settings page.", "staff_sign_in_off")
+        refusal = gate_shifts.refusal(profile.user, gate_location)
+        if refusal:
+            return refused(refusal, "staff_not_allowed")
+        gate_shifts.start_shift(profile.user, gate_location, GateShift.Method.CARD)
+        return Response({"success": True, "staff_card": True, "reason": None, "reason_code": None,
+                         "gate_sign_in": gate_shifts.status(gate_location)})
 
     def _log_failure_and_respond(self, *, direction, gate_location, reason, reason_code):
         """A rejected card/ID is still logged - same reasoning as an
@@ -461,7 +552,7 @@ class IdentifyView(APIView):
             # gate is simply unattended, burying genuine successes/failures.
             return Response({
                 "results": [self._transient_payload("No face detected.")],
-                **self._agent_info(),
+                **self._agent_info(gate_location),
             })
 
         image_height, image_width = bgr_image.shape[:2]
@@ -473,7 +564,7 @@ class IdentifyView(APIView):
             payload = self._transient_payload("No enrolled faces to compare against.")
             return Response({
                 "results": [payload],
-                **self._agent_info(),
+                **self._agent_info(gate_location),
             })
 
         known_matrix, owners = self._build_candidate_matrix(candidates)
@@ -536,19 +627,22 @@ class IdentifyView(APIView):
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},
-            **self._agent_info(),
+            **self._agent_info(gate_location),
         })
 
     @staticmethod
-    def _agent_info():
+    def _agent_info(gate_location):
         """Sent with every /api/identify answer, so the gate monitor always
         shows - and acts on - the current Settings-page values without a
-        restart: the match strictness it displays, and whether to sound
-        the alarm for a suspected fake."""
+        restart: the match strictness it displays, whether to sound the
+        alarm for a suspected fake, and whether guards sign in here and
+        who's on duty (so a sign-out elsewhere, or a shift reaching its time
+        limit, shows up within a frame or two)."""
         return {
             "threshold": system_settings.get("match_strictness"),
             "liveness_threshold": system_settings.get("spoof_strictness"),
             "alerts": {"spoof": system_settings.get("alert_spoof")},
+            "gate_sign_in": gate_shifts.status(gate_location),
         }
 
     @staticmethod

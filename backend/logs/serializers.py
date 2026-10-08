@@ -12,6 +12,7 @@ class EntryLogSerializer(serializers.ModelSerializer):
     captured_photo = serializers.SerializerMethodField()
     performed_by_username = serializers.SerializerMethodField()
     distinguishing_note = serializers.SerializerMethodField()
+    on_duty_name = serializers.SerializerMethodField()
 
     class Meta:
         model = EntryLog
@@ -33,6 +34,8 @@ class EntryLogSerializer(serializers.ModelSerializer):
             "occlusion_detected",
             "performed_by_username",
             "distinguishing_note",
+            "on_duty_name",
+            "unattended",
         ]
 
     def get_person_name(self, obj):
@@ -68,6 +71,32 @@ class EntryLogSerializer(serializers.ModelSerializer):
             return None
         return obj.person.distinguishing_note or None
 
+    def get_on_duty_name(self, obj):
+        # The guard signed in at the gate monitor when this row was written
+        # (Settings -> "Guards sign in at the gate monitor"); see
+        # `unattended` for "sign-in was on but nobody was signed in".
+        if not obj.on_duty:
+            return None
+        return obj.on_duty.get_full_name() or obj.on_duty.username
+
+
+class GateSignInRequestSerializer(serializers.Serializer):
+    """A guard signing in at the gate monitor with their password (a staff
+    ID card tap goes through /api/verify like any other tap)."""
+
+    gate_location = serializers.CharField(max_length=100)
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(max_length=128, trim_whitespace=False)
+
+
+class GateSignOutRequestSerializer(serializers.Serializer):
+    """Ends the shift at this gate - shift_id (the one the gate monitor
+    started) when given, otherwise whatever is open there."""
+
+    gate_location = serializers.CharField(max_length=100)
+    shift_id = serializers.IntegerField(required=False)
+    reason = serializers.ChoiceField(choices=["signed_out", "gate_closed", "gate_reopened"], default="signed_out")
+
 
 class ManualOverrideRequestSerializer(serializers.Serializer):
     """A Security Officer logging an entry by hand after visually checking a
@@ -96,6 +125,9 @@ class VerifyRequestSerializer(serializers.Serializer):
     direction = serializers.ChoiceField(
         choices=EntryLog.Direction.choices, default=EntryLog.Direction.ENTRY
     )
+    # True for a tap the entry-agent saved while offline and is sending
+    # later - a staff card tap like that must not sign anyone in now.
+    replayed = serializers.BooleanField(required=False, default=False)
 
     def validate(self, data):
         if not data.get("nfc_id") and not data.get("student_or_employee_id"):

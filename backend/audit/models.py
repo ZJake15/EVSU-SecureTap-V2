@@ -50,6 +50,10 @@ class AuditLogEntry(models.Model):
         DATA_PURGED = "data_purged", "Old data deleted"
         # Failed login lockout tripped (Settings page, off by default).
         ACCOUNT_LOCKED = "account_locked", "Account locked"
+        # A guard starting / ending a shift at a gate monitor (see
+        # logs.models.GateShift).
+        GATE_SIGN_IN = "gate_sign_in", "Signed in at a gate"
+        GATE_SIGN_OUT = "gate_sign_out", "Signed out of a gate"
 
     # Nullable only in case a user account is later deleted out from under an
     # old entry (SET_NULL, not CASCADE) - the row (and its description of what

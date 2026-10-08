@@ -475,6 +475,10 @@ class LauncherWindow:
         # "External" = already running when we got here, so it's not ours to
         # start and not ours to kill on quit.
         self._backend_external = False
+        # True while the database update that runs before the backend starts
+        # is going (see _start_backend), and if that update failed.
+        self._backend_preparing = False
+        self._backend_update_failed = False
         # Dashboard button: clicked before the backend was up (open it once it
         # is), and whether its last rebuild failed - see _open_dashboard.
         self._open_when_backend_ready = False
@@ -1115,16 +1119,45 @@ class LauncherWindow:
             self._set_status("backend", "failed")
             self._set_status_message(f"Backend not found at {BACKEND_DIR}.")
             return
-        self._append_log(f"[launcher] starting backend with {python}")
-        # -u so Django's output reaches the log panel as it happens rather than
-        # sitting in a pipe buffer until the process exits. --noreload: no
-        # background helper re-checking every code file for changes each
-        # second - real CPU on a low-power laptop, and not needed while the
-        # system is running for real (settings now change from the dashboard,
-        # not by editing files). Restart the backend after editing its code.
-        self.backend.start([python, "-u", "manage.py", "runserver", "--noreload"], BACKEND_DIR,
-                           env_overrides=device_setup.backend_env_overrides(self.profile))
+        self._backend_preparing = True
+        self._backend_update_failed = False
         self._set_status("backend", "starting")
+
+        # First bring the database up to date with this version of the code -
+        # a newer installer, or a `git pull`, can add tables or columns, and
+        # the backend would fail on the first request that touches them. A
+        # second or two when there's nothing to do.
+        def migrate():
+            result = subprocess.run(
+                [python, "manage.py", "migrate", "--noinput"], cwd=BACKEND_DIR, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=600, creationflags=_NO_WINDOW,
+            )
+            return result.returncode, (result.stdout + result.stderr).strip()
+
+        def start(result):
+            self._backend_preparing = False
+            code, output = result if result else (1, "the database update didn't run")
+            applied = [line.strip() for line in output.splitlines() if line.strip().startswith("Applying ")]
+            for line in applied:
+                self._append_log(f"[launcher] database update: {line}")
+            if code != 0:
+                self._backend_update_failed = True
+                self._append_log(f"[launcher] couldn't update the database: {output[-2000:]}")
+                self._set_status("backend", "failed")
+                self._set_status_message("Couldn't update the database — open the log below to see why.")
+                return
+            self._append_log(f"[launcher] starting backend with {python}")
+            # -u so Django's output reaches the log panel as it happens rather
+            # than sitting in a pipe buffer until the process exits.
+            # --noreload: no background helper re-checking every code file for
+            # changes each second - real CPU on a low-power laptop, and not
+            # needed while the system is running for real (settings change
+            # from the dashboard, not by editing files). Restart the backend
+            # after editing its code.
+            self.backend.start([python, "-u", "manage.py", "runserver", "--noreload"], BACKEND_DIR,
+                               env_overrides=device_setup.backend_env_overrides(self.profile))
+
+        self._run_in_background(migrate, start)
 
     def _open_dashboard(self):
         """The backend serves the dashboard at DASHBOARD_URL, so this only
@@ -1618,9 +1651,11 @@ class LauncherWindow:
             self._backend_ok = True
             self._set_status("backend", "ready")
             self._set_status_message("Using a backend that was already running." if self._backend_external else None)
-        elif self.backend.is_running():
+        elif self.backend.is_running() or self._backend_preparing:
             self._backend_ok = False
             self._set_status("backend", "starting")
+        elif self._backend_update_failed:
+            self._backend_ok = False
         else:
             self._backend_ok = False
             self._set_status("backend", "stopped")

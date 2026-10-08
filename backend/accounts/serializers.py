@@ -60,9 +60,27 @@ class DashboardAccountSerializer(serializers.ModelSerializer):
         model = AdminProfile
         fields = [
             "id", "username", "first_name", "last_name", "full_name",
-            "role", "assigned_gate_location", "is_active", "password", "created_at",
+            "role", "assigned_gate_location", "staff_card_id", "is_active", "password", "created_at",
         ]
         read_only_fields = ["id", "created_at"]
+
+    def validate_staff_card_id(self, value):
+        """A staff ID card signs its owner in at the gate monitor, so it must
+        never be another account's card or a student's - one tap, one
+        meaning."""
+        value = (value or "").strip()
+        if not value:
+            return ""
+        others = AdminProfile.objects.filter(staff_card_id=value)
+        if self.instance is not None:
+            others = others.exclude(pk=self.instance.pk)
+        if others.exists():
+            raise serializers.ValidationError("Another account already uses this card.")
+        from users.models import Person
+
+        if Person.objects.filter(nfc_id=value).exists():
+            raise serializers.ValidationError("This card belongs to a registered student or staff member.")
+        return value
 
     def validate(self, attrs):
         role = attrs.get("role", getattr(self.instance, "role", None))

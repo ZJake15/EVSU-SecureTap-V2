@@ -54,6 +54,11 @@ class AdminProfile(models.Model):
     # access-control pass scoped for; flagged here as a documented follow-up,
     # not silently worked around.
     assigned_gate_location = models.CharField(max_length=100, blank=True)
+    # The staff member's own ID card, for signing in at the gate monitor with
+    # one tap (Settings -> "Guards sign in at the gate monitor"). Blank means
+    # password sign-in only. Never the same number as a student's card -
+    # checked in DashboardAccountSerializer and PersonSerializer.
+    staff_card_id = models.CharField(max_length=100, blank=True, default="", db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     # Failed login lockout (Settings page, off by default): wrong passwords
     # in a row since the last successful sign-in, and when a lock ends.

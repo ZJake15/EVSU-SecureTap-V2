@@ -13,13 +13,16 @@ class ApiClient:
         # every call the continuous scan loop makes.
         self.session = requests.Session()
 
-    def verify(self, gate_location, direction, nfc_id=None):
+    def verify(self, gate_location, direction, nfc_id=None, replayed=False):
         """POSTs a card tap to /verify - a lookup only, no image involved.
         Raises requests.RequestException on any network failure so the
-        caller can fall back to the offline queue."""
+        caller can fall back to the offline queue. replayed: a tap the
+        offline queue saved earlier (a staff card then signs nobody in)."""
         data = {"gate_location": gate_location, "direction": direction}
         if nfc_id:
             data["nfc_id"] = nfc_id
+        if replayed:
+            data["replayed"] = "true"
         response = self.session.post(
             f"{self.base_url}/verify",
             headers={"X-Service-Token": self.service_token},
@@ -44,6 +47,35 @@ class ApiClient:
             headers={"X-Service-Token": self.service_token},
             params={"gate_location": gate_location},
             timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def gate_sign_in(self, gate_location, username, password):
+        """A guard signing in for duty with their password. Returns who's on
+        duty now; raises requests.HTTPError with the reason (wrong password,
+        wrong gate, locked) in the response's "detail"."""
+        response = self.session.post(
+            f"{self.base_url}/gate/sign-in",
+            headers={"X-Service-Token": self.service_token},
+            data={"gate_location": gate_location, "username": username, "password": password},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def gate_sign_out(self, gate_location, shift_id=None, reason="signed_out", timeout=None):
+        """Ends the shift at this gate (shift_id, or whatever is open).
+        reason: signed_out, gate_closed or gate_reopened. Returns the new
+        on-duty status."""
+        data = {"gate_location": gate_location, "reason": reason}
+        if shift_id:
+            data["shift_id"] = shift_id
+        response = self.session.post(
+            f"{self.base_url}/gate/sign-out",
+            headers={"X-Service-Token": self.service_token},
+            data=data,
+            timeout=timeout or self.timeout,
         )
         response.raise_for_status()
         return response.json()

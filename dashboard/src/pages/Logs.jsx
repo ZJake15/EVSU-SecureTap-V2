@@ -183,7 +183,7 @@ export default function Logs() {
   };
 
   const exportCsv = () => {
-    const header = ["Name", "Timestamp", "Direction", "Method", "Status", "Confidence", "Reason", "Gate"];
+    const header = ["Name", "Timestamp", "Direction", "Method", "Status", "Confidence", "Reason", "Gate", "On duty"];
     const rows = visibleLogs.map((log) => [
       log.person_name,
       log.timestamp,
@@ -193,6 +193,7 @@ export default function Logs() {
       log.match_confidence != null ? Math.round(log.match_confidence * 100) : "",
       log.failure_reason,
       log.gate_location,
+      log.on_duty_name || (log.unattended ? "Unattended" : ""),
     ]);
     const csv = [header, ...rows]
       .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
@@ -320,7 +321,23 @@ export default function Logs() {
                         <span className="ml-s1 text-caution">(note: {log.distinguishing_note})</span>
                       )}
                     </span>
-                    <span className="truncate whitespace-nowrap text-ink-600">{log.gate_location}</span>
+                    <span className="flex min-w-0 flex-col leading-tight">
+                      <span className="truncate whitespace-nowrap text-ink-600">{log.gate_location}</span>
+                      {/* Guard sign-in (Settings): who was on duty, or nobody. */}
+                      {log.on_duty_name && (
+                        <span className="truncate text-xs text-ink-600" title={`On duty: ${log.on_duty_name}`}>
+                          On duty: {log.on_duty_name}
+                        </span>
+                      )}
+                      {log.unattended && (
+                        <span
+                          className="truncate text-xs font-bold text-caution"
+                          title="Guard sign-in was on, but no guard was signed in at this gate"
+                        >
+                          Unattended
+                        </span>
+                      )}
+                    </span>
                   </div>
                 );
               })}

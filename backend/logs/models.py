@@ -100,6 +100,15 @@ class EntryLog(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="manual_override_logs",
     )
+    # The guard signed in at this gate's monitor when the row was written
+    # (see GateShift) - and `unattended` when gate sign-in is switched on but
+    # nobody was signed in. Both stay empty while gate sign-in is off. Filled
+    # in by save() itself, so no code path that logs an entry can miss it.
+    on_duty = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="entry_logs_on_duty",
+    )
+    unattended = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-timestamp"]
@@ -107,6 +116,48 @@ class EntryLog(models.Model):
     def __str__(self):
         who = self.person.full_name if self.person else "Unknown"
         return f"{who} - {self.direction} - {self.status} @ {self.timestamp}"
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and self.on_duty_id is None and not self.unattended:
+            from .gate_shifts import stamp_on_duty
+
+            stamp_on_duty(self)
+        super().save(*args, **kwargs)
+
+
+class GateShift(models.Model):
+    """A guard's time on duty at one gate: from signing in at its gate
+    monitor (password or a tap of their staff ID card) to signing out, being
+    replaced by the next guard, the gate monitor closing, or the shift time
+    limit (Settings). Only used while "Guards sign in at the gate monitor" is
+    on - see logs/gate_shifts.py."""
+
+    class Method(models.TextChoices):
+        PASSWORD = "password", "Password"
+        CARD = "card", "Staff ID card"
+
+    class EndReason(models.TextChoices):
+        SIGNED_OUT = "signed_out", "Signed out"
+        REPLACED = "replaced", "Another guard signed in"
+        GATE_CLOSED = "gate_closed", "Gate monitor closed"
+        GATE_REOPENED = "gate_reopened", "Gate monitor reopened"
+        EXPIRED = "expired", "Shift time limit reached"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="gate_shifts"
+    )
+    gate_location = models.CharField(max_length=100, db_index=True)
+    method = models.CharField(max_length=10, choices=Method.choices)
+    signed_in_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    end_reason = models.CharField(max_length=20, choices=EndReason.choices, blank=True)
+
+    class Meta:
+        ordering = ["-signed_in_at"]
+
+    def __str__(self):
+        who = self.user.username if self.user else "(deleted account)"
+        return f"{who} @ {self.gate_location} from {self.signed_in_at}"
 
 
 class RecognitionAttempt(models.Model):

@@ -210,6 +210,7 @@ def scan_loop(config, api_client, camera, ui, stop_event):
     # frame or two - no restart. Only passed on to the UI when they change.
     last_threshold = None
     last_alerts = None
+    last_sign_in = None
     photo_cache = {}  # URL -> bytes, lives for this scan session
     while not stop_event.is_set():
         try:
@@ -229,6 +230,12 @@ def scan_loop(config, api_client, camera, ui, stop_event):
             if alerts is not None and alerts != last_alerts:
                 ui.set_alert_settings(alerts)
                 last_alerts = alerts
+            # Who's on duty - a sign-out from elsewhere, or a shift reaching
+            # its time limit, shows up here within a frame or two.
+            sign_in = response.get("gate_sign_in")
+            if sign_in is not None and sign_in != last_sign_in:
+                ui.set_gate_sign_in(sign_in)
+                last_sign_in = sign_in
             recognitions = [
                 r
                 for r in (
@@ -275,6 +282,17 @@ def handle_tap(config, api_client, offline_queue, ui, nfc_id):
         return
 
     try:
+        if result.get("staff_card"):
+            # A guard's own staff ID card: it signs them in for duty instead
+            # of being looked up as a student (Settings -> "Guards sign in at
+            # the gate monitor").
+            if result.get("success"):
+                status = result.get("gate_sign_in") or {}
+                ui.set_gate_sign_in(status)
+                ui.show_staff_signed_in((status.get("on_duty") or {}).get("name") or "Guard")
+            else:
+                ui.show_card_failure(result.get("reason") or "Staff ID card.", result.get("reason_code"))
+            return
         if not result.get("success"):
             ui.show_card_failure(result.get("reason") or "Not enrolled.", result.get("reason_code"))
             return
@@ -284,6 +302,32 @@ def handle_tap(config, api_client, offline_queue, ui, nfc_id):
     except Exception:
         traceback.print_exc()
         ui.show_card_failure("Something went wrong reading this tap - tap again.", "server_error")
+
+
+def handle_sign_in(config, api_client, ui, username, password):
+    """A guard signing in for duty with their password - off the Tk thread."""
+    try:
+        status = api_client.gate_sign_in(config.gate_location, username, password)
+    except requests.exceptions.HTTPError as exc:
+        detail = None
+        try:
+            detail = exc.response.json().get("detail")
+        except (AttributeError, ValueError):
+            pass
+        ui.show_sign_in_result(False, detail or _describe_http_error(exc.response))
+        return
+    except requests.RequestException:
+        ui.show_sign_in_result(False, "Can't reach the backend - try again in a moment.")
+        return
+    ui.set_gate_sign_in(status)
+    ui.show_sign_in_result(True, None)
+
+
+def handle_sign_out(config, api_client, ui, shift_id):
+    try:
+        ui.set_gate_sign_in(api_client.gate_sign_out(config.gate_location, shift_id=shift_id))
+    except requests.RequestException:
+        traceback.print_exc()
 
 
 def _describe_http_error(response):
@@ -341,12 +385,28 @@ def main():
             target=handle_tap, args=(config, api_client, offline_queue, monitor, nfc_id), daemon=True
         ).start()
 
+    def on_sign_in(username, password):
+        threading.Thread(
+            target=handle_sign_in, args=(config, api_client, monitor, username, password), daemon=True
+        ).start()
+
+    def on_sign_out(shift_id):
+        threading.Thread(target=handle_sign_out, args=(config, api_client, monitor, shift_id), daemon=True).start()
+
     def on_close():
         # The monitor owns the root window, so closing it ends the process -
         # stop the scan thread and release the camera on the way out.
         stop_event.set()
         camera.stop()
         _write_last_session_summary(config, monitor)
+        # Whoever was on duty here goes off duty with the gate monitor, so
+        # the next entries aren't credited to someone who has left.
+        shift_id = monitor.current_shift_id()
+        if shift_id:
+            try:
+                api_client.gate_sign_out(config.gate_location, shift_id=shift_id, reason="gate_closed", timeout=3)
+            except requests.RequestException:
+                pass  # the backend ends it anyway when the gate monitor next opens, or at the time limit
 
     # Best-effort - a machine with zero cameras (or a pygrabber hiccup) just
     # means an empty list, which the dropdown already renders as "No camera
@@ -369,6 +429,8 @@ def main():
         initial_camera_index=config.camera_index,
         video_fps=config.video_fps,
         student_display_fps=config.student_display_fps,
+        on_sign_in=on_sign_in,
+        on_sign_out=on_sign_out,
     )
 
     try:
@@ -380,6 +442,14 @@ def main():
         )
     except requests.RequestException:
         pass  # stats just start at zero for this session if unreachable
+
+    # A gate monitor that's (re)opening starts with nobody on duty: a shift
+    # left open by a crash or a closed laptop lid ends here, so the next
+    # guard signs in fresh. Also tells the status bar whether sign-in is on.
+    try:
+        monitor.set_gate_sign_in(api_client.gate_sign_out(config.gate_location, reason="gate_reopened"))
+    except requests.RequestException:
+        pass  # the scan loop picks the status up once the backend answers
 
     threading.Thread(
         target=scan_loop, args=(config, api_client, camera, monitor, stop_event), daemon=True

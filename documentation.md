@@ -1716,6 +1716,45 @@ request could otherwise use to see a different gate's activity. An unconfigured
 Security Officer account (no gate assigned) sees **nothing**, not every gate —
 failing closed on missing configuration rather than open.
 
+### 13.4 Guard sign-in at the gate monitor
+
+Off by default (Settings → Security & Accounts → **Guards sign in at the gate
+monitor**). The gate monitor itself proves *which device* it is with the gate
+key; this proves *which guard* is on duty, so "who was watching the gate?" has
+an answer.
+
+- **Signing in.** The status bar shows an amber **No guard signed in · Sign
+  in**. The guard either types their own dashboard username and password, or
+  **taps their own staff ID card** — `AdminProfile.staff_card_id`, set once on
+  the Accounts page by tapping the card into the field. A staff card is never
+  looked up as a student: `/api/verify` checks staff cards first and never logs
+  one as a gate entry. A card number can't be both a staff card and a student's
+  (checked both ways). The sign-in window tells a card tap from typing by
+  speed (`ui._KeyBurst`): the reader types its whole number within a few
+  hundredths of a second, so a burst like that ending in Enter is a card,
+  whichever box had focus.
+- **Who may sign in where.** A Security Officer only at their assigned gate
+  (the same exact-name match as §13.3); Admin and SASO at any gate. Wrong
+  passwords count toward the failed login lockout, shared with the dashboard
+  sign-in (`accounts/lockout.py`). Every request also needs the gate key, so
+  the endpoints (`/api/gate/sign-in`, `/api/gate/sign-out`) can't be used from
+  anywhere but a gate monitor.
+- **Shifts.** A sign-in starts a `logs.GateShift`. It ends when the guard
+  clicks **Sign out**, another guard signs in at the same gate (shift change),
+  the gate monitor closes or reopens (a forgotten sign-out can't carry over),
+  or after the shift time limit (Settings, 12 h). A staff card tap that was
+  saved while the gate was offline never signs anyone in when it's sent later.
+  Every sign-in and sign-out is in the Audit Log, with how long the shift was.
+- **The records.** Each `EntryLog` row stores the guard on duty (`on_duty`),
+  or `unattended` when sign-in is on but nobody was signed in — filled in by
+  `EntryLog.save()` itself, so no code path that logs an entry can skip it. The
+  gate keeps scanning either way: an unattended gate still logs everyone; it's
+  just marked. The Logs page shows "On duty: name" or an amber "Unattended"
+  under the gate, and the CSV export has an "On duty" column.
+- **Updates.** The launcher applies database updates (`manage.py migrate`)
+  each time before it starts the backend, so installing a newer version over
+  an older one adds the new fields by itself.
+
 ## 14. Running on a low-power laptop
 
 The system is presented on an **Intel N100** laptop (4 cores, 8 GB RAM, Intel

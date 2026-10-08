@@ -8,6 +8,7 @@ const emptyForm = {
   last_name: "",
   role: "security_officer",
   assigned_gate_location: "",
+  staff_card_id: "",
   password: "",
 };
 
@@ -103,6 +104,7 @@ export default function AccountManagement() {
       last_name: account.last_name,
       role: account.role,
       assigned_gate_location: account.assigned_gate_location || "",
+      staff_card_id: account.staff_card_id || "",
       password: "",
     });
   };
@@ -278,6 +280,24 @@ export default function AccountManagement() {
               />
             </Field>
           )}
+
+          <Field
+            label="Staff ID card (optional)"
+            hint="Click here, then tap the staff member's own ID card on the reader. Lets them sign in at the gate monitor with one tap. Leave blank for password only."
+          >
+            <input
+              value={form.staff_card_id}
+              onChange={handleChange("staff_card_id")}
+              // The reader types the card number followed by Enter - which
+              // would otherwise submit this form halfway through a tap.
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.preventDefault();
+              }}
+              placeholder="Tap the card"
+              autoComplete="off"
+              className="input font-mono"
+            />
+          </Field>
 
           {formError && <Notice tone="danger">{formError}</Notice>}
 

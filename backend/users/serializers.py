@@ -151,6 +151,15 @@ class PersonSerializer(serializers.ModelSerializer):
     def validate_photo(self, value):
         return self._validate_image_format(value)
 
+    def validate_nfc_id(self, value):
+        # A guard's staff ID card signs them in at the gate monitor (see
+        # AdminProfile.staff_card_id), so it can't double as a student's card.
+        from accounts.models import AdminProfile
+
+        if value and AdminProfile.objects.filter(staff_card_id=value).exists():
+            raise serializers.ValidationError("This card is a dashboard account's staff ID card.")
+        return value
+
     def validate_fallback_enrollment(self, value):
         # Settings page: "Allow single-photo registration". Checked here on
         # the server, not just by hiding the dashboard's single-photo tab.

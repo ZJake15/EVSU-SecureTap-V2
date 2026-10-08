@@ -58,7 +58,7 @@ SECTIONS = [
     ("nfc", "NFC Card", "When the system asks for a card tap instead of deciding from the face alone."),
     ("enrollment", "Enrollment", "Registering a new student or staff member."),
     ("privacy", "Privacy & Data Retention", "How long records and photos are kept before they are deleted."),
-    ("security", "Security & Accounts", "Dashboard sign-ins."),
+    ("security", "Security & Accounts", "Signing in to the dashboard and at the gate monitor."),
     ("alerts", "Alerts", "Warnings shown to the guard on the gate monitor."),
     ("advanced", "Advanced", "Fine-tuning that most schools never need to change."),
 ]
@@ -235,6 +235,19 @@ DEFINITIONS = [
         "lockout_minutes", "security", "Lock for",
         "How long a locked account has to wait before it can try again.",
         INT, 15, 1, 1440, 1, unit="minutes", depends_on="lockout_enabled",
+    ),
+    SettingDef(
+        "gate_sign_in_enabled", "security", "Guards sign in at the gate monitor",
+        "The guard on duty signs in at the gate monitor - with their password, or by tapping their own staff "
+        "ID card (set on the Accounts page) - so every entry shows who was on duty. The gate keeps scanning "
+        "when nobody is signed in; those entries are marked Unattended.",
+        BOOL, False,
+        note="A Security Officer can sign in only at their assigned gate; an Admin or SASO at any gate.",
+    ),
+    SettingDef(
+        "gate_shift_hours", "security", "End a shift after",
+        "Signs the guard out by itself after this long, in case they forget - the next guard then signs in.",
+        INT, 12, 1, 24, 1, unit="hours", depends_on="gate_sign_in_enabled",
     ),
     SettingDef(
         "keep_audit_log_days", "security", "How long to keep the audit log",

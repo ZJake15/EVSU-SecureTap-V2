@@ -1791,11 +1791,56 @@ time per frame and memory; `--det-size 384` compares the Light size, `--cores
 **Presentation-day checklist:**
 1. Laptop plugged in; Windows power mode set to **Best performance**.
 2. Close other apps and browser tabs; pause Windows Update.
-3. If the dashboard's code changed since its last build, click **Dashboard**
-   once on a PC with Node.js so the launcher rebuilds it (or run `npm run build`
-   in `dashboard/`).
-4. Start the system with `SecureTap.bat` a few minutes before the panel
+3. The laptop runs the **installed** copy (§15) — after any code change, build
+   a fresh `EVSU-SecureTap-Setup.exe` and install it over the old one (the data
+   stays).
+4. Start the system from its desktop icon a few minutes before the panel
    arrives, open the dashboard and the gate monitor once, and let a face be
    recognized — the first scan loads the AI models, so get that out of the way.
 5. Check the launcher's **Speed mode** row says Light (the N100's expected
    pick); after changing anything about the laptop, **Run the speed test again**.
+
+## 15. The installer (`installer/`)
+
+So a new computer needs nothing but one file, `installer/build.py` (run with
+the project's venv on the development computer) produces
+`installer/output/EVSU-SecureTap-Setup.exe` (~170 MB, ~716 MB installed):
+
+- **Its own Python** — Python 3.14 from python-build-standalone (the portable,
+  relocatable build `uv` uses, which includes tkinter for the windows), with
+  every library installed at **exactly the versions the venv runs**: the build
+  pins them from `pip freeze`, because `requirements.txt`'s lower bounds alone
+  pulled in InsightFace 2.1 and ONNX Runtime 1.30 — untested versions of the
+  face AI. MySQL support is included so an older MySQL copy can be imported.
+- **Microsoft's C++ runtime** files (`msvcp140.dll`, …) next to Python — ONNX
+  Runtime and OpenCV need them and a fresh Windows may lack them; Microsoft
+  allows shipping them this way.
+- **Only git-tracked program files** (`git ls-files`), so no database, `.env`,
+  photos, training data or trained model can be packaged.
+- **The dashboard**, freshly built, so the target never needs Node.js.
+- **Two face models** (`det_500m.onnx`, `w600k_mbf.onnx`, 15 MB) in
+  `face-models/` — the only two `insightface_utils` loads, instead of the whole
+  158 MB pack — which `settings.INSIGHTFACE_ROOT` picks up, so the first
+  enrollment or scan needs no internet.
+- **`securetap-installed.txt`**, the marker that sends all data to
+  `%LOCALAPPDATA%\EVSU SecureTap` (§9.1).
+
+Before packaging it checks the bundle imports every library and passes
+`manage.py check`. `installer/SecureTap.iss` (Inno Setup 6) installs per user —
+no admin prompt — into `%LOCALAPPDATA%\Programs\EVSU SecureTap`, with Start
+menu and desktop shortcuts that run the launcher through `pythonw.exe` (no
+console window; the launcher gives its child programs `python.exe` so their
+output still reaches its log). A newer version replaces the program files
+only; uninstalling removes them and asks (default: no) before deleting the
+data folder. The file is unsigned, so Windows SmartScreen asks once ("More
+info → Run anyway").
+
+**Clean-computer test.** `installer/sandbox_test.py` opens Windows Sandbox — a
+throwaway Windows — with networking disabled, installs the Setup.exe silently
+and runs `installer/sandbox/check_install.py`: install location and data
+folder, the settings files with a matching gate key, the database, the first
+Admin, the backend starting, the dashboard served, an Admin login, the
+Settings API, the face-AI speed test (offline, from the bundled models), the
+gate monitor's and launcher's code loading, nothing written into the program
+folder, and the desktop shortcut. All 14 passed; the speed test there picked
+Light (the Sandbox has 4 GB of memory) at 21.6 ms per face check.

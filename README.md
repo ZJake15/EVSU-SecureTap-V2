@@ -160,6 +160,23 @@ Paste the **same value** into both `backend/.env`'s `ENTRY_AGENT_SERVICE_TOKEN` 
 
 > **Security note on this repo's history:** `docs/create_database.sql` previously had a real password committed in plaintext (matching what was, at the time, the actual local dev database password). It's been replaced with a placeholder, but that old value is still recoverable from git history on whichever repos it was pushed to. If you ever used that exact password for a real MySQL user, treat it as compromised and change it - don't just rely on the file being fixed going forward.
 
+## Installing on another computer (one Setup.exe)
+
+For a computer that just needs to **run** SecureTap - like the presentation laptop - there's an installer: no Python, Node.js, database or internet needed there.
+
+**Build it** (on this development computer, with everything above set up, and Inno Setup 6: `winget install --id JRSoftware.InnoSetup -e --scope user`):
+
+```powershell
+.venv\Scripts\python.exe installer\build.py           # about 10 minutes the first time
+.venv\Scripts\python.exe installer\build.py --quick   # after only SecureTap's own code changed
+```
+
+It produces `installer\output\EVSU-SecureTap-Setup.exe` (about 170 MB). Inside: SecureTap's own copy of Python with **exactly the library versions this computer runs** (pinned from the venv - not whatever is newest), MySQL support for importing an older copy, Microsoft's C++ runtime, the dashboard already built, and the two face models (so no internet on first use). Only files tracked in git go in, so no database, `.env`, photos or trained model can end up in it.
+
+**Install it:** copy the file to the other computer (USB is fine) and double-click it. Windows may show "Windows protected your PC" because the file isn't signed - click **More info → Run anyway**. It installs for that Windows user only, without asking for an admin password, into `%LOCALAPPDATA%\Programs\EVSU SecureTap`, with **EVSU SecureTap** on the desktop and in the Start menu. Opening it the first time starts the setup window (below) - which is where the data from an older copy is brought over. Installing a newer version over it keeps the data; uninstalling (Settings → Apps) asks before deleting the data.
+
+**Tested on a brand-new Windows:** `.venv\Scripts\python.exe installer\sandbox_test.py` installs it in Windows Sandbox with the internet switched off and checks 14 things - the files, database and first Admin, the backend serving the dashboard and a login, the face-AI speed test, the gate monitor and launcher code, nothing written into the program folder, the desktop icon. All 14 pass. (Windows Sandbox needs turning on once: "Turn Windows features on or off" → Windows Sandbox, restart. If it then still won't start, the boot setting `hypervisorlaunchtype` is off - `bcdedit /set {current} hypervisorlaunchtype auto` in an admin terminal, restart; Android emulators/VirtualBox may run slower with it on.)
+
 ## First-time setup
 
 The first time `SecureTap.bat` opens on a computer, a setup window comes first (and again from the launcher's **Speed mode → Run setup again**). Each step that's already done is just confirmed:

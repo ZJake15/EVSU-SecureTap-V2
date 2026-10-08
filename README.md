@@ -12,6 +12,8 @@ Campus entry monitoring system for Eastern Visayas State University, with a real
 evsu-securetap/
 ├── SecureTap.bat  # double-click this - opens the launcher
 ├── launcher.py    # one menu: starts the backend, opens the dashboard or entry-agent
+├── setup_wizard.py   # first-run setup window (files, data import, first Admin, speed test)
+├── device_setup.py   # this computer's speed mode + setup helpers
 ├── backend/       # Django + DRF API (accounts, users, logs, reports apps) + SQLite database; also serves the dashboard
 ├── entry-agent/   # Windows app: webcam capture + NFC card read -> calls the API
 ├── dashboard/     # React + Tailwind admin dashboard
@@ -63,16 +65,13 @@ python -m venv .venv
 # not actually hanging - this flag avoids that entirely.
 pip install -r backend\requirements.txt --only-binary=:all:
 pip install -r entry-agent\requirements.txt
-
-copy backend\.env.example backend\.env
-# edit backend\.env now - see "Getting your secrets" below for
-# DJANGO_SECRET_KEY and ENTRY_AGENT_SERVICE_TOKEN.
-
-cd backend
-python manage.py migrate
-python manage.py seed_dummy_data
-cd ..
+# Only when bringing data over from an older copy that used MySQL:
+pip install -r backend\requirements-mysql.txt
 ```
+
+That's all the typing. The first time you double-click `SecureTap.bat`, its **setup window** creates `backend\.env` and `entry-agent\.env` with fresh secrets, creates the database (or brings it over from an older copy), asks for the first Admin account and runs the speed test - see "First-time setup" below.
+
+Prefer doing it by hand? `copy backend\.env.example backend\.env` (fill in the secrets - see "Getting your secrets"), then `cd backend`, `python manage.py migrate`, and `python manage.py create_first_admin --username <name>` (it asks for the password). Optional demo data: `python manage.py seed_dummy_data` - fake people plus three demo logins with a **known password**, so never on a real deployment.
 
 You don't need to start the server by hand - `SecureTap.bat` does that (see "Running everything together"). To run it manually anyway: `cd backend`, `python manage.py runserver`.
 
@@ -80,7 +79,7 @@ Backend runs at `http://localhost:8000`. Django admin at `http://localhost:8000/
 
 **First run only:** the first request that touches face recognition (enrolling someone, or the entry-agent's first scan) downloads the InsightFace `buffalo_s` model (~125MB) automatically, cached afterward under `%USERPROFILE%\.insightface\models\`. Needs internet access the first time; instant after that. (`buffalo_s` was chosen over the larger `buffalo_l` for CPU speed on low-power hardware with no GPU - see `insightface_utils.py`. If you ever switch models, run `python manage.py recompute_embeddings` afterward or existing enrollments won't match anymore.)
 
-Seeded demo dashboard logins (from `seed_dummy_data`) - **change these passwords before any real deployment**:
+Seeded demo dashboard logins (only if you ran `seed_dummy_data`) - **change these passwords before any real deployment**:
 
 | Username | Password | Role | Notes |
 |---|---|---|---|
@@ -95,6 +94,7 @@ The seeded dummy *people* (students/staff) have **random, fake face embeddings**
 The entry-agent doesn't run face recognition itself - it captures frames and posts them to the backend, which does the actual matching, so it needs no special ML dependencies. Its Python packages already went into the shared root venv in step 3, so all that's left here is its own `.env`:
 
 ```powershell
+# Only if you're not using the setup window, which does this for you:
 copy entry-agent\.env.example entry-agent\.env
 # SERVICE_TOKEN must match ENTRY_AGENT_SERVICE_TOKEN in backend/.env exactly.
 ```
@@ -136,7 +136,7 @@ The dashboard loads its fonts (Archivo, Atkinson Hyperlegible Next, IBM Plex Mon
 
 ## Getting your secrets
 
-Three values need to be filled in before anything will run - none of them are things you "look up" anywhere, they're generated or chosen locally:
+The setup window generates these by itself on a new computer - this section is for filling them in by hand. Three values need to be filled in before anything will run - none of them are things you "look up" anywhere, they're generated or chosen locally:
 
 ### `DB_PASSWORD` (`backend/.env`) - only with MySQL
 Not needed with the default SQLite database. With `DB_ENGINE=mysql`, **you choose it**: pick a strong password, put it in `docs/create_database.sql`'s `CREATE USER ... IDENTIFIED BY '...'` line (replacing the placeholder), run that script, then put the exact same password in `backend/.env`'s `DB_PASSWORD`. To generate a random one instead of making one up:
@@ -160,6 +160,28 @@ Paste the **same value** into both `backend/.env`'s `ENTRY_AGENT_SERVICE_TOKEN` 
 
 > **Security note on this repo's history:** `docs/create_database.sql` previously had a real password committed in plaintext (matching what was, at the time, the actual local dev database password). It's been replaced with a placeholder, but that old value is still recoverable from git history on whichever repos it was pushed to. If you ever used that exact password for a real MySQL user, treat it as compromised and change it - don't just rely on the file being fixed going forward.
 
+## First-time setup
+
+The first time `SecureTap.bat` opens on a computer, a setup window comes first (and again from the launcher's **Speed mode → Run setup again**). Each step that's already done is just confirmed:
+
+1. **Welcome** - creates `backend\.env` and `entry-agent\.env` from their templates, with a fresh secret key and a gate key written into both, so they match.
+2. **Your data** - start empty, keep the data that's already here, or **bring the data from an older SecureTap copy** on this computer (for example the one already set up on the presentation laptop). Point it at that copy's folder - it's found by itself when it sits next to this one or in Documents/Desktop/Downloads. Everything comes along: people and their faces, entry records, accounts (same usernames and passwords), settings, the audit log, the photos, the trained covered-face model, and the gate's own settings (gate name, direction, camera, card reader, guard name). Nobody has to be registered again. The old copy is only read, never changed - it can be MySQL (its MySQL service has to be running, and this copy needs `requirements-mysql.txt`) or SQLite. Afterwards it checks that every table arrived complete and that the faces still match their photos.
+3. **Admin account** - if there isn't one yet, you type the first one in (no default password exists). Further accounts are made on the dashboard.
+4. **Camera and card reader** - a quick check; it never stops you.
+5. **Speed test** - about half a minute: it times the gate's face check on this computer and picks a **speed mode** (below). You can pick a different one right there.
+
+Command-line equivalents: `python manage.py import_securetap "C:\path\to\old\copy"` (add `--replace` if this copy already has data - it's kept as `db.sqlite3.bak`), `python manage.py create_first_admin --username <name>`, `python manage.py benchmark_scan --sample`.
+
+### Speed modes
+
+| Mode | What changes | Picked when |
+|---|---|---|
+| **Fast** | Smoother camera view (20 fps), quicker face checks | each face check is under 35 ms on a computer with 8+ cores and 8+ GB |
+| **Standard** | Nothing - the normal settings | in between |
+| **Light** | Lighter video (12 fps), smaller frames, a slightly longer pause between checks, smaller face-search size - faces need to be within about 2-3 m of the camera | a face check takes 90 ms or more, **or** the computer has 4 cores or fewer (like the Intel N100), **or** under 6 GB of memory |
+
+The mode is saved in `device_profile.json` (per computer, not in git) and handed to the backend and the gate monitor each time the launcher starts them - the `.env` files aren't rewritten. Change it, or re-run the speed test, under **Speed mode** in the launcher: the backend restarts by itself when it needs to; reopen the gate monitor if it's open.
+
 ## Running everything together
 
 **Double-click `SecureTap.bat`.** That's it - no terminal commands.
@@ -176,6 +198,7 @@ Worth knowing:
 - **No database server to start** - the SQLite database is just a file the backend opens. (With the optional `DB_ENGINE=mysql`, the MySQL service has to be running.)
 - **Already have the backend running?** If `runserver` is already up in a terminal, the launcher detects that and uses it instead of starting a duplicate that would die on "port already in use" - and it won't kill it when it quits.
 - **Show log** reveals the merged output of everything it started. That's where a backend that failed to start explains itself (bad `.env`, port taken).
+- **Speed mode** shows this computer's mode (Fast / Standard / Light) - switch it, re-run the speed test, or run the first-time setup again (for example to bring data over from another copy later).
 - **Entry Agent settings** (gate, direction, guard name, auto-open) are remembered between launches. Before opening the gate monitor it also checks that the backend answers and that the NFC reader is plugged in; if either looks wrong you get a warning with **Open gate monitor** or **Cancel** - it never blocks you on its own.
 - **Quitting stops everything it started**, and asks first. Anything it merely adopted is left alone.
 - `npm install` and the first `npm run build` in `dashboard/` are one-time steps (only on a computer that builds the dashboard); the launcher says so plainly if the dashboard hasn't been built.

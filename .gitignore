@@ -33,6 +33,8 @@ entry-agent/last_session.json
 # Launcher local state (remembered gate/direction/guard name - per-machine,
 # not something to check in)
 launcher_settings.json
+# This computer's speed mode and speed-test result (device_setup.py).
+device_profile.json
 
 # Occlusion-classifier experiment output - real face photos (collected via
 # collect_occlusion_training_data) and the model trained from them

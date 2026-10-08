@@ -20,6 +20,17 @@ class Config:
     app_version: str
     camera_exposure: Optional[float]
     upload_max_dimension: int
+    video_fps: int
+    scan_pause_seconds: float
+    student_display_fps: int
+
+
+def _clamped(name, default, low, high, cast):
+    try:
+        value = cast(os.getenv(name, "").strip() or default)
+    except ValueError:
+        value = cast(default)
+    return min(high, max(low, value))
 
 
 def load_config() -> Config:
@@ -41,4 +52,15 @@ def load_config() -> Config:
         # Largest side (pixels) of each camera frame sent to the backend - see
         # camera.MAX_UPLOAD_DIMENSION. 960 by default; 640 on a low-power laptop.
         upload_max_dimension=int(os.getenv("UPLOAD_MAX_DIMENSION", "960")),
+        # The next three are what the launcher's speed mode (Fast / Standard /
+        # Light, chosen by the speed test) passes in - see device_setup.py at
+        # the repo root. The defaults are Standard.
+        # Gate monitor video smoothness, frames per second.
+        video_fps=_clamped("VIDEO_FPS", 15, 5, 30, int),
+        # Pause between one face check finishing and the next frame being
+        # sent. Each check waits for the backend's answer, so a slow PC never
+        # piles up frames; this pause is what leaves it CPU for the video.
+        scan_pause_seconds=_clamped("SCAN_PAUSE_SECONDS", 0.2, 0.05, 2.0, float),
+        # The Student Display's video smoothness, frames per second.
+        student_display_fps=_clamped("STUDENT_DISPLAY_FPS", 10, 3, 30, int),
     )

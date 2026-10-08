@@ -1274,6 +1274,56 @@ an option would just be a step everyone has to perform every time.
   with no intermediate menu. Kept a separate process rather than imported, since
   it owns a camera, worker threads and its own Tk main loop.
 
+**First-time setup window (`setup_wizard.py`).** The first time the launcher
+opens on a computer — no `device_profile.json` yet, or a missing `.env` — a
+five-step setup window comes first; anything already done is just confirmed:
+
+1. **Welcome** — creates `backend/.env` and `entry-agent/.env` from their
+   templates with a fresh `DJANGO_SECRET_KEY` and one fresh gate key written
+   into both files (`ENTRY_AGENT_SERVICE_TOKEN` / `SERVICE_TOKEN`), so they
+   can't mismatch. An existing `.env` is never touched.
+2. **Your data** — start empty, keep what's here, or bring everything over from
+   an older SecureTap copy's folder (`manage.py import_securetap`, below).
+3. **Admin account** — typed in here when there's no active Admin
+   (`manage.py create_first_admin`, password passed on standard input, never the
+   command line; the dashboard's own password rules apply). A fresh install
+   therefore never has a default password anyone could guess.
+4. **Camera and card reader** — the camera list the gate monitor's picker
+   shows, the launcher's card-reader check, and whether the gate key matches
+   (with a **Fix it** button if not). Informational only.
+5. **Speed test** — picks a speed mode (§14) and lets the person override it.
+
+**Bringing data over from an older copy (`import_securetap`).** For the
+presentation laptop, which already has students enrolled in an older copy: the
+command reads that copy's own `backend/.env` to find its database (MySQL or
+SQLite) and copies — through the same code as `copy_mysql_to_sqlite`
+(`configuration/datacopy.py`) — people and face data, entry records,
+accounts, settings, the audit log; then the photos (`backend/media`) and the
+trained covered-face model. The setup window then brings the gate's own
+settings: the launcher's remembered gate/direction/guard name, and the
+`entry-agent/.env` lines for gate name, camera and card reader — the gate
+name matters because Security Officer accounts see only their gate's records,
+matched by its exact name. Safety rules, each tested:
+- **The old copy is never changed.** A SQLite source is read from a temporary
+  copy, because merely opening an SQLite file can make it finish a half-written
+  change.
+- **Version check first.** The old copy's applied migrations are compared with
+  this code's. Same → copied as is. Older SQLite → its temporary copy is
+  updated first (in a separate `manage.py migrate`, so data-migration steps run
+  against the right database). Older MySQL, or a newer copy → refused, with what
+  to do.
+- **Nothing half-done.** This copy must be empty (or `--replace`, which keeps
+  the current database as `db.sqlite3.bak`); a failed or incomplete copy is
+  thrown away and the previous database put back. Every table's row count is
+  compared afterwards, and a few stored faces are re-computed from their photos
+  (similarity must be ≥ 0.98, else `recompute_embeddings` runs).
+
+**Speed mode row.** Under the Entry Agent settings, a collapsed **Speed mode**
+row shows this computer's mode and the last speed test; it switches between
+Fast / Standard / Light, re-runs the test, and offers **Run setup again**, which
+stops everything, closes the launcher and reopens the setup window (to bring
+data over later, for instance) — the launcher comes back afterwards.
+
 Before opening the gate monitor, the launcher now also handles a few things a
 guard would otherwise only discover once already standing at the gate:
 
@@ -1656,7 +1706,8 @@ failing closed on missing configuration rather than open.
 The system is presented on an **Intel N100** laptop (4 cores, 8 GB RAM, Intel
 UHD graphics). On a chip like that, the face AI, the gate monitor's video, the
 backend, the dashboard in the browser and Windows all compete for the same 4 cores, so the
-system was tuned to waste as little CPU as possible. **None of this changes
+system was tuned to waste as little CPU as possible — and since every computer
+is different, it measures each one and adjusts itself (speed modes, below). **None of this changes
 who gets recognized**: re-computing stored enrollment photos with the tuned
 code gives fingerprints identical to the stored ones (similarity 1.000), and
 match strictness, voting and every safety check are unchanged.
@@ -1683,18 +1734,44 @@ match strictness, voting and every safety check are unchanged.
   files, no live recompiling and no Node.js process, and SQLite needs no
   database server — two fewer programs running on the laptop.
 
-**Two optional switches for the presentation laptop** (they trade some range
-for speed, so a real gate keeps the defaults):
-- `GATE_SCAN_DET_SIZE=384` in `backend/.env` — about a third less detection
-  work; faces need to be within roughly 2-3 m of the camera.
-- `UPLOAD_MAX_DIMENSION=640` in `entry-agent/.env` — smaller frames to send
-  and decode; fine when people stand close to the camera.
+**Speed modes, picked automatically per computer (`device_setup.py`).** The
+first-run setup (§9.1) runs a speed test — `manage.py benchmark_scan --sample
+--json`, which times 20 of the gate's face checks (find faces, fingerprint,
+fake-face check) on a camera-shaped frame cut from a public test photo that
+ships with InsightFace, so it works before anyone is enrolled and measures the
+same picture on every computer — and picks one of three modes:
 
-**Measuring it on the real laptop.** `python manage.py benchmark_scan` (in
-`backend/`) runs the gate's per-frame face scan on an enrolled photo and
-reports the time per frame and memory. Try `--det-size 384` to compare.
-Anything under ~150 ms per frame keeps up comfortably with someone walking to
-the camera.
+| | Fast | Standard | Light |
+|---|---|---|---|
+| Face-search size (`GATE_SCAN_DET_SIZE`) | `.env` (480) | `.env` (480) | 384 — faces within ~2-3 m |
+| Frame size sent (`UPLOAD_MAX_DIMENSION`) | `.env` (960) | `.env` (960) | 640 |
+| Gate monitor video (`VIDEO_FPS`) | 20 fps | 15 fps | 12 fps |
+| Pause between checks (`SCAN_PAUSE_SECONDS`) | 0.1 s | 0.2 s | 0.35 s |
+| Student Display (`STUDENT_DISPLAY_FPS`) | 15 fps | 10 fps | 6 fps |
+
+Rule: **Light** when one face check takes ≥ 90 ms, *or* the computer has ≤ 4
+processor cores, *or* < 6 GB of memory — the video, face checks, backend and
+browser all share the processor, so a 4-core chip like the N100 gets Light even
+when one check alone is quick; **Fast** when a check takes < 35 ms on 8+ cores
+and 8+ GB; **Standard** otherwise. The reason is shown in plain words ("Each
+face check took 55 ms, but this computer has only 4 processor cores…"), and the
+person can pick another mode on the spot or later in the launcher's **Speed
+mode** row, which also re-runs the test. Measured on the development PC:
+18–20 ms per check, 16 cores → Fast.
+
+The choice is stored in `device_profile.json` (per computer, git-ignored) and
+passed to the backend and the gate monitor as **environment overrides** when the
+launcher starts them — the same mechanism as the gate name and direction, so the
+`.env` files are never rewritten. Standard passes nothing, leaving every `.env`
+value as it is. Switching modes restarts the backend by itself when its part
+changes (the face-search size is read once, at start); an open gate monitor
+picks the new mode up when reopened. The face model, match strictness, voting
+and every safety check are the same in all three modes.
+
+**Measuring by hand.** `python manage.py benchmark_scan` (in `backend/`) times
+the scan on an enrolled photo (or the test photo with `--sample`) and reports
+time per frame and memory; `--det-size 384` compares the Light size, `--cores
+4` imitates a 4-core laptop.
 
 **Presentation-day checklist:**
 1. Laptop plugged in; Windows power mode set to **Best performance**.
@@ -1705,4 +1782,5 @@ the camera.
 4. Start the system with `SecureTap.bat` a few minutes before the panel
    arrives, open the dashboard and the gate monitor once, and let a face be
    recognized — the first scan loads the AI models, so get that out of the way.
-5. Optional: run `python manage.py benchmark_scan` to confirm the laptop's speed.
+5. Check the launcher's **Speed mode** row says Light (the N100's expected
+   pick); after changing anything about the laptop, **Run the speed test again**.

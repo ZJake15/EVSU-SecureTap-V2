@@ -40,6 +40,8 @@ import requests
 from dotenv import dotenv_values
 from PIL import Image
 
+import device_setup
+
 ROOT = Path(__file__).resolve().parent
 
 # The design system lives with the entry-agent's UI. Imported rather than
@@ -72,6 +74,7 @@ from ui import (  # noqa: E402
     WIDE_BLACK,
     _apply_icon,
     _icon,
+    fit_to_screen,
     set_app_user_model_id,
 )
 
@@ -485,6 +488,13 @@ class LauncherWindow:
 
         self.settings = _load_settings()
         self.app_version = _read_app_version()
+        # This computer's speed mode (device_setup.py) - passed to the backend
+        # and the gate monitor when they start.
+        self.profile = device_setup.load_profile()
+        self._speed_test_running = False
+        # Set by "Run setup again" - main() reopens the setup window after
+        # this window closes.
+        self.setup_requested = False
 
         self.backend = ManagedProcess("backend", self._append_log)
         self.dashboard = ManagedProcess("dashboard", self._handle_dashboard_output)
@@ -493,8 +503,7 @@ class LauncherWindow:
         self.root = ctk.CTk()
         self.root.title("EVSU SecureTap")
         self.root.configure(fg_color=CANVAS)
-        self.root.geometry(f"{DEFAULT_WINDOW_WIDTH}x{DEFAULT_WINDOW_HEIGHT}")
-        self.root.minsize(520, 680)
+        fit_to_screen(self.root, DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT, 520, 680)
         self.root.protocol("WM_DELETE_WINDOW", self._handle_quit)
         _apply_icon(self.root)
         self._scale = ctk.ScalingTracker.get_widget_scaling(self.root)
@@ -898,6 +907,31 @@ class LauncherWindow:
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
         self._update_settings_summary()
 
+        # -- speed mode row ------------------------------------------------------
+        self.speed_rule = tk.Frame(card, bg=LINE, height=1)
+        self.speed_rule.pack(fill="x", padx=1)
+        self.speed_caret, self.speed_summary = self._accordion_row(card, "Speed mode", self._toggle_speed_panel)
+        self.speed_panel_rule = tk.Frame(card, bg=LINE, height=1)
+        self.speed_panel = ctk.CTkFrame(card, fg_color="transparent")
+        self._speed_panel_visible = False
+        speed = ctk.CTkFrame(self.speed_panel, fg_color="transparent")
+        speed.pack(fill="x", padx=16, pady=16)
+        self.speed_detail = ctk.CTkLabel(speed, text="", font=(FONT, 14), text_color=INK, anchor="w", justify="left")
+        self.speed_detail.pack(fill="x")
+        self._wrap_labels.append((self.speed_detail, 34))
+        self.mode_selector = self._mode_toggle(speed)
+        self.mode_selector.pack(anchor="w", pady=(12, 0))
+        buttons = ctk.CTkFrame(speed, fg_color="transparent")
+        buttons.pack(fill="x", pady=(14, 0))
+        self.speed_test_button = self._outline_button(buttons, "Run the speed test again", self._run_speed_test)
+        self.speed_test_button.pack(side="left")
+        self._outline_button(buttons, "Run setup again", self._request_setup).pack(side="left", padx=(10, 0))
+        self.speed_note = ctk.CTkLabel(speed, text="", font=(FONT, 13), text_color=INK_600, anchor="w",
+                                       justify="left")
+        self.speed_note.pack(fill="x", pady=(10, 0))
+        self._wrap_labels.append((self.speed_note, 34))
+        self._render_speed()
+
         # -- log row -----------------------------------------------------------
         self.log_rule = tk.Frame(card, bg=LINE, height=1)
         self.log_rule.pack(fill="x", padx=1)
@@ -1079,7 +1113,8 @@ class LauncherWindow:
         # second - real CPU on a low-power laptop, and not needed while the
         # system is running for real (settings now change from the dashboard,
         # not by editing files). Restart the backend after editing its code.
-        self.backend.start([python, "-u", "manage.py", "runserver", "--noreload"], BACKEND_DIR)
+        self.backend.start([python, "-u", "manage.py", "runserver", "--noreload"], BACKEND_DIR,
+                           env_overrides=device_setup.backend_env_overrides(self.profile))
         self._set_status("backend", "starting")
 
     def _open_dashboard(self):
@@ -1206,6 +1241,8 @@ class LauncherWindow:
         }
         if self.settings.get("officer_name"):
             env_overrides["OFFICER_NAME"] = self.settings["officer_name"]
+        # The speed mode's video smoothness, upload size and scan pace.
+        env_overrides.update(device_setup.entry_agent_env_overrides(self.profile))
         self.entry_agent.start([venv_python(), "-u", "main.py"], ENTRY_AGENT_DIR, env_overrides=env_overrides)
         self._set_status("entry-agent", "starting")
         # Names what's actually taking the time, so the wait reads as work
@@ -1316,10 +1353,143 @@ class LauncherWindow:
             self.settings_rule.pack_forget()
             self.settings_caret.configure(text=_icon("caret-right"))
         else:
-            self.settings_rule.pack(fill="x", padx=1, before=self.log_rule)
-            self.settings_panel.pack(fill="x", before=self.log_rule)
+            self.settings_rule.pack(fill="x", padx=1, before=self.speed_rule)
+            self.settings_panel.pack(fill="x", before=self.speed_rule)
             self.settings_caret.configure(text=_icon("caret-down"))
         self._settings_panel_visible = not self._settings_panel_visible
+
+    # ---- speed mode -----------------------------------------------------------
+
+    def _toggle_speed_panel(self):
+        if self._speed_panel_visible:
+            self.speed_panel.pack_forget()
+            self.speed_panel_rule.pack_forget()
+            self.speed_caret.configure(text=_icon("caret-right"))
+        else:
+            self.speed_panel_rule.pack(fill="x", padx=1, before=self.log_rule)
+            self.speed_panel.pack(fill="x", before=self.log_rule)
+            self.speed_caret.configure(text=_icon("caret-down"))
+        self._speed_panel_visible = not self._speed_panel_visible
+
+    def _outline_button(self, parent, text, command):
+        return ctk.CTkButton(
+            parent, text=text, font=(FONT, 14, "bold"), height=40, corner_radius=8, fg_color=SURFACE,
+            hover_color=CANVAS, text_color=INK, border_width=1, border_color=LINE, command=command,
+        )
+
+    def _mode_toggle(self, parent):
+        """Fast | Standard | Light, styled like the Entry | Exit toggle."""
+        frame = ctk.CTkFrame(parent, fg_color=SURFACE, corner_radius=3, border_width=1, border_color=LINE,
+                             width=330, height=44)
+        frame.grid_propagate(False)
+        frame.grid_rowconfigure(0, weight=1)
+        self._mode_halves = {}
+        for index, (key, mode) in enumerate(device_setup.MODES.items()):
+            if index:
+                tk.Frame(frame, bg=LINE, width=1).grid(row=0, column=index * 2 - 1, sticky="ns", pady=1)
+            frame.grid_columnconfigure(index * 2, weight=1, uniform="mode")
+            cell = ctk.CTkFrame(frame, fg_color=SURFACE, corner_radius=0, cursor="hand2")
+            # The last cell keeps 2px clear on the right, or it covers the
+            # toggle's own border there.
+            last = index == len(device_setup.MODES) - 1
+            cell.grid(row=0, column=index * 2, sticky="nsew", padx=(1, 2) if last else 1, pady=1)
+            text = ctk.CTkLabel(cell, text=mode.label, font=(FONT, 14, "bold"), text_color=INK_600, cursor="hand2")
+            text.place(relx=0.5, rely=0.5, anchor="center")
+            for widget in (cell, text):
+                widget.bind("<Button-1>", lambda _event, k=key: self._pick_speed_mode(k))
+            self._mode_halves[key] = (cell, text)
+        return frame
+
+    def _render_speed(self):
+        current = device_setup.mode_of(self.profile)
+        for key, (cell, text) in self._mode_halves.items():
+            selected = key == current
+            background = INK if selected else SURFACE
+            cell.configure(fg_color=background)
+            text.configure(text_color="white" if selected else INK_600, fg_color=background)
+        self.speed_summary.configure(text=device_setup.MODES[current].label)
+        detail = device_setup.MODES[current].summary
+        measured = (self.profile or {}).get("measured")
+        if measured:
+            recommended = device_setup.MODES[self.profile.get("recommended") or current].label
+            detail += (f"\n\nLast speed test: each face check took {measured['ms_median']:.0f} ms on "
+                       f"{measured['processors']} processor cores - it recommended {recommended}.")
+        else:
+            detail += "\n\nNo speed test has run on this computer yet."
+        self.speed_detail.configure(text=detail)
+        if not self._speed_test_running:
+            self.speed_test_button.configure(text=self._speed_test_label())
+
+    def _speed_test_label(self):
+        return "Run the speed test again" if (self.profile or {}).get("measured") else "Run the speed test"
+
+    def _pick_speed_mode(self, key, chosen_by=None, **measurement):
+        if key == device_setup.mode_of(self.profile) and not measurement:
+            return
+        before = device_setup.backend_env_overrides(self.profile)
+        recommended = measurement.get("recommended") or (self.profile or {}).get("recommended")
+        try:
+            self.profile = device_setup.save_profile(
+                key, chosen_by or ("speed test" if key == recommended else "you"), **measurement)
+        except OSError as exc:
+            self.speed_note.configure(text=f"Couldn't save the speed mode: {exc}")
+            return
+        self._render_speed()
+        self._append_log(f"[launcher] speed mode: {device_setup.describe(self.profile)}")
+        notes = [f"Speed mode is now {device_setup.MODES[key].label}."]
+        if device_setup.backend_env_overrides(self.profile) != before:
+            if self._backend_external:
+                notes.append("Restart the backend you started yourself so it uses it.")
+            elif self.backend.is_running():
+                # The backend reads its detection size once, at start - restart
+                # it now rather than leaving the new mode half-applied.
+                self.backend.stop()
+                self._backend_ok = False
+                self._start_backend()
+                notes.append("The backend restarted to use it.")
+        if self.entry_agent.is_running():
+            notes.append("Close and reopen the gate monitor to use it there.")
+        self.speed_note.configure(text=" ".join(notes))
+
+    def _run_speed_test(self):
+        if self._speed_test_running:
+            return
+        self._speed_test_running = True
+        self.speed_test_button.configure(state="disabled", text="Testing… (about half a minute)")
+        busy = " The gate monitor is open, so the result may come out a little slow." if \
+            self.entry_agent.is_running() else ""
+        self.speed_note.configure(text="Measuring how fast this computer runs the face check…" + busy)
+
+        def work():
+            measured = device_setup.run_speed_test(venv_python())
+            return measured, device_setup.recommend(measured)
+
+        def done(result):
+            self._speed_test_running = False
+            self.speed_test_button.configure(state="normal", text=self._speed_test_label())
+            if result is None:
+                self.speed_note.configure(text="The speed test couldn't run - open the log below to see why.")
+                return
+            measured, (recommended, reason) = result
+            self._append_log(f"[launcher] speed test: {measured}")
+            self._pick_speed_mode(recommended, "speed test", measured=measured, recommended=recommended,
+                                  reason=reason)
+            self.speed_note.configure(text=reason + " " + self.speed_note.cget("text"))
+
+        self._run_in_background(work, done)
+
+    def _request_setup(self):
+        """Closes this window and reopens the first-run setup (main() does the
+        reopening) - e.g. to bring data over from another copy later."""
+        if not messagebox.askokcancel(
+            "Run setup again",
+            "This closes the launcher and stops everything it started, then opens the setup window. "
+            "Nothing is deleted unless you choose to replace this computer's data there.",
+        ):
+            return
+        self.setup_requested = True
+        self._stop_all()
+        self.root.destroy()
 
     def _current_entry_agent_settings(self):
         """Reads the settings widgets directly rather than trusting whatever
@@ -1581,7 +1751,23 @@ def main():
             "running this script. See README.md if imports fail.",
             file=sys.stderr,
         )
-    LauncherWindow().run()
+    run_setup = device_setup.needs_setup()
+    while True:
+        if run_setup:
+            from setup_wizard import SetupWizard
+
+            wizard = SetupWizard(
+                venv_python(),
+                backend_running=lambda: service_responds(HEALTH_URL, timeout=1.5),
+                reader_check=lambda: _detect_nfc_reader(_nfc_reader_usb_ids()),
+            )
+            if not wizard.run():
+                return  # setup was closed before it finished - it opens again next time
+        launcher = LauncherWindow()
+        launcher.run()
+        if not launcher.setup_requested:
+            return
+        run_setup = True
 
 
 if __name__ == "__main__":

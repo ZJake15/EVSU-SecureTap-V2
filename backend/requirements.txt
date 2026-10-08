@@ -4,6 +4,8 @@ djangorestframework-simplejwt>=5.3
 django-filter>=24.2
 django-cors-headers>=4.4
 django-environ>=0.11
+# Reads another copy's .env without loading it (manage.py import_securetap).
+python-dotenv>=1.0
 # Serves the dashboard's ready-made files from the backend itself.
 whitenoise>=6.7
 # The database is SQLite by default (built into Python - nothing to

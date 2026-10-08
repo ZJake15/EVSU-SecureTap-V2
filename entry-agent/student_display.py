@@ -142,8 +142,10 @@ def _secondary_monitor():
 
 class StudentDisplayWindow:
     def __init__(self, master, gate_location, direction, get_preview_frame, is_camera_down,
-                 on_card_key, on_close):
+                 on_card_key, on_close, fps=None):
         self._get_preview_frame = get_preview_frame
+        # From the launcher's speed mode (config.py) - REFRESH_MS without one.
+        self._refresh_ms = round(1000 / fps) if fps else REFRESH_MS
         self._is_camera_down = is_camera_down
         self._on_close = on_close
         self.gate_location = gate_location or "Gate"
@@ -176,7 +178,7 @@ class StudentDisplayWindow:
         self.window.bind("<Escape>", lambda _e: self.set_fullscreen(False))
 
         self._place()
-        self.window.after(REFRESH_MS, self._tick)
+        self.window.after(self._refresh_ms, self._tick)
 
     # ---- window placement -------------------------------------------------
 
@@ -281,7 +283,7 @@ class StudentDisplayWindow:
         except Exception:
             # Logged, then the next frame tries again - never a frozen screen.
             traceback.print_exc()
-        self.window.after(REFRESH_MS, self._tick)
+        self.window.after(self._refresh_ms, self._tick)
 
     def _draw(self):
         width, height = self.canvas.winfo_width(), self.canvas.winfo_height()

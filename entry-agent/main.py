@@ -13,12 +13,12 @@ from config import load_config
 from offline_queue import OfflineQueue
 from ui import GateMonitorWindow, set_app_user_model_id
 
-# The request itself now takes the bulk of the time (image capture is
-# instant off the continuous stream, and detection is ~0.4-0.9s depending on
-# frame size), so this is just a small breather between cycles rather than
-# the main throttle - the old 2s value meant someone walking past at normal
-# speed could cross the frame between samples entirely.
-SCAN_INTERVAL_SECONDS = 0.2
+# The pause between face checks is config.scan_pause_seconds (0.2 s unless
+# the launcher's speed mode says otherwise). The request itself takes the
+# bulk of each cycle (image capture is instant off the continuous stream), so
+# the pause is a small breather rather than the main throttle - the old 2s
+# value meant someone walking past at normal speed could cross the frame
+# between samples entirely.
 STATUS_CHECK_INTERVAL_SECONDS = 5
 
 # Read by the root launcher (launcher.py's _read_last_session_summary) to show
@@ -218,7 +218,7 @@ def scan_loop(config, api_client, camera, ui, stop_event):
         try:
             image_bytes, image_size = camera.capture_jpeg()
         except RuntimeError:
-            stop_event.wait(SCAN_INTERVAL_SECONDS)
+            stop_event.wait(config.scan_pause_seconds)
             continue
 
         try:
@@ -252,7 +252,7 @@ def scan_loop(config, api_client, camera, ui, stop_event):
             # feed kept looking live.
             traceback.print_exc()
 
-        stop_event.wait(SCAN_INTERVAL_SECONDS)
+        stop_event.wait(config.scan_pause_seconds)
 
 
 def handle_tap(config, api_client, offline_queue, ui, nfc_id):
@@ -370,6 +370,8 @@ def main():
         camera_options=camera_options,
         on_camera_change=camera.set_index,
         initial_camera_index=config.camera_index,
+        video_fps=config.video_fps,
+        student_display_fps=config.student_display_fps,
     )
 
     try:

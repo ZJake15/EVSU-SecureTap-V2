@@ -202,6 +202,23 @@ def set_app_user_model_id(app_id):
         pass
 
 
+def fit_to_screen(window, width, height, min_width, min_height):
+    """Sizes a CTk window to width x height (logical px), shrunk to fit the
+    screen's height above the taskbar, and centers it near the top. A 1080p
+    laptop at 150% Windows scaling is only ~720 logical px tall - a fixed
+    760px window put its bottom bar (and the button on it) off the screen."""
+    scale = ctk.ScalingTracker.get_window_scaling(window)
+    screen_width = window.winfo_screenwidth() / scale
+    screen_height = window.winfo_screenheight() / scale
+    height = int(min(height, screen_height - 90))
+    width = int(min(width, screen_width - 40))
+    window.minsize(min(min_width, width), min(min_height, height))
+    # CTk scales the size but not the position, so the offsets are real px.
+    x = max(0, round((screen_width - width) / 2 * scale))
+    y = round(16 * scale)
+    window.geometry(f"{width}x{height}+{x}+{y}")
+
+
 def _apply_icon(window):
     """CustomTkinter windows still use Tk's iconphoto under the hood - a PNG
     works directly there (unlike iconbitmap, which specifically wants a
@@ -515,8 +532,13 @@ class GateMonitorWindow:
 
     def __init__(self, gate_location, direction, get_preview_frame, on_tap,
                  officer_name="", version="", on_close=None,
-                 camera_options=None, on_camera_change=None, initial_camera_index=None):
+                 camera_options=None, on_camera_change=None, initial_camera_index=None,
+                 video_fps=None, student_display_fps=None):
         self._get_preview_frame = get_preview_frame
+        # From the launcher's speed mode (config.py) - VIDEO_REFRESH_MS when
+        # run without one.
+        self._video_refresh_ms = round(1000 / video_fps) if video_fps else VIDEO_REFRESH_MS
+        self._student_display_fps = student_display_fps
         self.gate_location = gate_location
         self.direction = direction
         self.on_tap = on_tap
@@ -615,7 +637,7 @@ class GateMonitorWindow:
         # TclError elsewhere just leaves the restore geometry in place.
         self.window.after(300, self._maximize)
         if self._get_preview_frame:
-            self.window.after(VIDEO_REFRESH_MS, self._update_video)
+            self.window.after(self._video_refresh_ms, self._update_video)
 
     def _fit_design_to_screen(self):
         """Scales every CTk widget so the 1920x1080 design fills the screen
@@ -1183,6 +1205,7 @@ class GateMonitorWindow:
             is_camera_down=lambda: self._showing_no_camera,
             on_card_key=self._forward_card_key,
             on_close=self._student_closed,
+            fps=self._student_display_fps,
         )
         self._student.update_recognitions(self._latest_recognitions, self._latest_image_size)
         self._refresh_student_toggle()
@@ -1740,7 +1763,7 @@ class GateMonitorWindow:
             # Logged, then the next frame tries again - an escaped error here
             # used to skip the reschedule and leave the feed frozen for good.
             traceback.print_exc()
-        self.window.after(VIDEO_REFRESH_MS, self._update_video)
+        self.window.after(self._video_refresh_ms, self._update_video)
 
     def _refresh_video(self):
         frame = self._get_preview_frame()

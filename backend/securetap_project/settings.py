@@ -402,6 +402,16 @@ OCCLUSION_CLASSIFIER_PATH = env(
 )
 # Labeled photos for training it (collect_occlusion_training_data).
 OCCLUSION_TRAINING_DIR = (DATA_DIR or BASE_DIR) / "occlusion_training_data"
+
+# The face models' folder (InsightFace's "root"). The installer ships the two
+# the system uses in face-models/ next to backend/, so an installed copy never
+# needs the internet; otherwise InsightFace's own ~/.insightface, where it
+# downloads them on first use.
+_BUNDLED_FACE_MODELS = BASE_DIR.parent / "face-models"
+INSIGHTFACE_ROOT = env(
+    "INSIGHTFACE_ROOT",
+    default=str(_BUNDLED_FACE_MODELS if _BUNDLED_FACE_MODELS.is_dir() else Path.home() / ".insightface"),
+)
 # The classifier's own "probably covered" cutoff, on its 0-1 probability.
 # 0.5 is exactly what the training command's evaluation measured (sklearn's
 # plain predict()). Raise it if live testing shows too many false "please

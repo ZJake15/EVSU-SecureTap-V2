@@ -161,9 +161,18 @@ def venv_python():
     entry-agent, InsightFace) is installed into the one .venv at the repo root,
     so both child processes use it. Falls back to whatever is running this
     launcher, which is the right answer when someone already activated a venv
-    by hand."""
-    candidate = ROOT / ".venv" / "Scripts" / ("python.exe" if os.name == "nt" else "python")
-    return str(candidate) if candidate.exists() else sys.executable
+    by hand. An installed copy has no .venv - its own Python ships in
+    python/ (see installer/build.py)."""
+    for candidate in (ROOT / ".venv" / "Scripts" / ("python.exe" if os.name == "nt" else "python"),
+                      ROOT / "python" / "python.exe"):
+        if candidate.exists():
+            return str(candidate)
+    # The installed shortcut runs this launcher with pythonw.exe (no console
+    # window). Its children get python.exe from the same folder instead, so
+    # their output still reaches the log panel through the pipe.
+    executable = Path(sys.executable)
+    console = executable.with_name("python.exe")
+    return str(console) if executable.name.lower() == "pythonw.exe" and console.exists() else sys.executable
 
 
 def npm_command():
@@ -1745,7 +1754,7 @@ def main():
     # process needs its own so Windows' taskbar treats them as separate apps
     # with separate icons, rather than grouping both under plain python.exe's.
     set_app_user_model_id("EVSU.SecureTap.Launcher")
-    if not (ROOT / ".venv").exists():
+    if not (ROOT / ".venv").exists() and not (ROOT / "python").exists() and sys.stderr is not None:
         print(
             "WARNING: no .venv at the repo root - falling back to the interpreter "
             "running this script. See README.md if imports fail.",

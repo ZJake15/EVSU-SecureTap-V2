@@ -86,7 +86,8 @@ def _get_app():
         with _app_lock:
             if _app is None:
                 app = FaceAnalysis(
-                    name=_MODEL_PACK, providers=["CPUExecutionProvider"], allowed_modules=_REQUIRED_MODULES
+                    name=_MODEL_PACK, root=settings.INSIGHTFACE_ROOT, providers=["CPUExecutionProvider"],
+                    allowed_modules=_REQUIRED_MODULES,
                 )
                 for model in app.models.values():
                     model.session = ort.InferenceSession(

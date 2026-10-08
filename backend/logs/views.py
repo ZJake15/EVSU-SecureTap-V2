@@ -94,8 +94,14 @@ class HealthView(APIView):
 
     permission_classes = []
 
+    # Raised whenever the launcher or gate monitor starts depending on
+    # something new in this backend. The launcher won't use a backend that
+    # answers with an older number (or none at all - an older SecureTap left
+    # running on the same computer), see launcher.backend_identity.
+    API_VERSION = 2
+
     def get(self, request):
-        return Response({"status": "ok"})
+        return Response({"status": "ok", "app": "evsu-securetap", "api_version": self.API_VERSION})
 
 
 class GateSummaryView(APIView):

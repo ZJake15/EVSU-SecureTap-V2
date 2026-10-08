@@ -83,6 +83,8 @@ DASHBOARD_DIR = ROOT / "dashboard"
 ENTRY_AGENT_DIR = ROOT / "entry-agent"
 
 HEALTH_URL = "http://127.0.0.1:8000/api/health"
+# The oldest backend this launcher works with - logs/views.py HealthView.API_VERSION.
+BACKEND_API_VERSION = 2
 # The backend serves the dashboard itself, from its ready-made build
 # (backend/securetap_project/spa_views.py) - no separate dashboard server.
 DASHBOARD_URL = "http://localhost:8000/"
@@ -198,6 +200,24 @@ def _dashboard_build_is_current():
     sources = [DASHBOARD_DIR / name for name in ("index.html", "package.json", "vite.config.js", "tailwind.config.js")]
     sources += list((DASHBOARD_DIR / "src").rglob("*"))
     return all(path.stat().st_mtime <= built_at for path in sources if path.is_file())
+
+
+def backend_identity(timeout=1.0):
+    """Which backend answers on port 8000: "ours" (this version, or newer),
+    "old" (an older SecureTap - its /api/health has no api_version, e.g. the
+    old copy still running on a computer the new app was installed on), or
+    None (nothing). The launcher never uses an old one: the dashboard and
+    the gate monitor would quietly run on the old system and its old data."""
+    try:
+        response = requests.get(HEALTH_URL, timeout=timeout)
+    except requests.RequestException:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return "old"
+    version = data.get("api_version") if isinstance(data, dict) else None
+    return "ours" if isinstance(version, int) and version >= BACKEND_API_VERSION else "old"
 
 
 def service_responds(url, timeout=1.0):
@@ -479,6 +499,8 @@ class LauncherWindow:
         # is going (see _start_backend), and if that update failed.
         self._backend_preparing = False
         self._backend_update_failed = False
+        # An older SecureTap's backend is on port 8000 (see _block_old_backend).
+        self._backend_blocked = False
         # Dashboard button: clicked before the backend was up (open it once it
         # is), and whether its last rebuild failed - see _open_dashboard.
         self._open_when_backend_ready = False
@@ -1109,10 +1131,14 @@ class LauncherWindow:
 
     def _start_backend(self):
         python = venv_python()
-        if service_responds(HEALTH_URL):
+        identity = backend_identity()
+        if identity == "ours":
             self._backend_external = True
             self._append_log("[launcher] a backend is already running on port 8000 - using that one")
             self._set_status_message("Using a backend that was already running.")
+            return
+        if identity == "old":
+            self._block_old_backend()
             return
         if not (BACKEND_DIR / "manage.py").exists():
             self._append_log(f"[launcher] backend not found at {BACKEND_DIR}")
@@ -1158,6 +1184,26 @@ class LauncherWindow:
                                env_overrides=device_setup.backend_env_overrides(self.profile))
 
         self._run_in_background(migrate, start)
+
+    def _block_old_backend(self):
+        """An older SecureTap's backend holds port 8000. Don't use it - and
+        don't open the dashboard or gate monitor on it - until it's closed;
+        _poll_health then starts this version's backend by itself."""
+        already = self._backend_blocked
+        self._backend_blocked = True
+        self._backend_ok = False
+        self._set_status("backend", "failed")
+        self._set_status_message("An older SecureTap is still running on this computer. Close it (or restart the "
+                                 "computer) — this one starts by itself once it's gone.")
+        if not already:
+            self._append_log("[launcher] an older SecureTap backend answers on port 8000 - not using it")
+            self.root.after(300, lambda: messagebox.showwarning(
+                "Older SecureTap still running",
+                "An older copy of SecureTap is still running on this computer, so this one can't start yet.\n\n"
+                "Close the old SecureTap (its launcher, gate monitor and any black command window), or restart "
+                "the computer. This window starts SecureTap by itself as soon as the old one is gone.",
+                parent=self.root,
+            ))
 
     def _open_dashboard(self):
         """The backend serves the dashboard at DASHBOARD_URL, so this only
@@ -1303,7 +1349,11 @@ class LauncherWindow:
         checking here would mean importing cv2 into the launcher's own
         process just for this."""
         warnings = []
-        if not service_responds(HEALTH_URL, timeout=1.5):
+        identity = backend_identity(timeout=1.5)
+        if identity == "old":
+            warnings.append(("plugs", "An older SecureTap is still running on this computer — the gate monitor "
+                                      "would log into the old system. Close the old SecureTap first."))
+        elif identity is None:
             warnings.append(("plugs", "The backend isn't responding yet — entry/exit logging won't work until it is."))
         reader_ids = _nfc_reader_usb_ids()
         if _detect_nfc_reader(reader_ids) is False:
@@ -1608,10 +1658,23 @@ class LauncherWindow:
         still starting, each one takes up to 1.5s to give up, which used to
         freeze the window on every poll."""
         def probe():
-            return service_responds(HEALTH_URL, timeout=1.5)
+            return backend_identity(timeout=1.5)
 
-        def apply(backend_up):
-            self._apply_health(bool(backend_up))
+        def apply(identity):
+            if self._backend_blocked:
+                if identity is None:
+                    # The old SecureTap has been closed - start ours now.
+                    self._backend_blocked = False
+                    self._append_log("[launcher] the older SecureTap is gone - starting the backend")
+                    self._set_status_message(None)
+                    self._start_backend()
+                self.root.after(HEALTH_POLL_MS, self._poll_health)
+                return
+            if identity == "old" and not self.backend.is_running():
+                self._block_old_backend()
+                self.root.after(HEALTH_POLL_MS, self._poll_health)
+                return
+            self._apply_health(identity == "ours")
             self.root.after(HEALTH_POLL_MS, self._poll_health)
 
         self._run_in_background(probe, apply)

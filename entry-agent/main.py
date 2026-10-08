@@ -314,7 +314,9 @@ def main():
         )
 
     api_client = ApiClient(config.api_base_url, config.service_token)
-    camera = Camera(config.camera_index, exposure=config.camera_exposure)
+    camera = Camera(
+        config.camera_index, exposure=config.camera_exposure, max_upload_dimension=config.upload_max_dimension
+    )
     # Starts a background thread that opens the webcam (retrying on its own
     # timer for as long as the app runs if none is connected yet, or it's
     # unplugged mid-session - see Camera._run_loop) - never blocks here and

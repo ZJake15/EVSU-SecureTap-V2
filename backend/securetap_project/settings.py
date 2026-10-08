@@ -239,6 +239,14 @@ VOTE_WINDOW_SECONDS = env.int("VOTE_WINDOW_SECONDS", default=4)
 # your camera's typical distance-to-face at the gate.
 GATE_SCAN_DET_SIZE = env.int("GATE_SCAN_DET_SIZE", default=480)
 
+# How many CPU cores the face AI (detection, recognition, fake-face check)
+# may use for each camera frame. 0 = decide automatically: half of this
+# computer's processors, at most 4 - on a 4-core laptop like the Intel N100
+# that's 2, leaving the other cores for the gate monitor's video, the
+# browser and MySQL. Left uncapped, the AI starts a worker per processor on
+# every frame and the rest of the system stutters. Needs a backend restart.
+AI_THREADS = env.int("AI_THREADS", default=0)
+
 # Below this Laplacian variance, a gate-scan frame is treated as too
 # motion-blurred to trust - skipped entirely (not counted as "no match"),
 # waiting for a sharper frame instead. Deliberately more lenient than

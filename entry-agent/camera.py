@@ -12,7 +12,12 @@ MAX_UPLOAD_DIMENSION = 960  # face_recognition's HOG detector roughly doubles in
 # speed going from an ~1300px phone-photo-sized frame down to 640px, but 640
 # was cutting too much detail out of faces several feet away - 960 is a
 # middle ground that keeps distance recognition working without paying the
-# full cost of uploading a full 1280x720 frame every scan.
+# full cost of uploading a full 1280x720 frame every scan. Overridable per PC
+# with UPLOAD_MAX_DIMENSION in entry-agent/.env - 640 suits a low-power
+# laptop where people stand close to the camera (see documentation.md).
+# JPEG quality of each frame sent to the backend - 85 is visually the same
+# to the face AI as OpenCV's default 95, at a noticeably smaller file.
+UPLOAD_JPEG_QUALITY = 85
 
 # How often to retry opening the camera while it isn't connected - covers
 # both "never was" (nothing plugged in at startup) and "used to be, isn't
@@ -39,8 +44,9 @@ class Camera:
     what was actually being recognized. One detector, one source of truth.
     """
 
-    def __init__(self, index=0, exposure=None):
+    def __init__(self, index=0, exposure=None, max_upload_dimension=MAX_UPLOAD_DIMENSION):
         self.index = index
+        self.max_upload_dimension = max_upload_dimension
         # Optional, off by default - see _apply_exposure below for why this
         # can't be a value picked in advance for every webcam.
         self.exposure = exposure
@@ -193,8 +199,8 @@ class Camera:
         frame = self.get_preview_frame()
         if frame is None:
             raise RuntimeError("No frame available yet - is the webcam initializing?")
-        frame = _cap_dimension(frame, MAX_UPLOAD_DIMENSION)
-        ok, buffer = cv2.imencode(".jpg", frame)
+        frame = _cap_dimension(frame, self.max_upload_dimension)
+        ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, UPLOAD_JPEG_QUALITY])
         if not ok:
             raise RuntimeError("Failed to encode the captured frame as JPEG.")
         height, width = frame.shape[:2]

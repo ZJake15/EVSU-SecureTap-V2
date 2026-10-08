@@ -19,6 +19,7 @@ class Config:
     officer_name: str
     app_version: str
     camera_exposure: Optional[float]
+    upload_max_dimension: int
 
 
 def load_config() -> Config:
@@ -37,4 +38,7 @@ def load_config() -> Config:
         # see camera.py for why this is opt-in/experimental rather than a
         # value this file guesses at.
         camera_exposure=float(raw_exposure) if raw_exposure else None,
+        # Largest side (pixels) of each camera frame sent to the backend - see
+        # camera.MAX_UPLOAD_DIMENSION. 960 by default; 640 on a low-power laptop.
+        upload_max_dimension=int(os.getenv("UPLOAD_MAX_DIMENSION", "960")),
     )

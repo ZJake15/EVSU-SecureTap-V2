@@ -1,11 +1,14 @@
 import io
+import os
 import threading
 
 import cv2
 import numpy as np
+import onnxruntime as ort
 from django.conf import settings
 from django.core.files.base import ContentFile
 from insightface.app import FaceAnalysis
+from insightface.app.common import Face
 from PIL import Image, ImageOps
 
 # Quality-check defaults for enrollment photos specifically - the gate scan
@@ -17,8 +20,9 @@ MIN_FACE_AREA_RATIO = 0.02  # face bounding box vs. whole-frame area
 
 _app = None
 _app_lock = threading.Lock()
-_scan_app = None
-_scan_app_lock = threading.Lock()
+
+# Enrollment looks for faces at this size; the gate scan at GATE_SCAN_DET_SIZE.
+ENROLLMENT_DET_SIZE = 640
 
 
 # buffalo_s (not buffalo_l): same 512-d ArcFace embedding space either way,
@@ -43,12 +47,40 @@ _MODEL_PACK = "buffalo_s"
 _REQUIRED_MODULES = ["detection", "recognition"]
 
 
+def ai_threads():
+    """How many CPU cores each AI model may use per run (settings.AI_THREADS,
+    or automatic: half the processors, at most 4)."""
+    configured = getattr(settings, "AI_THREADS", 0)
+    if configured and configured > 0:
+        return configured
+    return max(1, min(4, (os.cpu_count() or 2) // 2))
+
+
+def ai_session_options():
+    """ONNX Runtime options shared by every model here: capped to ai_threads()
+    and run one step at a time, so a frame never spawns more workers than
+    the laptop has cores to spare."""
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = ai_threads()
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    return options
+
+
 def _get_app():
-    """Lazily loads the full-size InsightFace model once per process and
-    reuses it for enrollment, where accuracy on a deliberately posed,
-    human-confirmed photo matters more than speed - constructing
-    FaceAnalysis is expensive (loads multiple ONNX models), so this must not
-    happen per-request."""
+    """The InsightFace models, loaded once per process and shared by both
+    enrollment and the gate scan - constructing FaceAnalysis is expensive
+    (it loads the ONNX models), so this must not happen per request.
+
+    One copy serves both because the face finder can be asked to search at
+    a different size on every call (see _find_faces): enrollment searches a
+    posed photo at ENROLLMENT_DET_SIZE, the gate scan at the smaller, faster
+    GATE_SCAN_DET_SIZE. That used to be two separate copies of the models.
+
+    InsightFace builds its model sessions without any way to pass options,
+    so each one is rebuilt here from the same model file with the shared
+    thread cap (ai_session_options) - same model, same results, just not
+    allowed to take every core."""
     global _app
     if _app is None:
         with _app_lock:
@@ -56,33 +88,29 @@ def _get_app():
                 app = FaceAnalysis(
                     name=_MODEL_PACK, providers=["CPUExecutionProvider"], allowed_modules=_REQUIRED_MODULES
                 )
-                app.prepare(ctx_id=0, det_size=(640, 640))
+                for model in app.models.values():
+                    model.session = ort.InferenceSession(
+                        model.model_file, sess_options=ai_session_options(), providers=["CPUExecutionProvider"]
+                    )
+                app.prepare(ctx_id=0, det_size=(ENROLLMENT_DET_SIZE, ENROLLMENT_DET_SIZE))
                 _app = app
     return _app
 
 
-def _get_scan_app():
-    """A second, smaller-input InsightFace instance dedicated to the gate
-    scan (compute_face_embeddings_and_boxes). The continuous scan needs to
-    keep up with someone walking through at normal pace, so a smaller
-    GATE_SCAN_DET_SIZE trades some far-away-face detection range for a
-    meaningfully faster per-frame turnaround, which in turn means more real
-    polls land inside the multi-frame voting window while someone crosses
-    the gate. Kept as a genuinely separate model instance (not just a
-    different det_size on the same one) so enrollment quality is never
-    affected by this - costs extra memory for the second model, accepted
-    deliberately for this project's scale."""
-    global _scan_app
-    if _scan_app is None:
-        with _scan_app_lock:
-            if _scan_app is None:
-                app = FaceAnalysis(
-                    name=_MODEL_PACK, providers=["CPUExecutionProvider"], allowed_modules=_REQUIRED_MODULES
-                )
-                det_size = settings.GATE_SCAN_DET_SIZE
-                app.prepare(ctx_id=0, det_size=(det_size, det_size))
-                _scan_app = app
-    return _scan_app
+def _find_faces(bgr_image, det_size):
+    """FaceAnalysis.get(), but searching at `det_size` for this one call -
+    every detected face gets its bounding box, keypoints, detection score
+    and normalized embedding, exactly as FaceAnalysis.get() would give."""
+    app = _get_app()
+    bboxes, kpss = app.det_model.detect(bgr_image, input_size=(det_size, det_size), max_num=0, metric="default")
+    faces = []
+    for i in range(bboxes.shape[0]):
+        face = Face(bbox=bboxes[i, 0:4], kps=kpss[i] if kpss is not None else None, det_score=bboxes[i, 4])
+        for taskname, model in app.models.items():
+            if taskname != "detection":
+                model.get(bgr_image, face)
+        faces.append(face)
+    return faces
 
 
 def load_bgr_array(image_file):
@@ -111,7 +139,7 @@ def compute_face_embedding(image_file):
     callers (DRF serializers, the bulk-import view, the add-photo action)
     can surface it directly to whoever's enrolling."""
     bgr_image = load_bgr_array(image_file)
-    faces = _get_app().get(bgr_image)
+    faces = _find_faces(bgr_image, ENROLLMENT_DET_SIZE)
 
     if not faces:
         raise ValueError("No face could be detected in the photo. Use a clear, front-facing photo.")
@@ -307,7 +335,7 @@ def compute_face_embeddings_and_boxes(bgr_image):
     mouth_ratio: float | None, texture_ratio: float | None) tuples, one per
     detected face - uses the smaller/faster scan-dedicated detector (see
     _get_scan_app), not the full-size enrollment one."""
-    faces = _get_scan_app().get(bgr_image)
+    faces = _find_faces(bgr_image, settings.GATE_SCAN_DET_SIZE)
     results = []
     for face in faces:
         x1, y1, x2, y2 = (int(round(v)) for v in face.bbox)

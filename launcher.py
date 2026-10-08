@@ -1074,8 +1074,12 @@ class LauncherWindow:
             return
         self._append_log(f"[launcher] starting backend with {python}")
         # -u so Django's output reaches the log panel as it happens rather than
-        # sitting in a pipe buffer until the process exits.
-        self.backend.start([python, "-u", "manage.py", "runserver"], BACKEND_DIR)
+        # sitting in a pipe buffer until the process exits. --noreload: no
+        # background helper re-checking every code file for changes each
+        # second - real CPU on a low-power laptop, and not needed while the
+        # system is running for real (settings now change from the dashboard,
+        # not by editing files). Restart the backend after editing its code.
+        self.backend.start([python, "-u", "manage.py", "runserver", "--noreload"], BACKEND_DIR)
         self._set_status("backend", "starting")
 
     def _open_dashboard(self):

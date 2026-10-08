@@ -103,7 +103,13 @@ def _get_session():
     with _session_lock:
         if _session is None and not _session_load_failed:
             try:
-                _session = ort.InferenceSession(_MINIFASNET_MODEL_PATH, providers=["CPUExecutionProvider"])
+                # Same thread cap as the face models - see
+                # insightface_utils.ai_session_options.
+                from users.insightface_utils import ai_session_options
+
+                _session = ort.InferenceSession(
+                    _MINIFASNET_MODEL_PATH, sess_options=ai_session_options(), providers=["CPUExecutionProvider"]
+                )
             except Exception:
                 logger.warning(
                     "MiniFASNet ONNX model failed to load from %s - passive liveness will fall back to "

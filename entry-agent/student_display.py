@@ -38,7 +38,7 @@ HEADER_H, RULE_H, BAR_H = 96, 3, 132
 VIDEO_TOP, VIDEO_BOTTOM = HEADER_H + RULE_H, DESIGN_H - BAR_H
 PAD = 42
 
-REFRESH_MS = 66  # ~15 fps - a second full-screen redraw beside the monitor's own
+REFRESH_MS = 100  # ~10 fps - a second full-screen redraw beside the monitor's own
 # Same rule as the gate monitor's feed: fill the area edge to edge unless
 # that would trim more than this much of the picture.
 MAX_FEED_CROP = 0.35

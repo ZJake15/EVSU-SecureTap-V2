@@ -714,9 +714,9 @@ that actually tells the two people apart, so the system reaches a *person* inste
   already matches an enrolled person is never flagged as covered
   (`_already_recognizable`, §2.1 step 5) — this is what keeps the classifier's
   false alarms away from enrolled people.
-- **Reloading:** the backend's dev server restarts itself when `backend/.env` or
-  the model file changes, so switching modes or retraining takes effect within a
-  few seconds, without restarting anything by hand.
+- **Reloading:** switching modes on the Settings page takes effect within a few
+  seconds. The model file is loaded once, so after retraining, restart the
+  backend (the launcher runs it without the auto-restart helper, §14).
 
 ---
 
@@ -1650,3 +1650,59 @@ query for that role — never a client-supplied gate parameter, which a modified
 request could otherwise use to see a different gate's activity. An unconfigured
 Security Officer account (no gate assigned) sees **nothing**, not every gate —
 failing closed on missing configuration rather than open.
+
+## 14. Running on a low-power laptop
+
+The system is presented on an **Intel N100** laptop (4 cores, 8 GB RAM, Intel
+UHD graphics). On a chip like that, the face AI, the gate monitor's video, the
+backend, the dashboard in the browser and Windows all compete for the same 4 cores, so the
+system was tuned to waste as little CPU as possible. **None of this changes
+who gets recognized**: re-computing stored enrollment photos with the tuned
+code gives fingerprints identical to the stored ones (similarity 1.000), and
+match strictness, voting and every safety check are unchanged.
+
+**What changed (always on):**
+- **The face AI is limited to part of the CPU** (`AI_THREADS`, automatic by
+  default — 2 of the N100's 4 cores). Left alone it starts a worker per
+  processor on every camera frame and the rest of the system stutters.
+  Measured on the development PC limited to 4 cores: **277 ms → 18 ms per
+  frame**.
+- **One copy of the face AI instead of two.** Enrollment and the gate scan
+  share the same loaded models and only ask the face finder to search at a
+  different size (640 for posed enrollment photos, `GATE_SCAN_DET_SIZE` at the
+  gate). Model memory ~120 MB → ~90 MB, and faster start-up.
+- **Cheaper gate-monitor video.** A faster resize, the rounded-corner mask
+  built once instead of every frame, and ~15 frames a second instead of ~24
+  (the Student Display ~10). Measured: **381 → 129 ms of CPU per second** of
+  video.
+- **Smaller frames sent to the backend** — JPEG quality 85 instead of 95.
+- **The backend runs without the auto-restart helper** (`runserver
+  --noreload`), which otherwise re-checks every code file each second. After
+  editing backend code, restart it.
+- **The dashboard is a ready-made build served by the backend** (§9.1): plain
+  files, no live recompiling and no Node.js process, and SQLite needs no
+  database server — two fewer programs running on the laptop.
+
+**Two optional switches for the presentation laptop** (they trade some range
+for speed, so a real gate keeps the defaults):
+- `GATE_SCAN_DET_SIZE=384` in `backend/.env` — about a third less detection
+  work; faces need to be within roughly 2-3 m of the camera.
+- `UPLOAD_MAX_DIMENSION=640` in `entry-agent/.env` — smaller frames to send
+  and decode; fine when people stand close to the camera.
+
+**Measuring it on the real laptop.** `python manage.py benchmark_scan` (in
+`backend/`) runs the gate's per-frame face scan on an enrolled photo and
+reports the time per frame and memory. Try `--det-size 384` to compare.
+Anything under ~150 ms per frame keeps up comfortably with someone walking to
+the camera.
+
+**Presentation-day checklist:**
+1. Laptop plugged in; Windows power mode set to **Best performance**.
+2. Close other apps and browser tabs; pause Windows Update.
+3. If the dashboard's code changed since its last build, click **Dashboard**
+   once on a PC with Node.js so the launcher rebuilds it (or run `npm run build`
+   in `dashboard/`).
+4. Start the system with `SecureTap.bat` a few minutes before the panel
+   arrives, open the dashboard and the gate monitor once, and let a face be
+   recognized — the first scan loads the AI models, so get that out of the way.
+5. Optional: run `python manage.py benchmark_scan` to confirm the laptop's speed.

@@ -59,7 +59,9 @@ VIDEO_BG = INK
 
 FOCUS_CHECK_MS = 300
 RESET_DELAY_MS = 8000
-VIDEO_REFRESH_MS = 42  # ~24 fps
+# ~15 fps - smooth enough for a live view, and on a low-power laptop (the
+# Intel N100 the system is presented on) it leaves CPU for the face AI.
+VIDEO_REFRESH_MS = 66
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 ICON_PATH = os.path.join(ASSETS_DIR, "icon.png")
@@ -1799,7 +1801,9 @@ class GateMonitorWindow:
             scale = cover if crop <= self.MAX_FEED_CROP else min(feed_w / src_w, feed_h / src_h)
             img_w, img_h = max(1, round(src_w * scale)), max(1, round(src_h * scale))
             origin_x, origin_y = (feed_w - img_w) // 2, strip_h + (feed_h - img_h) // 2
-            resized = frame_image.resize((img_w, img_h), Image.LANCZOS)
+            # Bilinear, not Lanczos: on a moving video frame the difference
+            # isn't visible, and it's several times cheaper every frame.
+            resized = frame_image.resize((img_w, img_h), Image.BILINEAR)
             # Paste only the part inside the feed area, so a cropped frame
             # can't spill up into the strip.
             visible = resized.crop((
@@ -1808,8 +1812,19 @@ class GateMonitorWindow:
             ))
             panel.paste(visible, (max(0, origin_x), max(strip_h, origin_y)))
             placement = (origin_x, origin_y, img_w, img_h)
-        panel = _round_corners(panel, self._px(self.VIDEO_PANEL_CORNER_RADIUS))
+        panel.putalpha(self._corner_mask(panel.size, self._px(self.VIDEO_PANEL_CORNER_RADIUS)))
         return panel, rect, placement
+
+    def _corner_mask(self, size, radius):
+        """The rounded-corner mask for the video panel - built once per panel
+        size and reused every frame (it used to be redrawn from scratch about
+        24 times a second)."""
+        key = (size, radius)
+        if getattr(self, "_corner_mask_key", None) != key:
+            mask = Image.new("L", size, 0)
+            ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, fill=255)
+            self._corner_mask_key, self._corner_mask_image = key, mask
+        return self._corner_mask_image
 
     def _show_panel(self, panel, rect):
         # Kept as self._video_image (not a local) - Tk drops a PhotoImage

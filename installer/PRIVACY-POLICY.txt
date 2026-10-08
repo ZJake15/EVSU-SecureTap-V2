@@ -1,0 +1,122 @@
+EVSU SECURETAP - PRIVACY POLICY
+Campus entry monitoring system, Eastern Visayas State University
+
+Please read this before installing. By installing and using EVSU SecureTap,
+you agree to handle the personal information it collects as described here,
+in line with the Data Privacy Act of 2012 (Republic Act No. 10173).
+
+
+1. WHAT THIS SYSTEM DOES
+
+EVSU SecureTap checks who enters and leaves a campus gate. A camera at the
+gate looks at the faces of people passing and compares them with the photos
+of registered students and staff. A school ID card can also be tapped on a
+card reader. Each entry or exit is recorded.
+
+The camera checks EVERY face it sees at the gate - not only people who tap a
+card. A clear notice must be posted at the gate so everyone knows that face
+recognition is in use.
+
+
+2. WHAT INFORMATION IT COLLECTS
+
+About registered students and staff:
+  - Name, student or employee ID number, role, and department or course
+  - School ID card number
+  - Face photos taken during registration
+  - A "face fingerprint": a list of numbers calculated from each photo, used
+    to recognize the face. The photo cannot be rebuilt from it.
+
+At the gate:
+  - Each entry and exit: who, when, which gate, and how they were checked
+    (face, card, or a guard's manual entry)
+  - A photo of a face that was NOT recognized, or that looked like a printed
+    photo or a phone screen, so a guard can see who was turned away
+
+About staff who use the dashboard (Admin, SASO, Security Officers):
+  - Username, name, role and assigned gate
+  - Password - stored only in scrambled (hashed) form; nobody can read it
+  - Staff ID card number, if one is added for signing in at the gate
+  - A record of important actions (the Audit Log), such as account changes,
+    setting changes, manual entries and gate sign-ins
+
+
+3. WHY IT IS COLLECTED
+
+Only to keep the campus secure: to know who entered and left, to stop people
+using someone else's ID or photo, and to help guards and the Office of
+Student Affairs respond to incidents. The information is not used for
+grades, advertising, or any other purpose, and it is not sold or shared.
+
+
+4. WHERE IT IS KEPT
+
+Everything stays on THIS COMPUTER only, in the folder
+%LOCALAPPDATA%\EVSU SecureTap. Nothing is sent to the internet or to any
+online service. (When the computer is online, the dashboard downloads its
+text fonts from Google Fonts; no personal information is sent with that.)
+
+Keep this computer protected: use a Windows password, do not share the
+Windows account, and turn on BitLocker drive encryption if available.
+
+
+5. WHO CAN SEE IT
+
+Only signed-in dashboard users, each limited by their role:
+  - Admin: everything, including accounts, settings and the Audit Log
+  - SASO (Security Manager): students and staff, records and reports
+  - Security Officer (guard): today's records for their own gate only
+Photos can only be opened through the dashboard by a signed-in user.
+
+
+6. HOW LONG IT IS KEPT
+
+The Admin decides how long entry records, gate photos and the Audit Log are
+kept, on the dashboard's Settings page (Privacy & Data Retention). Once
+"Automatic deletion" is switched on, older records and gate photos are
+deleted every day. It is off until the Admin switches it on.
+
+A registered person's photos and face data are kept while they are
+registered. Permanently deleting a person removes their record and face
+data from the system; their registration photo files must then also be
+removed by the Admin from the photos folder.
+
+
+7. YOUR RIGHTS
+
+Under the Data Privacy Act, students and staff have the right to:
+  - be told how their information is used (this policy)
+  - see the information kept about them
+  - have wrong information corrected
+  - ask for their information to be removed, or object to its use
+  - file a complaint with the National Privacy Commission
+To use these rights, contact the EVSU Data Protection Officer through the
+university's official channels.
+
+
+8. CONSENT
+
+Students and staff must give their written consent before their face is
+registered. The university decides how people who do not consent are let
+in - for example, by a guard checking their ID by hand.
+
+
+9. KEEPING IT SAFE
+
+  - Passwords are stored scrambled (bcrypt) and must be at least 10
+    characters
+  - Each role sees only what it needs; important actions are recorded
+  - Optional on the Settings page: lock an account after repeated wrong
+    passwords, and log users out automatically when inactive
+  - Photos can only be opened with a short-lived signed link
+
+
+10. IMPORTANT NOTE
+
+EVSU SecureTap is a capstone project. Before it is used at a real campus
+gate, the university's Data Protection Officer should review this policy and
+the system, and approve the consent form, the gate notice and the retention
+periods.
+
+A copy of this policy is installed with the app (Start menu: "EVSU SecureTap
+Privacy Policy").

@@ -33,11 +33,21 @@ SetupIconFile=..\entry-agent\assets\icon.ico
 UninstallDisplayIcon={app}\entry-agent\assets\icon.ico
 UninstallDisplayName={#AppName}
 WizardStyle=modern
+; The privacy policy is the installer's first page and has to be accepted
+; before anything is installed (wording below, under [Messages]).
+LicenseFile=PRIVACY-POLICY.txt
 Compression=lzma2
 SolidCompression=yes
 ; Python and its libraries are many small files - this keeps the progress bar
 ; honest instead of sitting still on the big ones.
 LZMANumBlockThreads=4
+
+[Messages]
+WizardLicense=Privacy Policy
+LicenseLabel=Please read how EVSU SecureTap handles personal information.
+LicenseLabel3=EVSU SecureTap collects face photos, ID numbers and entry records. Please read this privacy policy - you need to accept it before installing.
+LicenseAccepted=I have read and &accept the privacy policy
+LicenseNotAccepted=I &do not accept
 
 [Tasks]
 Name: "desktopicon"; Description: "Put an EVSU SecureTap icon on the desktop"
@@ -53,6 +63,7 @@ Type: filesandordirs; Name: "{app}\face-models"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "PRIVACY-POLICY.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; pythonw.exe: no black console window behind the launcher.
@@ -60,6 +71,8 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\python\pythonw.exe"; Paramet
   WorkingDir: "{app}"; IconFilename: "{app}\entry-agent\assets\icon.ico"; Comment: "Open EVSU SecureTap"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\launcher.py"""; \
   WorkingDir: "{app}"; IconFilename: "{app}\entry-agent\assets\icon.ico"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName} Privacy Policy"; Filename: "{app}\PRIVACY-POLICY.txt"; \
+  Comment: "How EVSU SecureTap handles personal information"
 
 [Run]
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\launcher.py"""; WorkingDir: "{app}"; \

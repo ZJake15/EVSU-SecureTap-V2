@@ -12,8 +12,11 @@ Get `EVSU-SecureTap-Setup.exe` from your team (for example, on a USB stick) and 
 
 1. **Double-click** `EVSU-SecureTap-Setup.exe`.
 2. If a blue box says **"Windows protected your PC"**, click **More info**, then **Run anyway**. This is normal.
-3. Click **Next** and then **Install**.
-4. Leave **"Open EVSU SecureTap now"** checked and click **Finish**.
+3. Read the **Privacy Policy** (how the app handles face photos and records), choose **I have read and accept the privacy policy**, and click **Next**.
+4. Click **Next** and then **Install**.
+5. Leave **"Open EVSU SecureTap now"** checked and click **Finish**.
+
+You can read the privacy policy again any time: Start menu → **EVSU SecureTap Privacy Policy**.
 
 ## Step 3 — First-time setup
 

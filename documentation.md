@@ -1843,4 +1843,21 @@ Admin, the backend starting, the dashboard served, an Admin login, the
 Settings API, the face-AI speed test (offline, from the bundled models), the
 gate monitor's and launcher's code loading, nothing written into the program
 folder, and the desktop shortcut. All 14 passed; the speed test there picked
-Light (the Sandbox has 4 GB of memory) at 21.6 ms per face check.
+Light (the Sandbox has 4 GB of memory) at 21.6 ms per face check. With
+`--try` it instead opens a Sandbox to click through by hand: the installer on
+its desktop, the host's webcam shared (`VideoInput`), 8 GB of memory like the
+presentation laptop, no internet. The NFC reader can't be tested there — the
+Sandbox doesn't pass USB devices through.
+
+**Deploying to the presentation laptop.** That laptop already holds an older
+copy (MySQL) with the students enrolled, so the installed app takes its data
+rather than starting over: with the old copy closed (both use port 8000) and
+its MySQL service running, install the Setup.exe and choose **Bring the data
+from an older copy** in the setup window (§9.1 — `import_securetap` reads the
+old copy's own `backend/.env` for the MySQL login, never changes it, and checks
+row counts and face fingerprints afterwards). The Admin step is skipped
+because the accounts come along; the speed test should pick Light. The old copy
+stays as the backup; once the new one is verified, MySQL is no longer needed
+(it can be set to Manual to free memory). A later code change ships as a new
+Setup.exe installed over this one — the data folder is untouched. The step-by-
+step checklist is in README.md, "Putting it on the demo laptop".

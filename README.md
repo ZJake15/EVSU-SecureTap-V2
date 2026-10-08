@@ -177,6 +177,21 @@ It produces `installer\output\EVSU-SecureTap-Setup.exe` (about 170 MB). Inside: 
 
 **Tested on a brand-new Windows:** `.venv\Scripts\python.exe installer\sandbox_test.py` installs it in Windows Sandbox with the internet switched off and checks 14 things - the files, database and first Admin, the backend serving the dashboard and a login, the face-AI speed test, the gate monitor and launcher code, nothing written into the program folder, the desktop icon. All 14 pass. (Windows Sandbox needs turning on once: "Turn Windows features on or off" → Windows Sandbox, restart. If it then still won't start, the boot setting `hypervisorlaunchtype` is off - `bcdedit /set {current} hypervisorlaunchtype auto` in an admin terminal, restart; Android emulators/VirtualBox may run slower with it on.)
 
+**Try it yourself in the Sandbox:** `.venv\Scripts\python.exe installer\sandbox_test.py --try` (close any open Sandbox first - only one runs at a time). It opens a fresh Sandbox with a **SecureTap installer** folder on its desktop, your webcam shared, 8 GB of memory like the presentation laptop and no internet. Run `EVSU-SecureTap-Setup.exe` there (More info → Run anyway), go through the setup window with **Start empty** (there's no older copy inside the Sandbox), then enroll yourself on the dashboard and open the gate monitor. Limits: the NFC card reader doesn't work there (USB devices aren't passed in), it's a bit slower than a real computer, Windows may ask to let Windows Sandbox use the camera - and closing the Sandbox deletes everything in it.
+
+### Putting it on the demo laptop
+
+The laptop already has an older SecureTap copy with the students enrolled (on MySQL); the installed app brings that data over and the old copy stays untouched as a backup. Do it a few days before the defense, logged into the **Windows account you'll use on the day** (the app installs per user).
+
+1. **Fresh installer:** if any code changed since the last build, run `installer\build.py --quick` first. Copy `installer\output\EVSU-SecureTap-Setup.exe` to the laptop (USB is fine).
+2. **Close the old SecureTap completely** (launcher, gate monitor, any backend window) - both use port 8000.
+3. **MySQL running:** Services → **MySQL80** says Running (the old copy's students are in it; its password is read from the old copy's own `backend\.env`).
+4. **Install:** double-click the Setup.exe (More info → Run anyway), keep "Open EVSU SecureTap now" ticked.
+5. **Setup window:** **Bring the data from an older copy** - it usually finds the old folder by itself, otherwise **Choose folder…**. People, faces, records, accounts (same usernames and passwords), settings, photos, the covered-face model and the gate's name, camera and card-reader settings come along, and it checks every table and that faces still match their photos. The Admin step is skipped (the accounts came along); the camera and card reader should be found; the speed test should pick **Light** on the N100.
+6. **Check it:** Dashboard → log in, the people and logs are there; Entry Agent → an enrolled student is recognized, a card tap works; close and reopen from the desktop icon.
+
+Afterwards use only the new desktop icon - don't run the old `SecureTap.bat` at the same time. MySQL isn't needed any more: optionally set **MySQL80** to Manual and stop it to free memory on the 8 GB laptop (keep its data as the backup). After a later code change, build a new Setup.exe and install it over this one - the data stays. If the import stops with an error, the setup window says why (for example MySQL not running); nothing has been changed, so fix it and try again.
+
 ## First-time setup
 
 The first time `SecureTap.bat` opens on a computer, a setup window comes first (and again from the launcher's **Speed mode → Run setup again**). Each step that's already done is just confirmed:

@@ -1,6 +1,7 @@
 """
 Django settings for the EVSU SecureTap backend.
 """
+import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -8,8 +9,16 @@ import environ
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Where this copy keeps everything it writes - its .env, the database,
+# photos, the covered-face model. An installed copy can't write inside its own
+# program folder, so the launcher points SECURETAP_DATA_DIR at a data folder
+# (see device_setup.py at the repo root); unset - running from the code
+# folder - it's all inside backend/ as it always was.
+DATA_DIR = Path(os.environ["SECURETAP_DATA_DIR"]) if os.environ.get("SECURETAP_DATA_DIR") else None
+ENV_FILE = DATA_DIR / "backend.env" if DATA_DIR else BASE_DIR / ".env"
+
 env = environ.Env(DEBUG=(bool, False))
-environ.Env.read_env(BASE_DIR / ".env")
+environ.Env.read_env(ENV_FILE)
 
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 DEBUG = env("DEBUG")
@@ -88,11 +97,11 @@ MYSQL_DATABASE = {
     "OPTIONS": {"charset": "utf8mb4"},
 }
 
-# The SQLite database file. In the default backend/ folder for a normal
-# checkout; an installed copy of the app points it somewhere writable.
+# The SQLite database file - in the data folder (DATA_DIR, above), or
+# backend/ when running from the code folder. DB_PATH overrides both.
 SQLITE_DATABASE = {
     "ENGINE": "django.db.backends.sqlite3",
-    "NAME": env("DB_PATH", default=str(BASE_DIR / "db.sqlite3")),
+    "NAME": env("DB_PATH", default=str((DATA_DIR or BASE_DIR) / "db.sqlite3")),
     "OPTIONS": {
         # The gate camera writes several times a second while the dashboard
         # reads. WAL mode lets reads and a write happen at the same time;
@@ -140,7 +149,7 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = (DATA_DIR or BASE_DIR) / "media"
 
 # The dashboard's ready-made build (`npm run build` in dashboard/). The
 # backend serves it at http://localhost:8000/ - its files (scripts, styles,
@@ -387,8 +396,12 @@ FACE_MIN_DET_SCORE_UNOCCLUDED = env.float("FACE_MIN_DET_SCORE_UNOCCLUDED", defau
 # as covered - see IdentifyView._already_recognizable.
 OCCLUSION_DETECTION_MODE = env("OCCLUSION_DETECTION_MODE", default="rules").strip().lower()
 OCCLUSION_CLASSIFIER_PATH = env(
-    "OCCLUSION_CLASSIFIER_PATH", default=str(BASE_DIR / "users" / "occlusion_classifier.joblib")
+    "OCCLUSION_CLASSIFIER_PATH",
+    default=str(DATA_DIR / "occlusion_classifier.joblib" if DATA_DIR
+                else BASE_DIR / "users" / "occlusion_classifier.joblib"),
 )
+# Labeled photos for training it (collect_occlusion_training_data).
+OCCLUSION_TRAINING_DIR = (DATA_DIR or BASE_DIR) / "occlusion_training_data"
 # The classifier's own "probably covered" cutoff, on its 0-1 probability.
 # 0.5 is exactly what the training command's evaluation measured (sklearn's
 # plain predict()). Raise it if live testing shows too many false "please

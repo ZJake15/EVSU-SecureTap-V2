@@ -9,7 +9,7 @@ import requests
 
 from api_client import ApiClient
 from camera import Camera, list_available_cameras
-from config import load_config
+from config import data_file, load_config
 from offline_queue import OfflineQueue
 from ui import GateMonitorWindow, set_app_user_model_id
 
@@ -22,12 +22,9 @@ from ui import GateMonitorWindow, set_app_user_model_id
 STATUS_CHECK_INTERVAL_SECONDS = 5
 
 # Read by the root launcher (launcher.py's _read_last_session_summary) to show
-# a "last session" line before the entry-agent is even started again -
-# __file__-relative so it lands in the same place regardless of whether this
-# is run directly (cwd=entry-agent) or spawned by the launcher (cwd is set
-# explicitly to entry-agent there too, but this is one less thing to keep
-# in sync between the two).
-LAST_SESSION_PATH = Path(__file__).resolve().parent / "last_session.json"
+# a "last session" line before the entry-agent is even started again - in
+# the data folder (config.data_file), whatever the working directory.
+LAST_SESSION_PATH = Path(data_file("last_session.json"))
 
 
 def _write_last_session_summary(config, monitor):

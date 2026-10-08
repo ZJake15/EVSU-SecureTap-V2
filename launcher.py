@@ -220,7 +220,7 @@ def service_responds(url, timeout=1.0):
 # .env-file defaults, so this needs zero entry-agent code changes: an
 # environment variable already wins over python-dotenv's load_dotenv() when
 # both are set, because load_dotenv() doesn't override existing values.
-SETTINGS_PATH = ROOT / "launcher_settings.json"
+SETTINGS_PATH = device_setup.LAUNCHER_SETTINGS_PATH
 DEFAULT_GATE_LOCATION = "Main Gate"
 DEFAULT_DIRECTION = "entry"
 
@@ -229,13 +229,13 @@ DEFAULT_DIRECTION = "entry"
 # timestamp) - see entry-agent/main.py's _write_last_session_summary. Read
 # back here so the launcher can show "last session" before the entry-agent
 # is even opened again.
-LAST_SESSION_PATH = ENTRY_AGENT_DIR / "last_session.json"
+LAST_SESSION_PATH = device_setup.LAST_SESSION_PATH
 
 # The NFC reader's own sqlite-backed retry queue (entry-agent/offline_queue.py)
 # - read directly with a plain sqlite3 connection rather than importing
 # OfflineQueue itself, since that class also wants a live ApiClient just to
 # construct, which isn't needed for a read-only pending-count peek.
-OFFLINE_QUEUE_DB_PATH = ENTRY_AGENT_DIR / "offline_queue.db"
+OFFLINE_QUEUE_DB_PATH = device_setup.OFFLINE_QUEUE_PATH
 
 # USB vendor:product IDs of the NFC card readers the pre-flight check looks
 # for. The gate's reader identifies to Windows as a generic HID keyboard
@@ -273,7 +273,7 @@ def _read_app_version():
     configured (see entry-agent/config.py) - read here too so the launcher
     and the gate monitor always show the same version rather than the
     launcher guessing at its own separate constant."""
-    env_path = ENTRY_AGENT_DIR / ".env"
+    env_path = device_setup.ENTRY_AGENT_ENV
     if not env_path.exists():
         return "v1.0"
     try:
@@ -333,7 +333,7 @@ def _nfc_reader_usb_ids():
     at least one well-formed pair), otherwise DEFAULT_NFC_READER_USB_IDS.
     Malformed entries are skipped rather than failing the check."""
     configured = None
-    env_path = ENTRY_AGENT_DIR / ".env"
+    env_path = device_setup.ENTRY_AGENT_ENV
     if env_path.exists():
         try:
             configured = dotenv_values(env_path).get("NFC_READER_USB_IDS")

@@ -24,7 +24,7 @@ from users.occlusion_utils import FEATURE_COLUMNS
 MIN_TOTAL_SAMPLES = 20
 MIN_PER_CLASS = 8
 
-DEFAULT_MANIFEST = os.path.join(settings.BASE_DIR, "occlusion_training_data", "manifest.csv")
+DEFAULT_MANIFEST = os.path.join(settings.OCCLUSION_TRAINING_DIR, "manifest.csv")
 # Same file the live gate scan loads in classifier mode, so retraining with no
 # --output flag updates exactly what the backend will use after a restart.
 DEFAULT_MODEL_OUTPUT = settings.OCCLUSION_CLASSIFIER_PATH

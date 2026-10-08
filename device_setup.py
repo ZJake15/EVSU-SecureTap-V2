@@ -27,12 +27,50 @@ from dotenv import dotenv_values
 ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = ROOT / "backend"
 ENTRY_AGENT_DIR = ROOT / "entry-agent"
-BACKEND_ENV = BACKEND_DIR / ".env"
-ENTRY_AGENT_ENV = ENTRY_AGENT_DIR / ".env"
-PROFILE_PATH = ROOT / "device_profile.json"
+
+# ---- the data folder ---------------------------------------------------------
+#
+# An installed copy lives in a program folder it shouldn't write to, and
+# reinstalling or updating it must never touch the students' data - so
+# everything the system writes goes to one data folder instead: the two .env
+# files (as backend.env and entry-agent.env), the database, photos, the
+# covered-face model, the card-tap queue and the launcher's own files. The
+# installer marks an installed copy with INSTALLED_MARKER; SECURETAP_DATA_DIR
+# overrides the location. Running from the code folder (no marker), every file
+# stays where it always was.
+INSTALLED_MARKER = ROOT / "securetap-installed.txt"
+
+
+def _data_dir():
+    if os.environ.get("SECURETAP_DATA_DIR"):
+        return Path(os.environ["SECURETAP_DATA_DIR"])
+    if INSTALLED_MARKER.exists():
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "EVSU SecureTap"
+    return None
+
+
+DATA_DIR = _data_dir()
+if DATA_DIR is not None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Inherited by every program the launcher starts - the backend
+    # (settings.py) and the gate monitor (entry-agent/config.py) read it.
+    os.environ["SECURETAP_DATA_DIR"] = str(DATA_DIR)
+
+
+def _data_file(installed_name, source_path):
+    return DATA_DIR / installed_name if DATA_DIR else source_path
+
+
+BACKEND_ENV = _data_file("backend.env", BACKEND_DIR / ".env")
+ENTRY_AGENT_ENV = _data_file("entry-agent.env", ENTRY_AGENT_DIR / ".env")
+PROFILE_PATH = _data_file("device_profile.json", ROOT / "device_profile.json")
 # The launcher's remembered gate/direction/guard name (launcher.py's
 # SETTINGS_PATH) - an imported copy's choices are merged into it.
-LAUNCHER_SETTINGS_PATH = ROOT / "launcher_settings.json"
+LAUNCHER_SETTINGS_PATH = _data_file("launcher_settings.json", ROOT / "launcher_settings.json")
+# Written by the gate monitor (entry-agent/main.py, offline_queue.py), read
+# by the launcher.
+LAST_SESSION_PATH = _data_file("last_session.json", ENTRY_AGENT_DIR / "last_session.json")
+OFFLINE_QUEUE_PATH = _data_file("offline_queue.db", ENTRY_AGENT_DIR / "offline_queue.db")
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -238,11 +276,11 @@ def create_env_files():
             "DJANGO_SECRET_KEY": secrets.token_urlsafe(50),
             "ENTRY_AGENT_SERVICE_TOKEN": secrets.token_urlsafe(32),
         })
-        created.append("backend/.env")
+        created.append(str(BACKEND_ENV))
     if not ENTRY_AGENT_ENV.exists():
         ENTRY_AGENT_ENV.write_text((ENTRY_AGENT_DIR / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
         set_env_values(ENTRY_AGENT_ENV, {"SERVICE_TOKEN": _read_env(BACKEND_ENV).get("ENTRY_AGENT_SERVICE_TOKEN", "")})
-        created.append("entry-agent/.env")
+        created.append(str(ENTRY_AGENT_ENV))
     return created
 
 

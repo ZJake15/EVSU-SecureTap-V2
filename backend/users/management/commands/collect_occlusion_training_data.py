@@ -100,8 +100,9 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--output-dir",
-            default=os.path.join(settings.BASE_DIR, "occlusion_training_data"),
-            help="Where to save labeled images + manifest.csv (default: backend/occlusion_training_data/)",
+            default=str(settings.OCCLUSION_TRAINING_DIR),
+            help="Where to save labeled images + manifest.csv (default: occlusion_training_data/ in the data "
+                 "folder - backend/ when running from the code folder)",
         )
         parser.add_argument("--camera-index", type=int, default=0)
         parser.add_argument(

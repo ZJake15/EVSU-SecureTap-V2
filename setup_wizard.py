@@ -518,13 +518,20 @@ class SetupWizard:
         label, log = self._progress("Creating the database...")
 
         def done(code, lines):
-            self._set_busy(False)
             label.bar.stop()
             if code != 0:
+                self._set_busy(False)
                 label.configure(text="Couldn't create the database: " + self._error_from("\n".join(lines)),
                                 text_color=DANGER)
                 return
-            self._background(self._refresh_status, lambda _r, _e: self._show_admin())
+
+            def show(_result, _error):
+                # Busy until the next page is up, so nothing can be clicked
+                # in between.
+                self._set_busy(False)
+                self._show_admin()
+
+            self._background(self._refresh_status, show)
 
         self._stream(["migrate"], log, done)
 

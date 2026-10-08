@@ -12,7 +12,7 @@ def _watch_config_files(sender, **kwargs):
     OCCLUSION_DETECTION_MODE (or retraining the model) silently did nothing
     until someone remembered to restart the backend by hand, and the launcher,
     which reuses a backend that's already running, never would."""
-    for path in (Path(settings.BASE_DIR) / ".env", Path(settings.OCCLUSION_CLASSIFIER_PATH)):
+    for path in (Path(settings.ENV_FILE), Path(settings.OCCLUSION_CLASSIFIER_PATH)):
         sender.extra_files.add(path)
 
 

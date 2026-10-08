@@ -257,7 +257,7 @@ This system processes **biometric data** (face embeddings, reference photos) on 
 - Provide a documented way to request correction or deletion.
 - Confirm this broader always-on scanning scope (versus a consent-gated tap-triggered check) is something the institution's data protection officer/process has actually signed off on.
 
-The system stores face **embeddings** (512-dimensional ArcFace vectors), not raw images, in the database specifically to reduce biometric exposure. Reference/enrollment photos are kept separately (`backend/media/`) only for dashboard/guard display and re-computing embeddings if the model ever changes, and should be access-controlled in any real deployment.
+The system stores face **embeddings** (512-dimensional ArcFace vectors), not raw images, in the database specifically to reduce biometric exposure. Reference/enrollment photos are kept separately (`backend/media/`) only for dashboard/guard display and re-computing embeddings if the model ever changes, and should be access-controlled in any real deployment. Photo files are deleted together with their records (permanently deleting a person deletes all their photos; replacing a photo deletes the old one), and the daily clean-up always removes photos no record uses and the face data of unrecognized people after 1 day - even with Automatic deletion off. The full privacy policy shown by the installer is `installer/PRIVACY-POLICY.txt`.
 
 ## Architecture notes
 

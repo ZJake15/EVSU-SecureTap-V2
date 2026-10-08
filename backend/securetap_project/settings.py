@@ -22,6 +22,11 @@ environ.Env.read_env(ENV_FILE)
 
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 DEBUG = env("DEBUG")
+# Never on an installed copy: Django's debug error pages show the request
+# that failed - form fields, names, ID numbers - and the system's internals.
+# Developers running from the code folder keep whatever backend/.env says.
+if DATA_DIR is not None:
+    DEBUG = False
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
 INSTALLED_APPS = [
@@ -157,6 +162,10 @@ MEDIA_ROOT = (DATA_DIR or BASE_DIR) / "media"
 # securetap_project.spa_views - so using the system needs no Node.js.
 DASHBOARD_DIST = Path(env("DASHBOARD_DIST", default=str(BASE_DIR.parent / "dashboard" / "dist")))
 WHITENOISE_ROOT = DASHBOARD_DIST
+# Also serve Django's own static files (the /admin pages' styles) straight
+# from the installed apps - with DEBUG off, runserver no longer does that,
+# and there's no collectstatic step on an installed copy.
+WHITENOISE_USE_FINDERS = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

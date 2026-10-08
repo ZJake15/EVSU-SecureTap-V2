@@ -28,3 +28,9 @@ class UsersConfig(AppConfig):
 
         pillow_heif.register_heif_opener()
         autoreload_started.connect(_watch_config_files)
+
+        # Photo files are deleted with (or replaced along with) the records
+        # that point at them - see users/photo_files.py.
+        from . import photo_files
+
+        photo_files.connect()

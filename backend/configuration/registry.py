@@ -188,10 +188,11 @@ DEFINITIONS = [
     # ---- 7. Privacy & Data Retention -----------------------------------------
     SettingDef(
         "auto_delete_enabled", "privacy", "Automatic deletion",
-        "Deletes old records once a day, using the periods below. Registered students' own photos and "
-        "face data are never deleted.",
+        "Deletes old entry records, gate photos and audit log entries once a day, using the periods below. "
+        "Registered students' own photos and face data are never deleted.",
         BOOL, False,
-        note="Off by default, so nothing is deleted until you turn it on.",
+        note="Off by default, so no records are deleted until you turn it on. Unknown face data (below) and "
+             "photo files left without a record are always deleted.",
     ),
     SettingDef(
         "keep_entry_records_days", "privacy", "How long to keep entry records",
@@ -199,10 +200,12 @@ DEFINITIONS = [
         INT, 365, 7, 3650, 1, unit="days", depends_on="auto_delete_enabled",
     ),
     SettingDef(
-        "keep_unknown_face_days", "privacy", "How long to keep unknown face data",
-        "How long to store face data from people who aren't registered.",
-        INT, 30, 1, 3650, 1, unit="days", depends_on="auto_delete_enabled",
-        note="These are people who never agreed to have their face stored. A short period is safer.",
+        "keep_unknown_face_days", "privacy", "How long unknown face data is kept",
+        "Face data from people who aren't registered is deleted after 1 day, even with Automatic deletion "
+        "off - nothing needs it longer.",
+        FIXED, 1, unit="day",
+        note="These are people who never agreed to have their face stored. Their gate photo follows the "
+             "gate photo period below.",
     ),
     SettingDef(
         "keep_gate_photos_days", "privacy", "How long to keep gate photos",

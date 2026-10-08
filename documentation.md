@@ -1614,6 +1614,35 @@ knowing before extending the system:
   account change, deactivation request/resolution, manual override, and
   confusable-pair flag/removal is permanently attributed to a specific account
   in `AuditLogEntry` (§6), not just implied by who was logged in at the time.
+- **Personal data doesn't outlive its purpose** (the privacy gaps closed while
+  writing the installer's privacy policy, `installer/PRIVACY-POLICY.txt`):
+  - **Photo files follow their records** (`users/photo_files.py`). Django
+    deletes a row but not the file it points at, so permanently deleting a
+    person, replacing a photo or deleting a gate record used to leave face
+    photos on disk that nothing could show or delete. Now a record's photo
+    files go with it, and a replaced photo's old file is deleted — only after
+    the database change is saved (a rolled-back delete keeps its files), only
+    once no record refers to the file, and never while loading data. Past
+    entry records of a deleted person stay, with no name.
+  - **The daily clean-up always** removes photo files that no record uses
+    (left behind before the above), and clears the face fingerprints of
+    unrecognized people after 1 day, plus the scan's working tables — even
+    with Automatic deletion off. Those people never agreed to have their face
+    stored, and nothing needs the data longer: the longest use is the
+    repeated-unknown alert window (at most 4 hours). "How long unknown face
+    data is kept" is therefore a fixed, read-only line on the Settings page.
+    Entry records, gate photos and the audit log still follow the Automatic
+    deletion switch — that's the Admin's call.
+  - **No debug pages on an installed copy**: `DEBUG` is forced off whenever a
+    data folder is in use, since Django's debug error page shows the failed
+    request (form fields, names, ID numbers) and the system's internals.
+    WhiteNoise serves the admin pages' styles instead
+    (`WHITENOISE_USE_FINDERS`).
+  - Tested on a copy of real data: 12 checks (rolled-back delete keeps files;
+    replaced photo's old file deleted; permanent delete removes exactly that
+    person's 6 files; gate record's photo deleted; clean-up removed only the 6
+    leftover files and 251 stale fingerprints, kept every record), and the
+    dashboard, admin and a 404 with debug off.
 
 ---
 

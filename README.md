@@ -172,6 +172,10 @@ The first time `SecureTap.bat` opens on a computer, a setup window comes first (
 
 Command-line equivalents: `python manage.py import_securetap "C:\path\to\old\copy"` (add `--replace` if this copy already has data - it's kept as `db.sqlite3.bak`), `python manage.py create_first_admin --username <name>`, `python manage.py benchmark_scan --sample`.
 
+### Where the data is kept
+
+Running from this code folder (as in the steps above), everything stays where it always was: `backend\.env`, `backend\db.sqlite3`, `backend\media\`, `entry-agent\.env` and so on. An **installed** copy (from the installer, which marks it with `securetap-installed.txt`) never writes into its program folder - everything goes to one data folder, `%LOCALAPPDATA%\EVSU SecureTap\` (`backend.env`, `entry-agent.env`, `db.sqlite3`, `media\`, the covered-face model, the card-tap queue, the speed mode and the launcher's settings), so reinstalling or updating never touches the students' data. `SECURETAP_DATA_DIR` points it somewhere else.
+
 ### Speed modes
 
 | Mode | What changes | Picked when |

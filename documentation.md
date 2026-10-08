@@ -1318,6 +1318,21 @@ matched by its exact name. Safety rules, each tested:
   compared afterwards, and a few stored faces are re-computed from their photos
   (similarity must be ≥ 0.98, else `recompute_embeddings` runs).
 
+**Where the data lives (`SECURETAP_DATA_DIR`).** An installed copy can't
+write into its program folder, and reinstalling it must never touch the
+students' data, so everything the system writes goes to one data folder:
+`backend.env`, `entry-agent.env`, `db.sqlite3`, `media/`, the covered-face
+model and its training photos, the card-tap queue, the last-session summary,
+`device_profile.json` and `launcher_settings.json`. `device_setup.py` decides
+the folder — `SECURETAP_DATA_DIR` if set, else `%LOCALAPPDATA%\EVSU SecureTap`
+when the installer's `securetap-installed.txt` marker is present — and sets
+`SECURETAP_DATA_DIR` for everything the launcher starts; the backend
+(`settings.DATA_DIR`) and the gate monitor (`config.data_file`) only read it.
+Running from the code folder (no marker, nothing set), every file stays where
+it always was. Tested by running a code-only copy with the marker through the
+whole setup, the backend and the gate monitor: nothing new appeared in its
+program folder.
+
 **Speed mode row.** Under the Entry Agent settings, a collapsed **Speed mode**
 row shows this computer's mode and the last speed test; it switches between
 Fast / Standard / Light, re-runs the test, and offers **Run setup again**, which

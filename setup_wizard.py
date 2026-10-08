@@ -403,8 +403,11 @@ class SetupWizard:
         self._text(self.content, "Let's get SecureTap ready on this computer. It takes a few minutes, and anything "
                                  "that's already done is skipped.", INK_600)
         card = self._card()
-        for number, name in enumerate(STEPS[1:], start=2):
-            self._text(card, f"{number}.  {name}", pady=(0, 6))
+        for number, name in enumerate(STEPS, start=1):
+            if number == 1:
+                self._text(card, f"{number}.  {name}  (you're here)", bold=True, pady=(0, 6))
+            else:
+                self._text(card, f"{number}.  {name}", pady=(0, 6))
 
     def _prepare(self):
         self._set_busy(True)

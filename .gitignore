@@ -29,6 +29,7 @@ dashboard/.vite/
 entry-agent/offline_queue.db
 entry-agent/*.log
 entry-agent/last_session.json
+entry-agent/camera_choice.json
 
 # Launcher local state (remembered gate/direction/guard name - per-machine,
 # not something to check in)

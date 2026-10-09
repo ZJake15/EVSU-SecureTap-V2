@@ -94,8 +94,10 @@ def main():
         record("speed test (face AI, offline)", False, exc)
 
     check = subprocess.run(
-        [PYTHON, "-c", "import config, camera, ui, student_display, offline_queue; c = config.load_config(); "
-                       "offline_queue.OfflineQueue(c.offline_db_path, None); print(c.offline_db_path)"],
+        [PYTHON, "-c", "import config, camera, camera_select, ui, student_display, offline_queue, main; "
+                       "c = config.load_config(); offline_queue.OfflineQueue(c.offline_db_path, None); "
+                       "d = camera_select.classify(camera.list_available_cameras()); "
+                       "print(c.offline_db_path, '| cameras:', d, '| would use:', camera_select.choose(d))"],
         cwd=APP / "entry-agent", capture_output=True, text=True)
     record("gate monitor code loads", check.returncode == 0, (check.stdout or check.stderr).strip()[-300:])
     check = subprocess.run([PYTHON, "-c", "import launcher, setup_wizard; print('ok')"], cwd=APP,

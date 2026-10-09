@@ -674,15 +674,8 @@ class SetupWizard:
             self._set_secondary("Check again", self._show_devices)
             for child in self._device_card.winfo_children():
                 child.destroy()
-            cameras, reader, key_ok = result if result else ([], None, True)
-            if cameras:
-                names = ", ".join(name for _index, name in cameras[:3])
-                self._status_row(self._device_card, True, f"Camera found: {names}",
-                                 "If there are several, the gate monitor lets you pick one." if len(cameras) > 1
-                                 else None)
-            else:
-                self._status_row(self._device_card, False, "No camera found",
-                                 "Plug in the webcam - the gate monitor picks it up by itself.")
+            found, reader, key_ok = result if result else ({"cameras": [], "chosen": None}, None, True)
+            self._show_cameras(found)
             if reader is True:
                 self._status_row(self._device_card, True, "Card reader found")
             elif reader is False:
@@ -703,6 +696,32 @@ class SetupWizard:
                     side="right", anchor="n")
 
         self._background(work, done)
+
+    def _show_cameras(self, found):
+        """Which camera the gate monitor will use - a plugged-in (USB)
+        camera before the laptop's built-in one (entry-agent/
+        camera_select.py) - and the others it can see."""
+        cameras = found["cameras"]
+        if not cameras:
+            self._status_row(self._device_card, False, "No camera found",
+                             "Plug in the USB camera - the gate monitor picks it up by itself, before the "
+                             "laptop's built-in camera.")
+            return
+        by_index = {index: (name, label) for index, name, label in cameras}
+        name, label = by_index.get(found["chosen"], (cameras[0][1], cameras[0][2]))
+        others = [f"{other} ({other_label})" for index, other, other_label in cameras
+                  if index != found["chosen"]]
+        detail = None
+        ok = True
+        if label == "built-in camera":
+            detail = ("No plugged-in camera found, so this uses the laptop's own camera. Plug in the USB camera and "
+                      "click Check again - it's used first whenever it's connected.")
+        elif label in ("software camera", "infrared camera"):
+            ok = False
+            detail = "That isn't a real camera for the gate. Plug in the USB camera and click Check again."
+        if others:
+            detail = (detail + "\n" if detail else "") + "Also found: " + ", ".join(others) + "."
+        self._status_row(self._device_card, ok, f"SecureTap will use: {name} ({label})", detail)
 
     # ---- 5. speed test ------------------------------------------------------------
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import requests
 
+import camera_select
 from api_client import ApiClient
 from camera import Camera, list_available_cameras
 from config import data_file, load_config
@@ -355,9 +356,32 @@ def main():
         )
 
     api_client = ApiClient(config.api_base_url, config.service_token)
+
+    # Which camera: a plugged-in one before the laptop's built-in one, the
+    # one someone picked before (remembered by name) first among equals -
+    # see camera_select.py. CAMERA_INDEX only matters if none can be listed.
+    # Best-effort - a machine with zero cameras (or a pygrabber hiccup) just
+    # means an empty list, which the dropdown renders as "No camera found".
+    try:
+        cameras = camera_select.classify(list_available_cameras())
+    except Exception as exc:
+        print(f"WARNING: could not enumerate cameras ({exc})", file=sys.stderr)
+        cameras = []
+    camera_index = camera_select.choose(cameras, camera_select.remembered_name(), fallback_index=config.camera_index)
+    camera_names = {index: name for index, name, _kind in cameras}
+    camera_options = [(index, f"{name} ({camera_select.LABELS[kind]})") for index, name, kind in cameras]
+    print(f"camera: using {camera_names.get(camera_index, f'#{camera_index}')}", file=sys.stderr)
+
     camera = Camera(
-        config.camera_index, exposure=config.camera_exposure, max_upload_dimension=config.upload_max_dimension
+        camera_index, exposure=config.camera_exposure, max_upload_dimension=config.upload_max_dimension
     )
+
+    def pick_camera(index):
+        """The guard chose a camera in the gate monitor - use it now and
+        prefer it next time."""
+        camera.set_index(index)
+        if index in camera_names:
+            camera_select.remember(camera_names[index])
     # Starts a background thread that opens the webcam (retrying on its own
     # timer for as long as the app runs if none is connected yet, or it's
     # unplugged mid-session - see Camera._run_loop) - never blocks here and
@@ -408,15 +432,6 @@ def main():
             except requests.RequestException:
                 pass  # the backend ends it anyway when the gate monitor next opens, or at the time limit
 
-    # Best-effort - a machine with zero cameras (or a pygrabber hiccup) just
-    # means an empty list, which the dropdown already renders as "No camera
-    # found" rather than crashing startup over a nicety.
-    try:
-        camera_options = list_available_cameras()
-    except Exception as exc:
-        print(f"WARNING: could not enumerate cameras ({exc})", file=sys.stderr)
-        camera_options = []
-
     monitor = GateMonitorWindow(
         config.gate_location, config.direction,
         get_preview_frame=camera.get_preview_frame,
@@ -425,8 +440,8 @@ def main():
         version=config.app_version,
         on_close=on_close,
         camera_options=camera_options,
-        on_camera_change=camera.set_index,
-        initial_camera_index=config.camera_index,
+        on_camera_change=pick_camera,
+        initial_camera_index=camera_index,
         video_fps=config.video_fps,
         student_display_fps=config.student_display_fps,
         on_sign_in=on_sign_in,

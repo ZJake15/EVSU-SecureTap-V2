@@ -346,15 +346,22 @@ def import_gate_settings(old_root):
 
 
 def list_cameras(python):
-    """[(index, name), ...] of the cameras Windows reports - the same list
-    the gate monitor's camera picker shows. Empty if none, or if the check
-    itself failed."""
+    """The cameras the gate monitor sees and the one it will use:
+    {"cameras": [(index, name, kind label)], "chosen": index or None} - a
+    plugged-in camera before the laptop's built-in one (entry-agent/
+    camera_select.py). Run in the gate monitor's own folder and process, so
+    its settings never load into the launcher. No cameras (or a failed
+    check): an empty list."""
+    code = (
+        "import json, camera_select; from camera import list_available_cameras; "
+        "d = camera_select.classify(list_available_cameras()); "
+        "print(json.dumps({'cameras': [[i, n, camera_select.LABELS[k]] for i, n, k in d], "
+        "'chosen': camera_select.choose(d, camera_select.remembered_name(), None)}))"
+    )
     try:
-        result = subprocess.run(
-            [python, "-c", "import json; from camera import list_available_cameras; "
-                           "print(json.dumps(list_available_cameras()))"],
-            cwd=ENTRY_AGENT_DIR, capture_output=True, text=True, timeout=30, creationflags=_NO_WINDOW,
-        )
-        return [tuple(item) for item in json.loads(result.stdout.strip().splitlines()[-1])]
-    except (subprocess.SubprocessError, OSError, ValueError, IndexError):
-        return []
+        result = subprocess.run([python, "-c", code], cwd=ENTRY_AGENT_DIR, capture_output=True, text=True,
+                                timeout=45, creationflags=_NO_WINDOW)
+        found = json.loads(result.stdout.strip().splitlines()[-1])
+        return {"cameras": [tuple(item) for item in found["cameras"]], "chosen": found["chosen"]}
+    except (subprocess.SubprocessError, OSError, ValueError, IndexError, KeyError, TypeError):
+        return {"cameras": [], "chosen": None}

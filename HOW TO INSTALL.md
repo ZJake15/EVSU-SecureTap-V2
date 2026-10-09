@@ -28,7 +28,7 @@ A setup window opens. Follow it:
    - This is a **new** computer → choose **Start empty**.
 3. **Admin account** — type a username and password. Write them down; you'll use them to log in.
    (If you brought old data over, this step is skipped — use your old login.)
-4. **Camera and card reader** — plug them in. If one is missing, you can still continue.
+4. **Camera and card reader** — plug them in first. The app uses the **plugged-in (USB) camera**, not the laptop's built-in one, whenever it's connected; this page shows which camera it will use. If one is missing, you can still continue.
 5. **Speed test** — click **Run the speed test**, wait about 30 seconds, then click **Finish**.
 
 ## Step 4 — Use it

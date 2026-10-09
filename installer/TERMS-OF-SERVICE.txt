@@ -1,0 +1,558 @@
+EVSU SECURETAP - TERMS OF SERVICE
+Campus entry monitoring system, Eastern Visayas State University
+Version 1.0
+
+Please read these Terms carefully before installing. They are the rules for
+installing and using EVSU SecureTap. By choosing "I accept" and installing,
+or by using SecureTap afterwards, you agree to these Terms and to the EVSU
+SecureTap Privacy Policy (shown on the next page of the installer). If you
+do not agree, choose "I do not accept" and do not install or use
+SecureTap.
+
+If you install or use SecureTap for the University, you also confirm that
+you are allowed to do so on its behalf.
+
+CONTENTS
+   1. Words used in these Terms
+   2. What SecureTap is - and what it is not
+   3. Who may install and use it
+   4. Permission to use the program
+   5. Third-party parts and the face models
+   6. Accounts, roles and passwords
+   7. Staff ID cards and signing in at the gate
+   8. Before the System is used at a gate
+   9. Registering students and staff
+  10. Using the gate monitor
+  11. Using the dashboard
+  12. Acceptable use
+  13. Things you must never do
+  14. Protecting the computer and the data
+  15. Data ownership and privacy
+  16. Records, reports and evidence
+  17. Exports, printouts and screenshots
+  18. Backups, updates and moving the data
+  19. Hardware and the computer it runs on
+  20. Availability and offline use
+  21. Mistakes by the System
+  22. Reporting problems and security issues
+  23. Suspending or ending access
+  24. No warranty
+  25. Limits on responsibility
+  26. Responsibility for misuse
+  27. Uninstalling and ending use
+  28. Changes to these Terms
+  29. Governing law and disputes
+  30. General terms
+  31. Questions
+  32. Your acceptance
+
+
+1. WORDS USED IN THESE TERMS
+
+  "SecureTap" or "System"  EVSU SecureTap: the program, the gate monitor,
+                           the dashboard, the setup window, the installer
+                           and their documentation.
+  "University" or "EVSU"   Eastern Visayas State University.
+  "Project team"           The EVSU SecureTap capstone team that wrote the
+                           program.
+  "You"                    The person installing or using SecureTap. Where
+                           you act for the University, "you" also means
+                           the University.
+  "User"                   Anyone with a SecureTap account: an Admin, a
+                           SASO account (Security Manager) or a Security
+                           Officer (guard).
+  "Person"                 A student or employee registered in the System.
+  "Data"                   Everything the System stores: persons, face
+                           photos, face fingerprints, entry records, gate
+                           photos, accounts, settings and the Audit Log.
+  "Gate"                   A campus entrance or exit where SecureTap's
+                           camera and card reader are used.
+
+Words not defined here have the meaning given in the Privacy Policy.
+
+
+2. WHAT SECURETAP IS - AND WHAT IT IS NOT
+
+SecureTap is a capstone project that helps campus security staff see who
+enters and leaves a gate, using face recognition, school ID cards and
+manual entries by guards.
+
+SecureTap IS:
+  - a tool that HELPS guards and the Office of Student Affairs and Services
+    (SASO) at the gate
+  - a record of entries and exits for campus security
+  - a program that keeps all its Data on the computer it is installed on
+
+SecureTap is NOT:
+  - a replacement for security guards or their judgment
+  - a door, turnstile or lock controller - it does not open or close
+    anything by itself
+  - an emergency, fire or life-safety system
+  - a system for attendance grades, discipline decisions or employment
+    decisions on its own
+  - a video recording (CCTV) system
+  - a finished commercial product; it is provided for study,
+    demonstration and evaluation (see section 4)
+
+
+3. WHO MAY INSTALL AND USE IT
+
+  - SecureTap may be installed only by, or with the permission of, the
+    University or the project team, on a computer the University or the
+    project team is allowed to use for it.
+  - Only people the University authorizes may have a User account. An
+    Admin creates accounts for other Users.
+  - Users must be trained on these Terms and the Privacy Policy before
+    using the System, and must use it only for their job.
+  - You must be at least 18 years old, or have the University's
+    permission, to hold a User account.
+  - The FIRST Admin account is created while setting SecureTap up. Whoever
+    creates it is responsible for it until the University hands it to the
+    right person (who should then change the password).
+
+
+4. PERMISSION TO USE THE PROGRAM
+
+  - The project team gives you permission to install and use SecureTap,
+    free of charge, for the University's campus security, and for study,
+    demonstration, testing and evaluation of the capstone project.
+  - You may install it on the computers needed for that purpose.
+  - You may not sell, rent or lease SecureTap, offer it as a paid service,
+    or use it for any commercial purpose without the project team's
+    written permission, and only where the third-party licenses allow it
+    (section 5).
+  - You may not remove or change the program's names, notices, the
+    Privacy Policy or these Terms from copies you give to others.
+  - The project team keeps all rights it has in SecureTap that these
+    Terms do not expressly give you.
+  - Any copy of SecureTap you pass on must include these Terms and the
+    Privacy Policy, and the person receiving it must accept them.
+
+
+5. THIRD-PARTY PARTS AND THE FACE MODELS
+
+SecureTap is built with free and open-source software made by others -
+for example Python, Django, React, OpenCV, ONNX Runtime and InsightFace.
+Each part stays under its own license, and those licenses apply to those
+parts in addition to these Terms.
+
+The FACE RECOGNITION MODELS included with SecureTap (from the InsightFace
+project) are made available by their authors for NON-COMMERCIAL RESEARCH
+purposes only. You may use them only for the purposes in section 4 and
+must not use them commercially. Anyone who wants to use SecureTap
+commercially must first get a commercial license for the face models, or
+replace them.
+
+
+6. ACCOUNTS, ROLES AND PASSWORDS
+
+6.1 Roles
+  Admin              manages accounts and settings, approves or rejects
+                     deactivations, can permanently delete persons, and
+                     sees everything, including the whole Audit Log
+  SASO               registers and manages students and staff, sees
+                     records from all gates and reports, and asks for
+                     deactivations
+  Security Officer   works at one assigned gate, sees that gate's records
+                     for today, and records manual entries
+
+The University decides who gets which role. Give each User the LOWEST
+role they need, and only the gates they work at.
+
+6.2 Passwords and accounts
+  - Every User has their OWN account. Accounts must never be shared,
+    lent or used by anyone else.
+  - Passwords must be at least 10 characters. Use a password that is not
+    used anywhere else and is hard to guess.
+  - Never write your password where others can see it, tell it to anyone,
+    or let the browser save it on a shared computer.
+  - Sign out (or lock the computer) when you leave it.
+  - If you think someone knows your password, change it at once and tell
+    the Admin.
+  - You are responsible for everything done with your account, unless you
+    reported it as lost or misused before it happened.
+
+6.3 What the Admin must do
+  - Create accounts only for authorized staff, with the right role and
+    gate.
+  - Deactivate an account the same day its User leaves the job, changes
+    role, or should no longer have access.
+  - Review accounts regularly (at least every term) and remove ones that
+    are not needed.
+  - Consider turning on, on the Settings page, the failed-login lockout
+    and the automatic logout.
+  - Keep at least two people able to act as Admin, so the University is
+    never locked out, but no more than needed.
+
+
+7. STAFF ID CARDS AND SIGNING IN AT THE GATE
+
+  - When the Admin turns on gate sign-in, the guard on duty signs in at
+    the gate monitor with their password or by tapping their own staff ID
+    card, so every entry shows who was on duty.
+  - A staff ID card is as personal as a password: never lend it, never
+    tap it for someone else, and report a lost card to the Admin at once
+    so it can be removed from the account.
+  - Sign out at the end of your shift. The System signs a guard out by
+    itself after the shift length set by the Admin.
+  - Entries made while nobody is signed in are marked Unattended. A gate
+    should not be left unattended unless the University allows it.
+
+
+8. BEFORE THE SYSTEM IS USED AT A GATE
+
+Before SecureTap is used with real students and staff, the University
+must:
+  - have its Data Protection Officer (DPO) review the System, these Terms
+    and the Privacy Policy, and carry out a Privacy Impact Assessment
+  - approve a written consent form for registering faces
+  - put up a clear notice at each gate, where people see it BEFORE they
+    reach the camera, saying that face recognition is in use, why, how
+    long information is kept and whom to contact
+  - decide how people who do not consent, or who cannot be recognized,
+    are let in (for example, by a guard checking their ID by hand)
+  - choose retention periods and turn on "Automatic deletion" on the
+    Settings page (see the Privacy Policy, section 11)
+  - register the System with the National Privacy Commission if required
+  - train the Users who will run it
+
+
+9. REGISTERING STUDENTS AND STAFF
+
+  - Register a person's face ONLY after they (and, for a minor, a parent
+    or guardian) have given written consent. Keep the signed form as the
+    University requires.
+  - Take registration photos only with the person present and aware, in
+    a respectful way, following the on-screen guides. Never use photos
+    taken from social media, ID pictures taken for another purpose, or
+    photos taken without the person knowing.
+  - Type names, ID numbers and card numbers carefully, and fix mistakes as
+    soon as you find them.
+  - A distinguishing note (for look-alikes) must be short, respectful and
+    only about telling two people apart - never about health, religion,
+    ethnicity, disability or anything insulting.
+  - When importing many people at once (bulk import), make sure every
+    person in the file has given consent, and delete the import file and
+    its photos from the computer afterwards.
+  - Deactivate people who should no longer enter, and permanently delete
+    those who have left, as the University's rules say.
+
+
+10. USING THE GATE MONITOR
+
+  - The gate monitor helps the guard; the guard stays in charge. Watch
+    the screen and the people at the gate.
+  - When the System says "not recognized", "suspected fake" or asks for a
+    card, check the person's ID before letting them in or turning them
+    away.
+  - Record a manual entry only after you have checked the person's
+    identity yourself, and always give a true reason.
+  - Treat everyone with respect. A gate alert is not proof of wrongdoing.
+  - Do not point the camera anywhere other than the gate lane - not at
+    offices, classrooms, restrooms, homes or other private places.
+  - Keep the screen where people passing by cannot read names or see
+    photos of others.
+  - Do not cover, move or change the camera or card reader in a way the
+    University has not approved.
+
+
+11. USING THE DASHBOARD
+
+  - Open the dashboard only on the computer where SecureTap is installed,
+    and only for your work.
+  - Look up a person or record only when your job needs it - never out of
+    curiosity, or to follow, watch or check on someone for personal
+    reasons.
+  - Change settings only if you understand what they do. Settings marked
+    as risky (for example, turning off the spoof check) weaken security;
+    change them only with the University's approval.
+  - Approve or reject deactivation requests fairly, and give a reason.
+  - Do not delete records to hide a mistake, an incident or misuse.
+
+
+12. ACCEPTABLE USE
+
+You may use SecureTap only to:
+  - check and record who enters and leaves the campus gates
+  - register and manage the students and staff who consented
+  - review entry records, gate photos, reports and the Audit Log for
+    campus security
+  - answer data subject requests through the DPO or SASO
+  - test, demonstrate and evaluate the capstone project, using test data
+    or people who have consented
+
+
+13. THINGS YOU MUST NEVER DO
+
+You must not, and must not help anyone else to:
+  - use SecureTap, or any Data from it, for any purpose other than campus
+    security and the purposes in section 4
+  - follow, watch, profile or check on a person - including a classmate,
+    co-worker, partner or former partner - for personal reasons
+  - register anyone's face without their written consent
+  - use SecureTap to discriminate against or harass anyone, including
+    because of race, religion, sex, gender, disability, age or beliefs
+  - copy, download, photograph, screenshot, print, post, send or sell
+    photos, face data, names or records, except as the University's rules
+    allow
+  - share your account, password or staff ID card, or use someone else's
+  - try to get into parts of the System, accounts or Data your role does
+    not allow, or try to get around passwords, roles, locks or the spoof
+    check
+  - change, add or delete records or the Audit Log to make them untrue,
+    or to hide what happened
+  - use another person's photo, a printed picture, a screen, a mask or any
+    other trick to get through the gate as someone else, or help someone
+    do so
+  - take, copy or move the data folder or its backups, or take the
+    computer away, without the University's approval
+  - connect SecureTap to other systems, the internet or other computers
+    in ways the University has not approved
+  - change the program, or install changed copies, without the project
+    team's or the University's approval
+  - upload or use anything harmful (viruses, spyware) on the computer
+  - test the System's security by attacking it without written
+    permission from the University and the project team
+  - use SecureTap where it would break the law, including the Data
+    Privacy Act of 2012 and the Cybercrime Prevention Act of 2012
+
+
+14. PROTECTING THE COMPUTER AND THE DATA
+
+The computer SecureTap runs on holds personal information. Whoever is in
+charge of it must:
+  - protect Windows with a password, and give each person their own
+    Windows account; do not share the account SecureTap is installed in
+  - lock the screen whenever leaving the computer
+  - keep Windows and its virus protection turned on and updated
+  - turn on BitLocker drive encryption if the computer has it
+  - keep the computer in a place only authorized staff can reach, and
+    never leave it unattended in a public place
+  - not install unknown programs or use it for unrelated work
+  - not let unauthorized people use it
+  - keep the Data on this computer - not on USB drives, phones, cloud
+    storage or chat apps - unless the University has approved it
+
+
+15. DATA OWNERSHIP AND PRIVACY
+
+  - The Data belongs to the University, and the University is
+    responsible for it as the personal information controller.
+  - The project team does not receive, see, keep or own any Data from an
+    installed copy. SecureTap does not send Data to the project team or
+    to anyone else.
+  - How Data is collected, used, kept, shared and deleted is explained in
+    the Privacy Policy, which is part of these Terms. If these Terms and
+    the Privacy Policy ever seem to disagree about personal information,
+    the Privacy Policy wins.
+  - Requests from students, staff or visitors about their information go
+    to the University's DPO or SASO - Users must not answer them alone.
+
+
+16. RECORDS, REPORTS AND EVIDENCE
+
+  - Entry records, reports and the Audit Log show what the System saw and
+    did. They can contain mistakes (section 21).
+  - Do not use a SecureTap record ALONE to punish, accuse or refuse
+    someone. A person must first check it against other facts and give
+    the person concerned a chance to explain.
+  - If a record may be needed for an investigation, tell the Admin and the
+    DPO so it is kept and not deleted by the automatic clean-up. Do not
+    change or delete it.
+
+
+17. EXPORTS, PRINTOUTS AND SCREENSHOTS
+
+  - Export or print records only when your work needs it.
+  - An exported file, printout or screenshot is no longer protected or
+    automatically deleted by SecureTap. You are responsible for it: keep
+    it safe, share it only with people allowed to see it, and destroy it
+    when it is no longer needed.
+  - Never post exported Data or screenshots online or in group chats.
+  - For demonstrations and presentations, use test data, or hide the
+    names and faces of real people.
+
+
+18. BACKUPS, UPDATES AND MOVING THE DATA
+
+  - SecureTap keeps its Data in its own folder on this computer
+    (%LOCALAPPDATA%\EVSU SecureTap). The University is responsible for
+    deciding whether to back it up. Any backup must be protected
+    (encrypted), kept safe, and deleted when no longer needed.
+  - Installing a newer version over an older one keeps the Data and
+    updates it automatically. Install updates only from the project team
+    or the University.
+  - When bringing Data over from an older copy of SecureTap, the older
+    copy is left unchanged, and the previous Data is kept as a backup
+    file. Delete them when they are no longer needed.
+  - Move the Data to another computer only with the University's
+    approval, and delete it from any drive used to carry it.
+
+
+19. HARDWARE AND THE COMPUTER IT RUNS ON
+
+  - SecureTap needs a Windows 10 or 11 (64-bit) computer, a camera and,
+    for card taps, a card reader. It runs better with more memory and a
+    plugged-in charger.
+  - It uses a plugged-in (USB) camera before the computer's built-in one.
+    Check, on the setup window or the gate monitor, that the right camera
+    is used.
+  - Lighting, camera position, glare, masks, hats and glasses can make
+    recognition worse. Set the gate up as the instructions say.
+  - The project team does not supply, repair or guarantee any hardware.
+
+
+20. AVAILABILITY AND OFFLINE USE
+
+  - SecureTap runs on one computer. If that computer is off, broken, out
+    of power or busy, the gate monitor cannot check people.
+  - SecureTap does not need the internet. Card taps made while the gate
+    monitor briefly cannot reach the program behind it are kept and
+    recorded later; faces are not.
+  - The University must always have another way to let people in when the
+    System is not working - for example, guards checking IDs by hand.
+  - There is no promise that SecureTap will always be available, fast or
+    free of errors.
+
+
+21. MISTAKES BY THE SYSTEM
+
+Face recognition, spoof checks and card readers are not perfect. SecureTap
+can:
+  - fail to recognize a registered person ("not recognized")
+  - rarely, mistake one person for another, especially look-alikes or
+    twins
+  - mistake a real face for a photo or screen, or the other way round
+  - miss or misread a card tap
+  - record a wrong time if the computer's clock is wrong
+
+To reduce harm, the System asks for a card tap when it is unsure, guards
+check IDs before acting on an alert, and no decision about a person
+should be based on the System alone. Keep the computer's date and time
+correct.
+
+
+22. REPORTING PROBLEMS AND SECURITY ISSUES
+
+  - Report problems, wrong records and strange behavior to the Admin.
+  - If you think Data was lost, stolen, seen by the wrong person or
+    misused, tell the Admin and the University's DPO IMMEDIATELY (see the
+    Privacy Policy, section 19). Do not try to investigate or fix it
+    alone, and do not delete anything.
+  - If you find a security weakness, report it privately to the Admin and
+    the project team. Do not use it, test it further or tell others about
+    it.
+
+
+23. SUSPENDING OR ENDING ACCESS
+
+  - The Admin may lock, deactivate or change any User account at any time
+    - for example, when a User leaves, changes job, breaks these Terms, or
+    their account may have been misused.
+  - Breaking these Terms may also lead to action under the University's
+    rules and, where the law is broken, to legal consequences (for
+    example, under the Data Privacy Act of 2012).
+  - Duties that by their nature should continue (such as keeping Data
+    confidential) continue after your access ends.
+
+
+24. NO WARRANTY
+
+SecureTap is a student capstone project, given free of charge. It is
+provided "AS IS" and "AS AVAILABLE". To the fullest extent the law
+allows, the project team and the University make NO promises or
+warranties of any kind, whether stated or implied - including that it is
+fit for a particular purpose, accurate, secure, uninterrupted, free of
+errors or viruses, or that it will meet your needs or work with your
+hardware.
+
+Nothing in these Terms removes rights that the law says cannot be
+removed.
+
+
+25. LIMITS ON RESPONSIBILITY
+
+To the fullest extent the law allows, the project team is not responsible
+for any loss or harm that comes from installing, using or being unable to
+use SecureTap - including lost or wrong Data, a person wrongly let in or
+kept out, security incidents, damage to the computer, or lost time -
+unless it was caused by the project team's fraud, bad faith or gross
+negligence, or the law says the responsibility cannot be limited.
+
+Because SecureTap is a tool that helps people, the University and its
+Users remain responsible for how it is set up and used, and for the
+decisions they make with it.
+
+
+26. RESPONSIBILITY FOR MISUSE
+
+If you use SecureTap in a way these Terms or the law do not allow, you are
+responsible for the results of that misuse, including any claims made by
+people whose information was misused.
+
+
+27. UNINSTALLING AND ENDING USE
+
+  - You may stop using SecureTap at any time. Uninstall it from Settings
+    > Apps > EVSU SecureTap > Uninstall.
+  - The uninstaller asks whether to delete the Data too. Choose Yes when
+    the computer is given away, sold, repaired by outsiders or retired,
+    after the University has decided what Data it must keep and where.
+  - Before giving away or retiring a computer that held SecureTap Data,
+    have its drive securely wiped.
+  - When the capstone project ends, the University decides whether to
+    keep using SecureTap. If it stops, the Data must be deleted or handed
+    over as the University decides.
+
+
+28. CHANGES TO THESE TERMS
+
+These Terms may be updated when SecureTap or the law changes. A new
+version comes with each new installer, has a new version number at the
+top, and must be accepted again when installing. Using SecureTap after an
+update means you accept the new Terms.
+
+
+29. GOVERNING LAW AND DISPUTES
+
+These Terms are governed by the laws of the Republic of the Philippines.
+Any disagreement about them should first be raised with the University
+and the project team to be settled fairly and in good faith. If it cannot
+be settled, it will be brought before the proper courts of the
+Philippines. Privacy complaints may also be brought to the National
+Privacy Commission.
+
+
+30. GENERAL TERMS
+
+  - These Terms and the Privacy Policy are the whole agreement about
+    SecureTap between you and the project team.
+  - If any part of these Terms cannot be enforced, the rest still applies.
+  - Not enforcing a rule once does not mean giving it up.
+  - You may not pass your rights under these Terms to someone else
+    without the University's permission.
+  - Headings are only there to help you find things.
+  - The University's own rules (for example, its student and employee
+    handbooks and data privacy manual) still apply. Where they are
+    stricter than these Terms, follow them.
+
+
+31. QUESTIONS
+
+Questions about these Terms or about using SecureTap: ask the Admin of
+your SecureTap installation, or the project team.
+Questions about personal information: contact the EVSU Data Protection
+Officer through the University's official channels.
+
+A copy of these Terms is installed with the app (Start menu: "EVSU
+SecureTap Terms of Service").
+
+
+32. YOUR ACCEPTANCE
+
+By choosing "I have read and accept the terms of service" and installing
+SecureTap, you confirm that:
+  - you have read and understood these Terms and the Privacy Policy
+  - you are allowed to install SecureTap on this computer
+  - you will follow these Terms, the Privacy Policy and the University's
+    rules, and make sure the Users you are responsible for do too

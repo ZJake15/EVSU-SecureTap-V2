@@ -1,132 +1,561 @@
 EVSU SECURETAP - PRIVACY POLICY
 Campus entry monitoring system, Eastern Visayas State University
+Version 2.0
 
 Please read this before installing. By installing and using EVSU SecureTap,
 you agree to handle the personal information it collects as described here,
-in line with the Data Privacy Act of 2012 (Republic Act No. 10173).
+in line with the Data Privacy Act of 2012 (Republic Act No. 10173), its
+Implementing Rules and Regulations, and the issuances of the National
+Privacy Commission (NPC). This policy works together with the EVSU
+SecureTap Terms of Service, which you accept on the page before this one.
+
+CONTENTS
+   1. Words used in this policy
+   2. Who is responsible for the information
+   3. What this system does
+   4. What information it collects
+   5. What it does NOT collect
+   6. Why it is collected, and the legal basis
+   7. How face recognition works, step by step
+   8. Where the information is kept
+   9. Who can see it
+  10. Sharing with others
+  11. How long it is kept
+  12. What happens when a person leaves or is removed
+  13. Consent
+  14. Children and minors
+  15. Your rights as a data subject
+  16. How to make a request or a complaint
+  17. How the information is protected
+  18. Your own duties as a user of this system
+  19. If something goes wrong (a data breach)
+  20. Accuracy and mistakes
+  21. Exported files, backups and copies
+  22. Moving the data to another computer
+  23. Uninstalling
+  24. Changes to this policy
+  25. Important note about this project
 
 
-1. WHAT THIS SYSTEM DOES
+1. WORDS USED IN THIS POLICY
 
-EVSU SecureTap checks who enters and leaves a campus gate. A camera at the
-gate looks at the faces of people passing and compares them with the photos
-of registered students and staff. A school ID card can also be tapped on a
-card reader. Each entry or exit is recorded.
+  "System" or "SecureTap"  EVSU SecureTap: the gate monitor, the dashboard,
+                           the setup window and the program behind them,
+                           installed on this computer.
+  "University" or "EVSU"   Eastern Visayas State University, the campus
+                           that operates the System.
+  "Person"                 A student or employee registered in the System
+                           so they can be recognized at the gate.
+  "Visitor"                Anyone seen at the gate who is NOT registered.
+  "User"                   A staff member who signs in to the dashboard or
+                           the gate monitor: an Admin, a SASO account
+                           (Security Manager) or a Security Officer
+                           (guard).
+  "Face fingerprint"       A list of 512 numbers calculated from a face
+                           photo. It describes the face well enough to
+                           compare it with another photo. The photo cannot
+                           be rebuilt from it. (Also called a "face
+                           embedding" or "face template".)
+  "Entry record"           One line in the records: who passed the gate,
+                           when, at which gate, in which direction and how
+                           they were checked.
+  "Personal information"   Any information that identifies a person, or
+                           can be used to identify them, as defined in the
+                           Data Privacy Act.
 
-The camera checks EVERY face it sees at the gate - not only people who tap a
-card. A clear notice must be posted at the gate so everyone knows that face
-recognition is in use.
+
+2. WHO IS RESPONSIBLE FOR THE INFORMATION
+
+The University is the PERSONAL INFORMATION CONTROLLER: it decides why and
+how the System is used, who is registered, and how long records are kept.
+Through its Data Protection Officer (DPO), the University answers questions
+and requests about the information in the System.
+
+The people who installed SecureTap and the staff who use it act on the
+University's behalf and must follow this policy and the University's own
+data privacy rules.
+
+The SecureTap capstone team wrote the program. The team does NOT receive,
+see or keep any of the information collected by an installed copy (see
+section 10).
 
 
-2. WHAT INFORMATION IT COLLECTS
+3. WHAT THIS SYSTEM DOES
 
-About registered students and staff:
-  - Name, student or employee ID number, role, and department or course
-  - School ID card number
-  - Face photos taken during registration
-  - A "face fingerprint": a list of numbers calculated from each photo, used
-    to recognize the face. The photo cannot be rebuilt from it.
+EVSU SecureTap checks who enters and leaves a campus gate:
 
-At the gate:
-  - Each entry and exit: who, when, which gate, and how they were checked
-    (face, card, or a guard's manual entry)
-  - A photo of a face that was NOT recognized, or that looked like a printed
-    photo or a phone screen, so a guard can see who was turned away
-  - For a face that was not recognized, its face fingerprint for a short
-    time, to tell whether the same person is still at the gate. It is
-    always deleted after 1 day.
+  - A camera at the gate looks at the faces of people passing. Each face is
+    turned into a face fingerprint and compared with the face fingerprints
+    of registered students and staff.
+  - The System also checks that the face is a real person and not a
+    printed photo or a phone or tablet screen ("spoof check"), and asks
+    people to uncover their face if a hand, mask or scarf covers it.
+  - A school ID card can be tapped on a card reader when the System asks
+    for it - for example, when it is unsure, or for look-alikes and twins.
+  - A guard can record an entry by hand when the camera or card reader
+    cannot be used.
+  - Each entry or exit is recorded, and the guard on duty sees the result
+    on the gate monitor.
 
-About staff who use the dashboard (Admin, SASO, Security Officers):
+The camera checks EVERY face it sees at the gate - not only people who tap
+a card. This means visitors and passers-by are also seen by the camera. A
+clear notice must be posted at the gate, where people can read it BEFORE
+they reach the camera, saying that face recognition is in use, why, and
+whom to contact (see section 18).
+
+
+4. WHAT INFORMATION IT COLLECTS
+
+4.1 About registered students and staff (Persons)
+  - Full name
+  - Student or employee ID number
+  - Role (student, faculty, staff, and so on)
+  - Department or course
+  - School ID card number (the number stored on the card's chip)
+  - Face photos taken during registration: usually 5 photos (front,
+    slightly left, slightly right, no expression, smiling), or 1 photo if
+    the single-photo option is used, or photos brought in by a bulk import
+  - One face fingerprint for each registration photo, and a note of
+    whether that photo was of low quality
+  - Whether the person is active (allowed in) or deactivated
+  - A short "distinguishing note", only if staff add one - for example, to
+    help a guard tell two look-alikes apart
+  - Look-alike pairs: when two registered people's faces are very similar,
+    the System records the pair and how similar they are, so it can ask
+    them for a card tap
+  - Deactivation requests about the person: who asked, when, why, and the
+    Admin's decision
+
+4.2 At the gate (for everyone the camera sees)
+  - Each entry and exit: who (if recognized), date and time, which gate,
+    the direction (entry or exit), how they were checked (face, card,
+    face and card, or a guard's manual entry), the result (allowed,
+    refused, not recognized, suspected fake, and so on) and the reason
+  - Technical details of the check: how closely the face matched, the
+    real-face (spoof check) score, and whether the face looked covered
+  - Which guard was on duty for that entry, or that the gate was
+    unattended, and which guard recorded a manual entry
+  - A PHOTO of a face that was NOT recognized, or that looked like a
+    printed photo or a phone screen, so a guard or SASO can see who was
+    turned away
+  - For a face that was not recognized, its face fingerprint, kept for a
+    short time to tell whether the same unknown person keeps returning to
+    the gate. It is always deleted after 1 day.
+  - Short-lived working data while a person is being checked (match
+    attempts, spoof-check attempts, covered-face attempts, a pending card
+    request). These are deleted after 1 day.
+  - If the gate monitor briefly cannot reach the program behind it, card
+    taps waiting to be recorded (card number, gate, direction and time)
+    are kept in a small queue on this computer and recorded as soon as it
+    can. Faces are never queued.
+
+Faces of RECOGNIZED people are NOT saved as photos at the gate. Camera
+frames are only looked at in the computer's memory and thrown away.
+
+4.3 About staff who use the System (Users)
   - Username, name, role and assigned gate
-  - Password - stored only in scrambled (hashed) form; nobody can read it
+  - Password - stored only in scrambled (hashed) form; nobody, not even the
+    Admin, can read it
   - Staff ID card number, if one is added for signing in at the gate
-  - A record of important actions (the Audit Log), such as account changes,
-    setting changes, manual entries and gate sign-ins
+  - How many wrong passwords were entered in a row, and until when the
+    account is locked (only if the lockout setting is on)
+  - Gate shifts: who signed in at which gate, when, how (password or card),
+    and when and why the shift ended
+  - The Audit Log: a record of important actions, with who did it and
+    when - creating, changing or deactivating accounts, account lockouts,
+    deactivation requests and the Admin's decisions, permanently deleting
+    a person, marking or unmarking look-alike pairs, settings changes (with
+    the old and new value), automatic deletions, manual entries, and gate
+    sign-ins and sign-outs. Ordinary viewing is not logged.
+
+4.4 About this computer
+  - The camera and card reader chosen, the gate name and direction, and a
+    speed test result for this computer. These are about the computer, not
+    about people.
 
 
-3. WHY IT IS COLLECTED
+5. WHAT IT DOES NOT COLLECT
 
-Only to keep the campus secure: to know who entered and left, to stop people
-using someone else's ID or photo, and to help guards and the Office of
-Student Affairs respond to incidents. The information is not used for
-grades, advertising, or any other purpose, and it is not sold or shared.
+SecureTap does NOT collect or keep:
+  - video recordings - the camera feed is never recorded
+  - photos of recognized people at the gate
+  - sound - the microphone is never used
+  - location (GPS), contacts, or anything from people's phones
+  - grades, health information, religion, home address or phone numbers
+  - anything typed or done on the computer outside SecureTap
+  - any information for advertising or tracking across websites
 
 
-4. WHERE IT IS KEPT
+6. WHY IT IS COLLECTED, AND THE LEGAL BASIS
+
+The information is used ONLY for campus security:
+  - to know who entered and left the campus, and when
+  - to stop people from using someone else's ID card, photo or face
+  - to help guards and the Office of Student Affairs and Services (SASO)
+    respond to incidents and check reports
+  - to keep the System accurate (for example, the accuracy report on the
+    Reports page, which is calculated from the stored face fingerprints)
+  - to keep a record of what staff did in the System, so mistakes and
+    misuse can be found
+
+It is NOT used for grades, advertising, profiling, or any purpose other
+than campus security, and it is NOT sold, rented or traded.
+
+Face photos and face fingerprints are biometric information. SecureTap
+treats them with the same care the Data Privacy Act requires for sensitive
+personal information. The University relies on the written consent of
+each registered person (section 13) and on its responsibility to keep the
+campus safe. The University's DPO confirms the exact legal basis and
+records it in the University's own privacy notices.
+
+
+7. HOW FACE RECOGNITION WORKS, STEP BY STEP
+
+  1. Registration: staff take the person's photos with the dashboard. The
+     System checks each photo's quality, makes a face fingerprint from it,
+     and warns staff if the person looks very similar to someone already
+     registered.
+  2. At the gate: the camera finds faces in the picture. Blurry frames,
+     faces turned too far, faces cut off at the edge and covered faces are
+     skipped.
+  3. The System checks that the face is a real person, not a photo or a
+     screen.
+  4. It makes a face fingerprint of the face and compares it with the
+     registered ones. Several frames in a row must agree before it
+     decides.
+  5. If it is sure, it records the entry. If it is unsure, or the person
+     has a look-alike, it asks for a card tap. If the face is not
+     recognized, the entry is recorded as not recognized, with a photo for
+     the guard.
+  6. Everything happens on THIS computer. No face, photo or fingerprint is
+     sent to any online service, and no outside company's face
+     recognition service is used.
+
+Face recognition is never perfect. The System can occasionally fail to
+recognize a registered person, or - rarely - mistake one person for
+another. Section 20 explains what is done about that.
+
+
+8. WHERE THE INFORMATION IS KEPT
 
 Everything stays on THIS COMPUTER only, in the folder
-%LOCALAPPDATA%\EVSU SecureTap. Nothing is sent to the internet or to any
-online service. (When the computer is online, the dashboard downloads its
-text fonts from Google Fonts; no personal information is sent with that.)
+%LOCALAPPDATA%\EVSU SecureTap (the program itself is in a separate folder
+and holds no personal information). Nothing is sent to the internet, to a
+cloud service, or to the SecureTap capstone team.
 
-Keep this computer protected: use a Windows password, do not share the
-Windows account, and turn on BitLocker drive encryption if available.
+The gate monitor and the dashboard talk to the program behind them inside
+this computer only; they are not reachable from other computers on the
+network.
 
-
-5. WHO CAN SEE IT
-
-Only signed-in dashboard users, each limited by their role:
-  - Admin: everything, including accounts, settings and the Audit Log
-  - SASO (Security Manager): students and staff, records and reports
-  - Security Officer (guard): today's records for their own gate only
-Photos can only be opened through the dashboard by a signed-in user.
+The only internet use: when the computer is online, the dashboard
+downloads its text fonts from Google Fonts. No personal information is sent
+with that request, but, like any website visit, Google can see that this
+computer asked for the fonts.
 
 
-6. HOW LONG IT IS KEPT
+9. WHO CAN SEE IT
 
-The Admin decides how long entry records, gate photos and the Audit Log are
-kept, on the dashboard's Settings page (Privacy & Data Retention). Once
-"Automatic deletion" is switched on, older records and gate photos are
-deleted every day. It is off until the Admin switches it on.
+Only signed-in Users, each limited by their role:
 
-Always, even with "Automatic deletion" off:
+  Admin
+    - everything: persons, photos, records from all gates, reports,
+      settings, accounts and the whole Audit Log
+    - the only role that can permanently delete a person, approve or
+      reject a deactivation, manage accounts and change settings
+
+  SASO (Security Manager)
+    - registers, edits and views students and staff, their photos and
+      look-alike pairs
+    - views entry records from all gates, and reports
+    - asks to deactivate a person (an Admin has to approve it)
+    - sees only their OWN actions in the Audit Log
+
+  Security Officer (guard)
+    - sees records for their own assigned gate only, and only today's
+    - records manual entries at the gate
+    - cannot see the list of registered persons, reports, settings or
+      accounts
+
+At the gate monitor, the guard on duty sees the name and result of each
+person checked, and the photo of an unrecognized face or suspected fake.
+
+Photos can only be opened through the dashboard by a signed-in User, using
+a link that stops working after a short time.
+
+The people who look after this computer (for example, whoever knows its
+Windows password) could reach the data folder directly. That is why
+section 18 asks for the computer to be protected.
+
+
+10. SHARING WITH OTHERS
+
+The System itself never shares information with anyone. The University
+may share information from it only:
+  - with the person it is about, when they ask (section 15)
+  - inside the University, with offices that need it for campus security
+    or discipline under the University's own rules
+  - with the police, a court or another government body, when the law
+    requires it or a lawful order asks for it
+  - in an emergency that threatens someone's life or safety
+
+Any sharing must be decided by the University (through its DPO or another
+authorized office) - not by an individual User - and should be recorded.
+
+The SecureTap capstone team does not receive any information from an
+installed copy and cannot see it.
+
+
+11. HOW LONG IT IS KEPT
+
+The Admin decides how long records are kept, on the dashboard's Settings
+page (Privacy & Data Retention). "Automatic deletion" is OFF until the
+Admin turns it on. Once it is on, the System deletes, every day:
+
+  What                                 Default        Can be set to
+  -----------------------------------  -------------  ------------------
+  Entry and exit records               365 days       7 to 3650 days
+  Gate photos (unknown faces and       90 days        1 to 3650 days
+  suspected fakes) - the record stays
+  Audit Log entries                    kept forever   0 (forever) to
+                                                      36500 days
+
+ALWAYS, even with "Automatic deletion" off:
   - face fingerprints of people who were not recognized are deleted after
     1 day (these people never agreed to have their face stored)
+  - the short-lived working data from checking faces (section 4.2) is
+    deleted after 1 day
   - photo files that no longer belong to any record are deleted
 
-A registered person's photos and face data are kept while they are
-registered. Permanently deleting a person deletes their record, their face
-data and all their photos. Their past entry records stay, without their
-name. Replacing a photo deletes the old one.
+A registered person's photos and face fingerprints are kept for as long as
+they are registered (see section 12). Replacing a photo deletes the old
+one.
+
+The University should choose retention periods no longer than it really
+needs, write them in its records retention schedule, and turn on
+"Automatic deletion" so they are followed. Until it is turned on, records
+are kept until someone deletes them.
 
 
-7. YOUR RIGHTS
+12. WHAT HAPPENS WHEN A PERSON LEAVES OR IS REMOVED
 
-Under the Data Privacy Act, students and staff have the right to:
-  - be told how their information is used (this policy)
-  - see the information kept about them
-  - have wrong information corrected
-  - ask for their information to be removed, or object to its use
-  - file a complaint with the National Privacy Commission
-To use these rights, contact the EVSU Data Protection Officer through the
-university's official channels.
+  Deactivating a person
+    They are no longer allowed in at the gate. Their record, photos and
+    face fingerprints stay, so they can be reactivated (for example, after
+    a leave of absence). A SASO deactivation needs an Admin's approval.
+
+  Permanently deleting a person (Admin only)
+    Deletes their record, their face fingerprints, all their registration
+    photos and their look-alike pairs. This cannot be undone. Their past
+    entry records stay, but without their name ("Unknown"), so gate
+    statistics remain correct. Those past records are then deleted
+    according to section 11.
+
+When a student graduates, transfers or leaves, or an employee leaves, the
+University should permanently delete them within a reasonable time,
+unless it has a lawful reason to keep their information longer.
 
 
-8. CONSENT
+13. CONSENT
 
-Students and staff must give their written consent before their face is
-registered. The university decides how people who do not consent are let
-in - for example, by a guard checking their ID by hand.
+Students and staff must be told how the System works (for example, by
+giving them this policy) and must give their WRITTEN consent before their
+face is registered. The consent form is the University's, approved by its
+DPO.
+
+  - Consent is voluntary. A person who does not consent is not registered
+    and must not be refused entry only for that reason. The University
+    decides how they are let in instead - for example, by a guard checking
+    their ID by hand and recording a manual entry.
+  - A person can WITHDRAW consent at any time by telling the SASO or the
+    DPO. Their face photos and face fingerprints are then deleted (the
+    Admin permanently deletes their registration), and they use another
+    way in.
+  - Withdrawing consent does not make earlier, lawful use unlawful.
+
+Visitors cannot practically give consent before the camera sees them.
+That is why the System keeps as little as possible about them: their face
+fingerprint is deleted after 1 day, and only a photo of the attempt is
+kept for the gate photo period. The gate notice (section 18) tells them
+this before they reach the camera.
 
 
-9. KEEPING IT SAFE
+14. CHILDREN AND MINORS
 
+Some students may be under 18. For them, the consent of a parent or legal
+guardian should be obtained in addition to the student's own agreement,
+following the University's rules. Their information gets at least the same
+protection as everyone else's.
+
+
+15. YOUR RIGHTS AS A DATA SUBJECT
+
+Under the Data Privacy Act, every person whose information is in the
+System - students, staff, Users and visitors - has the right to:
+
+  - BE INFORMED that their information is being collected and how it is
+    used (this policy and the gate notice)
+  - ACCESS the information kept about them - for example, their record,
+    their registration photos and their entry records - and get a copy
+  - CORRECT wrong or outdated information, such as a misspelled name or a
+    wrong ID number
+  - have their information ERASED or BLOCKED when it is no longer needed,
+    was collected unlawfully, or consent is withdrawn
+  - OBJECT to the use of their information, including face recognition
+  - DATA PORTABILITY: get their information in a common electronic format
+    (the dashboard can export entry records as a CSV file)
+  - be paid DAMAGES for harm caused by wrong, false or unlawfully obtained
+    or used personal information
+  - FILE A COMPLAINT with the National Privacy Commission
+
+These rights may be limited only where the law allows, for example when
+the information is needed for a pending investigation.
+
+
+16. HOW TO MAKE A REQUEST OR A COMPLAINT
+
+  1. Contact the EVSU Data Protection Officer through the University's
+     official channels, or the Office of Student Affairs and Services
+     (SASO). Say who you are and what you are asking for.
+  2. The University may ask you to prove who you are, so that nobody else
+     can get your information.
+  3. The University should answer within a reasonable time, and within
+     the period the law or NPC rules set.
+  4. If you are not satisfied, you can complain to the National Privacy
+     Commission (www.privacy.gov.ph).
+
+Users of the System must not answer requests on their own. Pass them to
+the DPO or SASO.
+
+
+17. HOW THE INFORMATION IS PROTECTED
+
+  - Everything is processed and stored on this computer only; nothing is
+    sent online (section 8)
   - Passwords are stored scrambled (bcrypt) and must be at least 10
     characters
-  - Each role sees only what it needs; important actions are recorded
+  - Each role sees only what it needs (section 9); deactivating someone as
+    a SASO needs an Admin's approval
+  - Important actions are recorded in the Audit Log
   - Optional on the Settings page: lock an account after repeated wrong
-    passwords, and log users out automatically when inactive
+    passwords, and log Users out automatically when inactive
+  - Optional: guards sign in at the gate monitor, so every entry shows who
+    was on duty; entries with nobody signed in are marked Unattended
   - Photos can only be opened with a short-lived signed link
-  - Error pages never show personal information or the system's
-    internal details
+  - Error pages never show personal information or the System's internal
+    details
+  - Unknown faces' fingerprints and other working data are deleted after
+    1 day, and leftover photo files are cleaned up automatically
+  - The program and the data are kept in separate folders; installing an
+    update never touches the data
+
+No system is perfectly secure. Section 18 lists what Users and the
+University must do so these protections work.
 
 
-10. IMPORTANT NOTE
+18. YOUR OWN DUTIES AS A USER OF THIS SYSTEM
+
+Everyone who installs or uses SecureTap must:
+  - protect this computer: use a Windows password, do not share the
+    Windows account, lock the screen when away, keep Windows updated, and
+    turn on BitLocker drive encryption if available
+  - keep their own SecureTap password secret and never share their
+    account or staff ID card
+  - look at personal information ONLY when their work needs it
+  - never copy, photograph, screenshot, print, post or send photos,
+    names or records from the System, except as the University's rules
+    allow
+  - post the gate notice where people see it before reaching the camera
+  - collect written consent before registering anyone's face
+  - tell the Admin and the DPO at once if they think information was lost,
+    stolen, seen by the wrong person or misused (section 19)
+
+The Terms of Service explain these duties in more detail.
+
+
+19. IF SOMETHING GOES WRONG (A DATA BREACH)
+
+A data breach is when personal information is lost, stolen, destroyed,
+changed, or seen by someone who should not see it - for example, if this
+computer is stolen, or someone copies the data folder.
+
+If this happens:
+  1. Tell the Admin and the University's DPO IMMEDIATELY.
+  2. Do not delete anything or try to hide it; write down what happened
+     (what, when, who noticed).
+  3. If you can do so safely, stop it from getting worse - for example,
+     change passwords, or disconnect the computer from the network.
+  4. The DPO decides what else to do, including telling the National
+     Privacy Commission and the people affected within the time the NPC
+     rules require (72 hours from knowing about a breach that must be
+     reported).
+
+
+20. ACCURACY AND MISTAKES
+
+  - Staff must type names and ID numbers carefully and correct mistakes
+    as soon as they are found.
+  - Face recognition can make mistakes. A gate decision is NOT final: a
+    guard can always check a person's ID and let them in by hand (which is
+    recorded), and no one should be punished only because of a gate
+    record without a human checking it first.
+  - People who are often not recognized can have their photos taken
+    again.
+  - The System asks for a card tap when it is unsure, and by default
+    always asks look-alikes and twins for a card.
+
+
+21. EXPORTED FILES, BACKUPS AND COPIES
+
+When a User exports records (for example, a CSV file of entry records) or
+prints anything from the System, that copy is no longer protected or
+automatically deleted by SecureTap. The User and the University are
+responsible for it: keep it only as long as needed, store it safely, and
+delete it when done.
+
+When data is brought over from an older copy of SecureTap, the older copy
+is left unchanged, and any data this copy had before is kept as a backup
+file (db.sqlite3.bak) in the data folder. Delete the older copy and the
+backup once they are no longer needed - Automatic deletion does not clean
+them.
+
+
+22. MOVING THE DATA TO ANOTHER COMPUTER
+
+The data folder can only be moved to another computer with the
+University's approval, on a protected (encrypted) drive, and must be
+deleted from any drive used to carry it. The old computer's copy should be
+deleted once the move is confirmed.
+
+
+23. UNINSTALLING
+
+Uninstalling (Settings > Apps > EVSU SecureTap > Uninstall) asks whether to
+delete the data too. Choose Yes when the computer is given away, sold,
+repaired by outsiders or retired, so no personal information is left
+behind. Choose No only to install SecureTap again on the same computer.
+
+Note: deleting files does not always erase them from the drive
+completely. Before giving away or retiring a computer that held SecureTap
+data, the drive should be securely wiped (or Windows reset with the
+"clean the drive" option).
+
+
+24. CHANGES TO THIS POLICY
+
+This policy may be updated when SecureTap changes or the law changes. A
+new version comes with each new installer and replaces this one; the
+version number is at the top. Important changes should be announced to
+Users and registered persons.
+
+
+25. IMPORTANT NOTE ABOUT THIS PROJECT
 
 EVSU SecureTap is a capstone project. Before it is used at a real campus
-gate, the university's Data Protection Officer should review this policy and
-the system, and approve the consent form, the gate notice and the retention
-periods.
+gate, the University's Data Protection Officer should:
+  - review this policy and the System
+  - carry out a Privacy Impact Assessment
+  - approve the consent form, the gate notice and the retention periods
+  - register the System with the NPC if required
 
-A copy of this policy is installed with the app (Start menu: "EVSU SecureTap
-Privacy Policy").
+A copy of this policy is installed with the app (Start menu: "EVSU
+SecureTap Privacy Policy").

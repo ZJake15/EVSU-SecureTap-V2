@@ -39,7 +39,6 @@ def _write_last_session_summary(config, monitor):
                     "gate_location": config.gate_location,
                     "direction": config.direction,
                     "entries": monitor.stats.get("entries", 0),
-                    "exits": monitor.stats.get("exits", 0),
                     "unknown": monitor.stats.get("unknown", 0),
                     "spoof": monitor.stats.get("spoof", 0),
                     "occlusion": monitor.stats.get("occlusion", 0),
@@ -451,8 +450,7 @@ def main():
     try:
         summary = api_client.gate_summary(config.gate_location)
         monitor.seed_stats(
-            summary.get("entries_today", 0), summary.get("exits_today", 0),
-            summary.get("unknown_today", 0), summary.get("spoof_today", 0),
+            summary.get("entries_today", 0), summary.get("unknown_today", 0), summary.get("spoof_today", 0),
             summary.get("occlusion_today", 0),
         )
     except requests.RequestException:

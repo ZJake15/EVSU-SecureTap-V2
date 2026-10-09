@@ -244,8 +244,9 @@ DEFINITIONS = [
         "The guard on duty signs in at the gate monitor - with their password, or by tapping their own staff "
         "ID card (set on the Accounts page) - so every entry shows who was on duty. The gate keeps scanning "
         "when nobody is signed in; those entries are marked Unattended.",
-        BOOL, False,
-        note="A Security Officer can sign in only at their assigned gate; an Admin or SASO at any gate.",
+        BOOL, True,
+        note="On by default: the gate monitor asks for a guard whenever nobody is on duty. A Security Officer "
+             "can sign in only at their assigned gate; an Admin or SASO at any gate.",
     ),
     SettingDef(
         "gate_shift_hours", "security", "End a shift after",

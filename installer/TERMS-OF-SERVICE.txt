@@ -1,6 +1,6 @@
 EVSU SECURETAP - TERMS OF SERVICE
 Campus entry monitoring system, Eastern Visayas State University
-Version 1.1
+Version 1.2
 
 Please read these Terms carefully before installing. They are the rules for
 installing and using EVSU SecureTap. By choosing "I accept" and installing,
@@ -65,7 +65,7 @@ CONTENTS
   "Data"                   Everything the System stores: persons, face
                            photos, face fingerprints, entry records, gate
                            photos, accounts, settings and the Audit Log.
-  "Gate"                   A campus entrance or exit where SecureTap's
+  "Gate"                   A campus entrance where SecureTap's
                            camera and card reader are used.
 
 Words not defined here have the meaning given in the Privacy Policy.
@@ -74,13 +74,13 @@ Words not defined here have the meaning given in the Privacy Policy.
 2. WHAT SECURETAP IS - AND WHAT IT IS NOT
 
 SecureTap is a capstone project that helps campus security staff see who
-enters and leaves a gate, using face recognition, school ID cards and
+enters through a gate, using face recognition, school ID cards and
 manual entries by guards.
 
 SecureTap IS:
   - a tool that HELPS guards and the Office of Student Affairs and Services
     (SASO) at the gate
-  - a record of entries and exits for campus security
+  - a record of entries for campus security (leaving is not recorded)
   - a program that keeps all its Data on the computer it is installed on
 
 SecureTap is NOT:
@@ -273,7 +273,7 @@ must:
 12. ACCEPTABLE USE
 
 You may use SecureTap only to:
-  - check and record who enters and leaves the campus gates
+  - check and record who enters through the campus gates
   - register and manage the students and staff who consented
   - review entry records, gate photos, reports and the Audit Log for
     campus security

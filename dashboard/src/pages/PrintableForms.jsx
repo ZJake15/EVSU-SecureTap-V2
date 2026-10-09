@@ -78,8 +78,9 @@ function ConsentForm({ fields, policy }) {
       <section className="flex flex-col gap-s2">
         <h2 className="font-display stretch-semi text-sm font-bold">What this is</h2>
         <p>
-          EVSU SecureTap checks who enters and leaves the campus gates. A camera at the gate recognizes registered
-          students and staff by their face, a school ID card can be tapped instead, and each entry and exit is recorded.
+          EVSU SecureTap checks who enters the campus gates. A camera at the gate recognizes registered students and
+          staff by their face, a school ID card can be tapped instead, and each entry is recorded. Leaving campus is
+          not recorded.
           This form asks whether you agree to have <strong>your face registered</strong> for this.
         </p>
       </section>
@@ -92,7 +93,8 @@ function ConsentForm({ fields, policy }) {
             <li>up to 5 photos of your face, taken by staff with you present</li>
             <li>a &ldquo;face fingerprint&rdquo; made from each photo - numbers that describe your face; the photo
               can&rsquo;t be rebuilt from it</li>
-            <li>a record of each time you enter or leave: date, time, gate and how you were checked</li>
+            <li>a record of each time you enter campus: date, time, gate and how you were checked (leaving is not
+              recorded)</li>
           </ul>
         </div>
         <div className="flex flex-col gap-s2">
@@ -168,7 +170,7 @@ function GateNotice({ fields, policy }) {
   const photos = keptFor(policy?.keep_gate_photos_days, policy);
   const points = [
     ["users-three", "A camera here checks the face of everyone who passes - students, staff and visitors."],
-    ["identification-card", "Registered students and staff are recognized by face or school ID card. Every entry and exit is recorded."],
+    ["identification-card", "Registered students and staff are recognized by face or school ID card. Every entry is recorded; leaving is not."],
     ["user-circle-dashed", `If you are not registered, a photo of your face may be kept so the guard can see who was at the gate. Your face data is deleted after 1 day; these photos are ${photos}.`],
     ["video-camera-slash", "No video is recorded. Nothing is sent to the internet."],
     ["shield-check", "Used only for campus security, under the Data Privacy Act of 2012 (RA 10173)."],
@@ -182,7 +184,7 @@ function GateNotice({ fields, policy }) {
         <span className="font-display stretch-wide text-[44px] font-black leading-none tracking-[0.02em]">
           FACE RECOGNITION IN USE
         </span>
-        <span className="text-lg">This gate uses EVSU SecureTap to check who enters and leaves the campus.</span>
+        <span className="text-lg">This gate uses EVSU SecureTap to check who enters the campus.</span>
       </div>
       <ul className="flex flex-col gap-s4">
         {points.map(([icon, text]) => (

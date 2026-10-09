@@ -1,6 +1,6 @@
 EVSU SECURETAP - PRIVACY POLICY
 Campus entry monitoring system, Eastern Visayas State University
-Version 2.1
+Version 2.2
 
 Please read this before installing. By installing and using EVSU SecureTap,
 you agree to handle the personal information it collects as described here,
@@ -56,9 +56,9 @@ CONTENTS
                            compare it with another photo. The photo cannot
                            be rebuilt from it. (Also called a "face
                            embedding" or "face template".)
-  "Entry record"           One line in the records: who passed the gate,
-                           when, at which gate, in which direction and how
-                           they were checked.
+  "Entry record"           One line in the records: who came in through the
+                           gate, when, at which gate and how they were
+                           checked.
   "Personal information"   Any information that identifies a person, or
                            can be used to identify them, as defined in the
                            Data Privacy Act.
@@ -82,7 +82,8 @@ section 10).
 
 3. WHAT THIS SYSTEM DOES
 
-EVSU SecureTap checks who enters and leaves a campus gate:
+EVSU SecureTap checks who enters the campus through a gate. Leaving the
+campus is NOT checked or recorded.
 
   - A camera at the gate looks at the faces of people passing. Each face is
     turned into a face fingerprint and compared with the face fingerprints
@@ -94,8 +95,8 @@ EVSU SecureTap checks who enters and leaves a campus gate:
     for it - for example, when it is unsure, or for look-alikes and twins.
   - A guard can record an entry by hand when the camera or card reader
     cannot be used.
-  - Each entry or exit is recorded, and the guard on duty sees the result
-    on the gate monitor.
+  - Each entry is recorded, and the guard on duty sees the result on the
+    gate monitor.
 
 The camera checks EVERY face it sees at the gate - not only people who tap
 a card. This means visitors and passers-by are also seen by the camera. A
@@ -127,9 +128,9 @@ whom to contact (see section 18).
     Admin's decision
 
 4.2 At the gate (for everyone the camera sees)
-  - Each entry and exit: who (if recognized), date and time, which gate,
-    the direction (entry or exit), how they were checked (face, card,
-    face and card, or a guard's manual entry), the result (allowed,
+  - Each entry: who (if recognized), date and time, which gate, how they
+    were checked (face, card, face and card, or a guard's manual
+    entry), the result (allowed,
     refused, not recognized, suspected fake, and so on) and the reason
   - Technical details of the check: how closely the face matched, the
     real-face (spoof check) score, and whether the face looked covered
@@ -145,7 +146,7 @@ whom to contact (see section 18).
     attempts, spoof-check attempts, covered-face attempts, a pending card
     request). These are deleted after 1 day.
   - If the gate monitor briefly cannot reach the program behind it, card
-    taps waiting to be recorded (card number, gate, direction and time)
+    taps waiting to be recorded (card number, gate and time)
     are kept in a small queue on this computer and recorded as soon as it
     can. Faces are never queued.
 
@@ -169,7 +170,7 @@ frames are only looked at in the computer's memory and thrown away.
     sign-ins and sign-outs. Ordinary viewing is not logged.
 
 4.4 About this computer
-  - The camera and card reader chosen, the gate name and direction, and a
+  - The camera and card reader chosen, the gate name, and a
     speed test result for this computer. These are about the computer, not
     about people.
 
@@ -312,7 +313,7 @@ Admin turns it on. Once it is on, the System deletes, every day:
 
   What                                 Default        Can be set to
   -----------------------------------  -------------  ------------------
-  Entry and exit records               365 days       7 to 3650 days
+  Entry records                        365 days       7 to 3650 days
   Gate photos (unknown faces and       90 days        1 to 3650 days
   suspected fakes) - the record stays
   Audit Log entries                    kept forever   0 (forever) to

@@ -299,14 +299,15 @@ def fix_gate_key():
 # ---- an old copy's gate settings -------------------------------------------
 
 # entry-agent/.env lines that describe this gate's hardware and identity.
-GATE_ENV_KEYS = ("GATE_LOCATION", "DIRECTION", "CAMERA_INDEX", "CAMERA_EXPOSURE", "NFC_READER_USB_IDS",
-                 "OFFICER_NAME")
-LAUNCHER_KEYS = ("gate_location", "direction", "officer_name", "auto_launch_entry_agent")
+# (No direction: every gate checks people coming in - exits aren't recorded,
+# so an old copy's DIRECTION=exit isn't brought along.)
+GATE_ENV_KEYS = ("GATE_LOCATION", "CAMERA_INDEX", "CAMERA_EXPOSURE", "NFC_READER_USB_IDS", "OFFICER_NAME")
+LAUNCHER_KEYS = ("gate_location", "officer_name", "auto_launch_entry_agent")
 
 
 def import_gate_settings(old_root):
     """Brings an old copy's gate settings into this one: the launcher's
-    remembered gate, direction and guard name, and the entry-agent/.env
+    remembered gate and guard name, and the entry-agent/.env
     lines for the gate name, camera and card reader. Security Officer
     accounts only see their own gate's records, matched by its exact name -
     which is why the gate name has to come along with the data. Returns plain
@@ -325,8 +326,6 @@ def import_gate_settings(old_root):
         old_launcher = {}
     if not old_launcher.get("gate_location") and values.get("GATE_LOCATION"):
         old_launcher["gate_location"] = values["GATE_LOCATION"]
-    if not old_launcher.get("direction") and values.get("DIRECTION"):
-        old_launcher["direction"] = values["DIRECTION"]
     choices = {key: old_launcher[key] for key in LAUNCHER_KEYS if key in old_launcher}
     if choices:
         try:

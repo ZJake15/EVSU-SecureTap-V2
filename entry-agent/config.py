@@ -50,7 +50,9 @@ def load_config() -> Config:
     return Config(
         api_base_url=os.getenv("API_BASE_URL", "http://localhost:8000/api"),
         gate_location=os.getenv("GATE_LOCATION", "Main Gate"),
-        direction=os.getenv("DIRECTION", "entry"),
+        # Always "entry": SecureTap records people coming in, never leaving. An
+        # old .env's DIRECTION=exit is ignored.
+        direction="entry",
         service_token=os.getenv("SERVICE_TOKEN", ""),
         camera_index=int(os.getenv("CAMERA_INDEX", "0")),
         # A relative path (the template's "offline_queue.db") counts from the

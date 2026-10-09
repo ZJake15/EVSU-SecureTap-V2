@@ -105,7 +105,7 @@ class HealthView(APIView):
 
 
 class GateSummaryView(APIView):
-    """Today's Entries/Exits/Unknown counts for the entry-agent's own local
+    """Today's Entries/Unknown counts for the entry-agent's own local
     stats strip. This is a service-token-authenticated equivalent of the
     dashboard's /api/reports/summary (which requires a logged-in dashboard
     user, not something the entry-agent has) - deliberately lighter, just
@@ -126,9 +126,6 @@ class GateSummaryView(APIView):
         entries_today = logs.filter(
             direction=EntryLog.Direction.ENTRY, status=EntryLog.Status.SUCCESS
         ).count()
-        exits_today = logs.filter(
-            direction=EntryLog.Direction.EXIT, status=EntryLog.Status.SUCCESS
-        ).count()
         unknown_today = logs.filter(status=EntryLog.Status.FAILED).count()
         spoof_today = logs.filter(status=EntryLog.Status.SPOOF_SUSPECTED).count()
         occlusion_today = logs.filter(status=EntryLog.Status.OCCLUSION_DETECTED).count()
@@ -136,7 +133,6 @@ class GateSummaryView(APIView):
         return Response(
             {
                 "entries_today": entries_today,
-                "exits_today": exits_today,
                 "unknown_today": unknown_today,
                 "spoof_today": spoof_today,
                 "occlusion_today": occlusion_today,

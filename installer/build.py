@@ -215,6 +215,17 @@ def size_mb(path):
 
 def installer(version):
     step("Installer (Inno Setup)")
+    # An open Windows Sandbox from installer/sandbox_test.py keeps the output
+    # folder shared (locked); Inno Setup then fails with a cryptic
+    # "EndUpdateResource failed (32)".
+    sandbox = subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         "[bool](Get-Process -Name vmmemWindowsSandbox -ErrorAction SilentlyContinue)"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if sandbox == "True":
+        sys.exit("A Windows Sandbox is open and locks installer\\output - close its window (the X, then OK), "
+                 "then build again (--quick reuses this build's Python).")
     OUTPUT.mkdir(exist_ok=True)
     run([find_iscc(), f"/DAppVersion={version}", f"/DSourceDir={APP}", f"/O{OUTPUT}",
          INSTALLER / "SecureTap.iss"])

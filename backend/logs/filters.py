@@ -10,4 +10,4 @@ class EntryLogFilter(django_filters.FilterSet):
 
     class Meta:
         model = EntryLog
-        fields = ["status", "direction", "verification_method"]
+        fields = ["status", "verification_method"]

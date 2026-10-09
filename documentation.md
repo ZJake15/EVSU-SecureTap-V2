@@ -1,6 +1,8 @@
 # EVSU SecureTap — System Documentation
 
-A face-recognition + NFC-card gate entry/exit system for EVSU. A camera watches the
+A face-recognition + NFC-card gate entry system for EVSU (entries only - leaving
+campus isn't recorded; earlier versions recorded exits too, and migration
+`logs/0013` deleted those records). A camera watches the
 gate continuously and identifies people by face (1:N, ArcFace embeddings), checks
 that what it's looking at is a real live face (not a photo or screen), and an NFC
 card tap provides a second, independent verification channel that also resolves
@@ -763,7 +765,7 @@ that actually tells the two people apart, so the system reaches a *person* inste
 ### `logs` app
 - **EntryLog** — the permanent audit record of every gate event. Fields: `person`
   (nullable FK — stays `Unknown` if the person is later deleted), `timestamp`,
-  `direction` (`entry`/`exit`), `verification_method` (`nfc_only`, `face_only`,
+  `direction` (always `entry` now), `verification_method` (`nfc_only`, `face_only`,
   `manual_override`, `face_and_card_tiebreak`, `confusable_pair_tiebreak` — see
   §5.8/§2.2 step 4 — plus a legacy `nfc_and_face` value kept only for old rows),
   `status` (`success` / `failed` / `spoof_suspected`, plus `occlusion_detected`,
@@ -830,7 +832,7 @@ entry-agent is treated as a trusted device, not a logged-in user.
 | `/api/health` | GET | open | Liveness check (server up/down — unrelated to face liveness) |
 | `/api/identify` | POST | service token | Continuous camera-frame face identification + liveness check (§2.1, §5) |
 | `/api/verify` | POST | service token | NFC tap lookup, tiebreak resolution (§2.2) |
-| `/api/gate-summary` | GET | service token | Today's entries/exits/unknown/spoof/occlusion counts for the entry-agent's stats strip |
+| `/api/gate-summary` | GET | service token | Today's entries/unknown/spoof/occlusion counts for the entry-agent's stats strip |
 | `/api/logs/live` | GET | JWT (any role) | "New logs since X" feed for Live Monitoring (polling, not push) — gate-scoped, today-only for Security Officer (§13) |
 | `/api/logs/` | GET | JWT (any role) | Paginated, filterable log history (read-only) — same gate/today scoping for Security Officer |
 | `/api/logs/manual-override` | POST | JWT (Security Officer only) | Logs a scanner-failure entry by hand after a visual ID check (§13); always `verification_method=manual_override`, `performed_by=`the caller |
@@ -1151,7 +1153,7 @@ owns the Tk root, so closing it ends the process.
 - **Gate monitor** — a single window owning both credentials at once, so a guard
   watches one screen rather than alt-tabbing between two. It opens maximized.
   Under a maroon header (seal, EVSU SecureTap wordmark, "`<gate>` — live
-  monitoring", a large clock and date, and a white ENTRY/EXIT pill) it splits
+  monitoring", a large clock and date, and a white ENTRY pill) it splits
   into two columns, 7:5:
   - **Stats row** (top of the left column) — one large **Today** number, then
     **Entries / Unknown / Spoof / In frame**, each behind a thin divider. Driven
@@ -1194,7 +1196,7 @@ owns the Tk root, so closing it ends the process.
     event as a large card (a colored band with its word and time, then the
     photo, name, ID and match %), and every earlier one below it in a list, each
     row with photo, name, ID · time · confidence and its word. Both credentials
-    land here: `ENTRY`/`EXIT` for a face match, `UNKNOWN`, `SPOOF`, and `CARD · ENTRY`/`CARD REJECTED`/`QUEUED` for an NFC tap — so the log is
+    land here: `ENTRY` for a face match, `UNKNOWN`, `SPOOF`, and `CARD · ENTRY`/`CARD REJECTED`/`QUEUED` for an NFC tap — so the log is
     one chronological record of the gate regardless of how someone was
     identified. Non-routine rows get a tinted background and a colored left
     edge. An event whose encounter briefly included a covered face gets a
@@ -1257,17 +1259,17 @@ intact for the next retry. Camera-scan frames are **not** queued
 offline — a stale frame from minutes ago isn't considered worth logging once back
 online, so continuous scanning simply pauses/resumes with connectivity.
 
-**Configuration** (`.env`): API URL, gate location, direction (entry/exit),
-service token, camera index, officer name, optional manual camera exposure. These
-are the instance's persistent defaults — gate location, direction, and officer
-name can also be set per-launch from the system launcher's settings panel (§9.1)
-without editing this file, which then passes them to this process as environment
-variables (`GATE_LOCATION`/`DIRECTION`/`OFFICER_NAME`) that override the `.env`
-values for that one run only. Camera is still chosen independently, via the
-status-bar dropdown above, once the window is already open. Direction is still
-fixed for the life of one running instance — a gate serving both directions
-currently needs two separate entry-agent processes (one per direction) running at
-once, not a way to flip a single running instance mid-shift.
+**Configuration** (`.env`): API URL, gate location, service token, camera index,
+officer name, optional manual camera exposure. These are the instance's
+persistent defaults — gate location and officer name can also be set per-launch
+from the system launcher's settings panel (§9.1) without editing this file,
+which then passes them to this process as environment variables
+(`GATE_LOCATION`/`OFFICER_NAME`) that override the `.env` values for that one run
+only. Camera is still chosen independently, via the status-bar dropdown above,
+once the window is already open. **Every gate is an entry gate**: SecureTap
+records people coming in and never people leaving, so there's no direction to
+set (`config.direction` is always `entry`; an old `.env`'s `DIRECTION=exit` is
+ignored, and the backend refuses an exit).
 
 ### 9.1 System launcher (`launcher.py` / `SecureTap.bat`)
 
@@ -1318,7 +1320,7 @@ SQLite) and copies — through the same code as `copy_mysql_to_sqlite`
 (`configuration/datacopy.py`) — people and face data, entry records,
 accounts, settings, the audit log; then the photos (`backend/media`) and the
 trained covered-face model. The setup window then brings the gate's own
-settings: the launcher's remembered gate/direction/guard name, and the
+settings: the launcher's remembered gate/guard name, and the
 `entry-agent/.env` lines for gate name, camera and card reader — the gate
 name matters because Security Officer accounts see only their gate's records,
 matched by its exact name. Safety rules, each tested:
@@ -1381,11 +1383,12 @@ data over later, for instance) — the launcher comes back afterwards.
 Before opening the gate monitor, the launcher now also handles a few things a
 guard would otherwise only discover once already standing at the gate:
 
-- **Gate, direction, and guard name** are editable in a collapsed-by-default
+- **Gate and guard name** are editable in a collapsed-by-default
   "Entry Agent settings" panel and remembered locally between launches
   (`launcher_settings.json`, a per-machine file, not something checked into the
   repo) — see the entry-agent's own **Configuration** paragraph above for exactly
-  how these three values reach that process without editing `.env`.
+  how these values reach that process without editing `.env`. There's no
+  Entry/Exit choice: every gate is an entry gate.
 - **Pre-flight checks** run right before the Entry Agent button actually spawns
   the process: whether the backend currently responds, and a best-effort check
   for the NFC card reader via Windows' own Plug-and-Play device list, matched
@@ -1408,7 +1411,7 @@ guard would otherwise only discover once already standing at the gate:
 - **Startup notices.** If the offline queue (see "Offline resilience" above) has
   any NFC taps still waiting to sync, or a record exists of the previous gate
   monitor session (written to `last_session.json` when that window closes, with
-  its final entries/exits/unknown/spoof/occlusion counts, gate, direction, and
+  its final entries/unknown/spoof/occlusion counts, gate, and
   when it ended), both show on the launcher's main screen before anything is
   opened at all — the last session as a line, the unsynced taps as an amber
   notice.
@@ -1422,7 +1425,7 @@ Agent each as an icon + word (Ready / Running / Starting… / Not running /
 Failed), with a note under it when there's something to add ("Using a backend
 that was already running."); the two **choice cards**, Dashboard and Entry
 Agent; the startup notices; and one card holding the collapsed **Entry Agent
-settings** (showing the current gate and direction) and **Show log** (showing
+settings** (showing the current gate) and **Show log** (showing
 how many lines it holds). A footer carries the version and a red-outlined
 **Quit**.
 
@@ -1515,9 +1518,8 @@ knowing before extending the system:
   mismatches against `EntryLog.gate_location` rather than erroring, since there's
   no Gate model to validate either one against.
 - **Settings page (§8.2) limits** — there's still no gate list: gate names
-  remain free text typed on each guard PC and on each Security Officer account,
-  so "default direction per gate" isn't possible either (direction is set per
-  guard PC). The number of enrollment photos is fixed at 5 (one per guided
+  remain free text typed on each guard PC and on each Security Officer account.
+  The number of enrollment photos is fixed at 5 (one per guided
   pose). Automatic logout is enforced in the dashboard, not by the server — a
   stolen token still lasts until it expires (60 minutes, renewable for up to 12
   hours). A second backend process (if one were ever run) can take up to 5
@@ -1602,8 +1604,8 @@ knowing before extending the system:
   reader is unplugged mid-shift.
 - Only HID-keyboard-emulation NFC readers are supported; genuine PC/SC smart-card
   readers would need reintroducing the `pyscard` library.
-- One entry-agent instance = one camera = one fixed direction; no multi-camera
-  per gate, no automatic in/out direction detection.
+- One entry-agent instance = one camera; no multi-camera per gate. Entries only
+  - leaving campus isn't recorded at all.
 
 ---
 
@@ -1786,8 +1788,10 @@ failing closed on missing configuration rather than open.
 
 ### 13.4 Guard sign-in at the gate monitor
 
-Off by default (Settings → Security & Accounts → **Guards sign in at the gate
-monitor**). The gate monitor itself proves *which device* it is with the gate
+On by default (Settings → Security & Accounts → **Guards sign in at the gate
+monitor**); an Admin can switch it off there. A copy that had stored the old
+default, off, is switched on by migration `configuration/0002` - unless an
+Admin had chosen off themselves, which stays. The gate monitor itself proves *which device* it is with the gate
 key; this proves *which guard* is on duty, so "who was watching the gate?" has
 an answer.
 

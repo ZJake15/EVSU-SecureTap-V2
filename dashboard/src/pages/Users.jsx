@@ -346,7 +346,7 @@ export default function Users() {
 
   const handleDeletePermanently = async (person) => {
     const confirmed = window.confirm(
-      `Permanently delete ${person.full_name}? This cannot be undone. Their past entry/exit logs ` +
+      `Permanently delete ${person.full_name}? This cannot be undone. Their past entry logs` +
         `will stay, but will show "Unknown" instead of their name.`
     );
     if (!confirmed) return;

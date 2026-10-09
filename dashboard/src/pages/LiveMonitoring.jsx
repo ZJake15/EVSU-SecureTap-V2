@@ -87,7 +87,7 @@ function LatestPass({ event }) {
       <Avatar src={event.person_photo} name={event.person_name} size={120} />
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-s2">
         <span className="t-eyebrow">
-          Latest &middot; {event.gate_location || "Gate"} &middot; {event.direction}
+          Latest entry &middot; {event.gate_location || "Gate"}
         </span>
         <span className="truncate text-[28px] font-bold leading-tight">{event.person_name}</span>
         <div className="flex flex-wrap items-center gap-s4 text-sm">

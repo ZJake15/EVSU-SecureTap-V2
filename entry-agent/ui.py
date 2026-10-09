@@ -426,7 +426,6 @@ def _screen_work_area(window):
 # list - a routine pass stays plain white.
 LOG_KINDS = {
     "entry": {"color": VERIFIED, "icon": "sign-in", "word": "ENTRY"},
-    "exit": {"color": VERIFIED, "icon": "sign-out", "word": "EXIT"},
     "card": {"color": VERIFIED, "icon": "identification-card", "word": "CARD"},
     "unknown": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "user-circle-dashed", "word": "UNKNOWN", "sec": True},
     "spoof": {"color": DANGER, "tint": DANGER_TINT, "icon": "warning-octagon", "word": "SPOOF", "sec": True},
@@ -631,7 +630,7 @@ class GateMonitorWindow:
         self._seen_log_ids = set()
         self._log_entries = []  # newest first
         self._log_photo_images = []  # keeps CTkImage refs alive for the log list
-        self.stats = {"entries": 0, "exits": 0, "unknown": 0, "spoof": 0, "occlusion": 0}
+        self.stats = {"entries": 0, "unknown": 0, "spoof": 0, "occlusion": 0}
         self._alert = None  # {"kind": ..., "time": ..., "sub": ...} while the alarm banner shows
         # Settings page: "Alert on suspected fake face" - on until the
         # backend says otherwise (see set_alert_settings).
@@ -798,13 +797,13 @@ class GateMonitorWindow:
         # divider used to be missing.
         tk.Frame(header, bg=BRASS, width=max(1, self._px(1))).pack(side="left", fill="y", pady=26)
 
-        # Right side packs right-to-left: direction pill, then the clock.
+        # Right side packs right-to-left: the ENTRY pill (every gate checks
+        # people coming in - exits aren't recorded), then the clock.
         badge = ctk.CTkFrame(header, fg_color=SURFACE, corner_radius=round(s["badge"] * 1.1))
         badge.pack(side="right", padx=(26, s["pad"]))
-        direction = (self.direction or "entry").lower()
-        self._icon_label(badge, "sign-out" if direction == "exit" else "sign-in", round(s["badge"] * 1.0),
+        self._icon_label(badge, "sign-in", round(s["badge"] * 1.0),
                          MAROON_DEEP).pack(side="left", padx=(18, 8), pady=8)
-        self._label(badge, direction.upper(), (WIDE_HEAVY, s["badge"]), MAROON_DEEP).pack(
+        self._label(badge, "ENTRY", (WIDE_HEAVY, s["badge"]), MAROON_DEEP).pack(
             side="left", padx=(0, 22), pady=8
         )
 
@@ -1307,8 +1306,8 @@ class GateMonitorWindow:
     def show_offline(self, offline):
         self._queue.put(("offline", offline))
 
-    def seed_stats(self, entries_today, exits_today, unknown_today, spoof_today=0, occlusion_today=0):
-        self._queue.put(("seed", (entries_today, exits_today, unknown_today, spoof_today, occlusion_today)))
+    def seed_stats(self, entries_today, unknown_today, spoof_today=0, occlusion_today=0):
+        self._queue.put(("seed", (entries_today, unknown_today, spoof_today, occlusion_today)))
 
     def set_threshold(self, threshold):
         self._queue.put(("threshold", threshold))
@@ -1395,8 +1394,8 @@ class GateMonitorWindow:
         elif kind == "offline":
             self._render_offline(payload)
         elif kind == "seed":
-            entries, exits, unknown, spoof, occlusion = payload
-            self.stats["entries"], self.stats["exits"] = entries, exits
+            entries, unknown, spoof, occlusion = payload
+            self.stats["entries"] = entries
             self.stats["unknown"], self.stats["spoof"] = unknown, spoof
             self.stats["occlusion"] = occlusion
             self._refresh_stat_labels()
@@ -1834,8 +1833,7 @@ class GateMonitorWindow:
                 # the face's own "PLEASE UNCOVER YOUR FACE" label is all they get.
                 self.stats["occlusion"] += 1
             elif item["matched"]:
-                key = "exits" if item["direction"] == "exit" else "entries"
-                self.stats[key] += 1
+                self.stats["entries"] += 1
             else:
                 self.stats["unknown"] += 1
                 if item.get("repeated_unknown"):
@@ -1872,7 +1870,7 @@ class GateMonitorWindow:
         self.stat_tiles["entries"].configure(text=str(self.stats["entries"]))
         self.stat_tiles["unknown"].configure(text=str(self.stats["unknown"]))
         self.stat_tiles["spoof"].configure(text=str(self.stats["spoof"]))
-        self.stat_tiles["today"].configure(text=str(self.stats["entries"] + self.stats["exits"]))
+        self.stat_tiles["today"].configure(text=str(self.stats["entries"]))
 
     # ---- live log ---------------------------------------------------------
 
@@ -1915,9 +1913,8 @@ class GateMonitorWindow:
                 feature_word="PLEASE UNCOVER YOUR FACE", photo_bytes=item.get("photo_bytes"),
             )
         elif item["matched"]:
-            direction = "exit" if item["direction"] == "exit" else "entry"
             self._push_log_row(
-                kind=direction, name=item["name"], id_text=item.get("student_id") or "—", time=timestamp,
+                kind="entry", name=item["name"], id_text=item.get("student_id") or "—", time=timestamp,
                 conf=item.get("confidence"), photo_bytes=item.get("photo_bytes"),
                 initials_seed=item["name"], extra=extra,
             )
@@ -2267,7 +2264,7 @@ class GateMonitorWindow:
             label = item["name"]
             if item.get("confidence") is not None:
                 label = f"{label} · {item['confidence']}%"
-            return VERIFIED, "sign-out" if item.get("direction") == "exit" else "sign-in", label
+            return VERIFIED, "sign-in", label
         return CAUTION, "user-circle-dashed", "UNKNOWN"
 
     def _draw_box(self, item, origin_x, origin_y, img_w, img_h, src_w, src_h):

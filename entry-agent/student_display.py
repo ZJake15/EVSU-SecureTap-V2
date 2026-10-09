@@ -52,7 +52,6 @@ CARD_MESSAGE_SECONDS = 6.0
 # person's first name; "checking" takes the backend's hint when it has one.
 FACE_STYLES = {
     "entry": (VERIFIED, "check-circle", "Welcome, {name}"),
-    "exit": (VERIFIED, "check-circle", "Goodbye, {name}"),
     "unknown": (CAUTION, "user-circle-dashed", "Please see the guard"),
     "spoof": (DANGER, "warning-octagon", "Show your real face"),
     "uncover": (PROMPT, "hand-palm", "Please uncover your face"),
@@ -65,7 +64,6 @@ MESSAGES = {
     "ok": (SURFACE, INK, "scan-smiley", "Look at the camera as you walk in",
            "Keep your face uncovered. Tap your ID card if asked."),
     "welcome": (VERIFIED, SURFACE, "check-circle", "Entry recorded", "Have a good day."),
-    "goodbye": (VERIFIED, SURFACE, "check-circle", "Exit recorded", "Take care."),
     "guard": (CAUTION, SURFACE, "hand", "Please wait — the guard will assist you", "We could not recognize you."),
     "spoof": (DANGER, SURFACE, "warning-octagon", "Photos and screens are not accepted",
               "Please step forward and look at the camera yourself."),
@@ -82,7 +80,7 @@ MESSAGES = {
 
 # When several faces are in frame, the message bar speaks to the one that
 # most needs something done - highest first.
-MESSAGE_PRIORITY = ("spoof", "guard", "tap", "uncover", "welcome", "goodbye")
+MESSAGE_PRIORITY = ("spoof", "guard", "tap", "uncover", "welcome")
 
 
 def first_name(full_name):
@@ -107,12 +105,11 @@ def face_kind(item):
     if item.get("tiebreak"):
         return "tap"
     if item.get("matched"):
-        return "exit" if item.get("direction") == "exit" else "entry"
+        return "entry"
     return "unknown"
 
 
-FACE_MESSAGE = {"spoof": "spoof", "unknown": "guard", "tap": "tap", "uncover": "uncover",
-                "entry": "welcome", "exit": "goodbye"}
+FACE_MESSAGE = {"spoof": "spoof", "unknown": "guard", "tap": "tap", "uncover": "uncover", "entry": "welcome"}
 
 
 def _secondary_monitor():
@@ -248,7 +245,7 @@ class StudentDisplayWindow:
         problem - worth tapping again)."""
         key = {"rejected": "card", "deactivated": "card_inactive", "error": "card_retry"}.get(outcome)
         if key is None:
-            key = "goodbye" if self.direction == "exit" else "welcome"
+            key = "welcome"
         self._card_message = (key, time.monotonic())
 
     # ---- drawing --------------------------------------------------------
@@ -314,7 +311,7 @@ class StudentDisplayWindow:
         text_x = self._x(PAD + 56 + 20)
         title_room = c.bbox(clock_id)[0] - self._k * 26 - text_x
         self._text(text_x, self._y(21), f"EVSU · {self.gate_location.upper()}", WIDE_BLACK, 14, SURFACE, anchor="nw")
-        title = "See you next time" if self.direction == "exit" else "Welcome to campus"
+        title = "Welcome to campus"
         self._text(text_x, self._y(39), _ellipsize(self._font(SEMI_HEAVY, 36), title, title_room),
                    SEMI_HEAVY, 36, SURFACE, anchor="nw")
 
@@ -380,7 +377,7 @@ class StudentDisplayWindow:
 
         kind = face_kind(item)
         color, icon_name, label = FACE_STYLES[kind]
-        if kind in ("entry", "exit"):
+        if kind == "entry":
             label = label.format(name=first_name(item.get("name")))
         elif kind == "checking" and item.get("hint"):
             label = item["hint"]

@@ -243,7 +243,7 @@ def service_responds(url, timeout=1.0):
         return False
 
 
-# ---- launcher-remembered settings (gate, direction, guard name) -----------
+# ---- launcher-remembered settings (gate, guard name) -----------------------
 #
 # A small local JSON file rather than rewriting entry-agent/.env - .env is
 # meant to be a one-time deployment config a technician edits by hand
@@ -251,16 +251,15 @@ def service_responds(url, timeout=1.0):
 # overwrites underneath them on every launch. These three specific values are
 # passed to the entry-agent subprocess as environment variable OVERRIDES
 # instead (see _open_entry_agent below) - entry-agent/config.py already reads
-# GATE_LOCATION/DIRECTION/OFFICER_NAME from the environment with its own
+# GATE_LOCATION/OFFICER_NAME from the environment with its own
 # .env-file defaults, so this needs zero entry-agent code changes: an
 # environment variable already wins over python-dotenv's load_dotenv() when
 # both are set, because load_dotenv() doesn't override existing values.
 SETTINGS_PATH = device_setup.LAUNCHER_SETTINGS_PATH
 DEFAULT_GATE_LOCATION = "Main Gate"
-DEFAULT_DIRECTION = "entry"
 
 # Where main.py's on_close() writes a small summary of the session just
-# ended (entries/exits/unknown/spoof/occlusion counts, gate, direction, a
+# ended (entries/unknown/spoof/occlusion counts, gate, a
 # timestamp) - see entry-agent/main.py's _write_last_session_summary. Read
 # back here so the launcher can show "last session" before the entry-agent
 # is even opened again.
@@ -300,7 +299,7 @@ def _save_settings(settings):
     try:
         SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     except OSError:
-        pass  # best-effort - a remembered gate/direction is a convenience, not critical state
+        pass  # best-effort - a remembered gate is a convenience, not critical state
 
 
 def _read_app_version():
@@ -353,8 +352,7 @@ def _format_last_session_line(summary):
     except (KeyError, ValueError):
         ended = "an unknown time"
     return (
-        f"{summary.get('gate_location', '?')} ({summary.get('direction', '?')}): "
-        f"{summary.get('entries', 0)} entries, {summary.get('exits', 0)} exits, "
+        f"{summary.get('gate_location', '?')}: {summary.get('entries', 0)} entries, "
         f"{summary.get('unknown', 0)} unknown — ended {ended}"
     )
 
@@ -431,7 +429,7 @@ class ManagedProcess:
             # child inherits by default when env=None) rather than replacing
             # it outright - dropping PATH/PYTHONHOME etc. here would break
             # the child in ways that have nothing to do with what's actually
-            # being overridden (gate/direction/officer name).
+            # being overridden (gate/officer name).
             env = {**os.environ, **env_overrides}
         self.process = subprocess.Popen(
             args,
@@ -888,7 +886,7 @@ class LauncherWindow:
 
     def _build_settings_card(self):
         """Entry Agent settings and the log, as two expandable rows of one
-        white card. Settings = gate, direction and guard display name for the
+        white card. Settings = gate and guard display name for the
         NEXT entry-agent launch - collapsed by default since most launches
         reuse what was picked last time. Deliberately not inside the Entry
         Agent card: that card's whole surface is a click target for opening
@@ -916,13 +914,8 @@ class LauncherWindow:
         self.gate_entry.insert(0, self.settings.get("gate_location", DEFAULT_GATE_LOCATION))
         self.gate_entry.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         self.gate_entry.bind("<FocusOut>", lambda _e: self._save_current_settings())
-
-        ctk.CTkLabel(grid, text="Direction", font=(FONT, 14, "bold"), text_color=INK, anchor="w", height=20).grid(
-            row=0, column=1, sticky="w", padx=(16, 0)
-        )
-        self._direction = "exit" if self.settings.get("direction", DEFAULT_DIRECTION) == "exit" else "entry"
-        self.direction_selector = self._direction_toggle(grid)
-        self.direction_selector.grid(row=1, column=1, sticky="w", padx=(16, 0), pady=(6, 0))
+        # No Entry/Exit choice: every gate checks people coming in - SecureTap
+        # doesn't record exits.
 
         guard_label = ctk.CTkFrame(grid, fg_color="transparent")
         guard_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(16, 0))
@@ -1040,49 +1033,6 @@ class LauncherWindow:
             parent, height=44, corner_radius=3, border_width=1, border_color=LINE, fg_color=SURFACE,
             text_color=INK, font=(FONT, 14), placeholder_text=placeholder, placeholder_text_color=INK_400,
         )
-
-    def _direction_toggle(self, parent):
-        """Entry | Exit segmented control - the selected half solid ink, as in
-        the dashboard's own toggles. Built from frames rather than
-        CTkSegmentedButton, which uses one text color for both states."""
-        frame = ctk.CTkFrame(parent, fg_color=SURFACE, corner_radius=3, border_width=1, border_color=LINE,
-                             width=200, height=44)
-        frame.grid_propagate(False)
-        frame.grid_rowconfigure(0, weight=1)
-        frame.grid_columnconfigure((0, 2), weight=1, uniform="direction")
-        self._direction_halves = {}
-        options = (("entry", "Entry", "sign-in"), ("exit", "Exit", "sign-out"))
-        for column, (value, label, icon_name) in enumerate(options):
-            if column:
-                tk.Frame(frame, bg=LINE, width=1).grid(row=0, column=1, sticky="ns", pady=1)
-            half = ctk.CTkFrame(frame, fg_color=SURFACE, corner_radius=0, cursor="hand2")
-            half.grid(row=0, column=column * 2, sticky="nsew", padx=1, pady=1)
-            inner = ctk.CTkFrame(half, fg_color="transparent", cursor="hand2")
-            inner.place(relx=0.5, rely=0.5, anchor="center")
-            icon = _icon_label(inner, icon_name, 16, INK_600, cursor="hand2")
-            icon.pack(side="left", padx=(0, 6))
-            text = ctk.CTkLabel(inner, text=label, font=(FONT, 14, "bold"), text_color=INK_600, cursor="hand2")
-            text.pack(side="left")
-            for widget in (half, inner, icon, text):
-                widget.bind("<Button-1>", lambda _event, v=value: self._set_direction(v))
-            self._direction_halves[value] = (half, inner, icon, text)
-        self._render_direction()
-        return frame
-
-    def _set_direction(self, value):
-        self._direction = value
-        self._render_direction()
-        self._save_current_settings()
-
-    def _render_direction(self):
-        for value, (half, inner, icon, text) in self._direction_halves.items():
-            selected = value == self._direction
-            background = INK if selected else SURFACE
-            color = "white" if selected else INK_600
-            half.configure(fg_color=background)
-            inner.configure(fg_color=background)
-            icon.configure(text_color=color, fg_color=background)
-            text.configure(text_color=color, fg_color=background)
 
     def _build_footer(self):
         footer = ctk.CTkFrame(self.root, fg_color=SURFACE, corner_radius=0)
@@ -1351,12 +1301,9 @@ class LauncherWindow:
                 self._append_log("[launcher] opening the gate monitor was cancelled at the pre-flight warning")
                 return
 
-        self._append_log(
-            f"[launcher] starting entry-agent (gate={self.settings['gate_location']!r}, "
-            f"direction={self.settings['direction']!r})"
-        )
+        self._append_log(f"[launcher] starting entry-agent (gate={self.settings['gate_location']!r})")
         self._entry_agent_ready = False
-        # GATE_LOCATION/DIRECTION/OFFICER_NAME are the exact names
+        # GATE_LOCATION/OFFICER_NAME are the exact names
         # entry-agent/config.py already reads from the environment (with its
         # own entry-agent/.env-file defaults) - passing them as subprocess
         # environment overrides means this needed zero entry-agent code
@@ -1364,10 +1311,7 @@ class LauncherWindow:
         # hand. OFFICER_NAME is only overridden when the guard actually typed
         # one - an empty override would blank out .env's own default instead
         # of leaving it alone.
-        env_overrides = {
-            "GATE_LOCATION": self.settings["gate_location"],
-            "DIRECTION": self.settings["direction"],
-        }
+        env_overrides = {"GATE_LOCATION": self.settings["gate_location"]}
         if self.settings.get("officer_name"):
             env_overrides["OFFICER_NAME"] = self.settings["officer_name"]
         # The speed mode's video smoothness, upload size and scan pace.
@@ -1395,7 +1339,7 @@ class LauncherWindow:
             warnings.append(("plugs", "An older SecureTap is still running on this computer — the gate monitor "
                                       "would log into the old system. Close the old SecureTap first."))
         elif identity is None:
-            warnings.append(("plugs", "The backend isn't responding yet — entry/exit logging won't work until it is."))
+            warnings.append(("plugs", "The backend isn't responding yet — entries won't be recorded until it is."))
         reader_ids = _nfc_reader_usb_ids()
         if _detect_nfc_reader(reader_ids) is False:
             warnings.append((
@@ -1511,7 +1455,8 @@ class LauncherWindow:
         )
 
     def _mode_toggle(self, parent):
-        """Fast | Standard | Light, styled like the Entry | Exit toggle."""
+        """Fast | Standard | Light segmented control - the selected cell solid
+        ink, as in the dashboard's own toggles."""
         frame = ctk.CTkFrame(parent, fg_color=SURFACE, corner_radius=3, border_width=1, border_color=LINE,
                              width=330, height=44)
         frame.grid_propagate(False)
@@ -1787,20 +1732,20 @@ class LauncherWindow:
         blurred (no <FocusOut> fired yet) before "Entry Agent" was clicked."""
         return {
             "gate_location": self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION,
-            "direction": self._direction,
             "officer_name": self.guard_name_entry.get().strip(),
             "auto_launch_entry_agent": bool(self.auto_launch_var.get()),
         }
 
     def _save_current_settings(self):
-        # Merged, so what else is remembered here (the last backup) stays.
+        # Merged, so what else is remembered here (the last backup) stays -
+        # except the direction older versions saved (exits aren't recorded).
         self.settings = {**self.settings, **self._current_entry_agent_settings()}
+        self.settings.pop("direction", None)
         _save_settings(self.settings)
         self._update_settings_summary()
 
     def _update_settings_summary(self):
-        gate = self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION
-        self.settings_summary.configure(text=f"{gate} · {self._direction.capitalize()}")
+        self.settings_summary.configure(text=self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION)
 
     # ---- loading state ------------------------------------------------------
 

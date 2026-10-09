@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import apiClient from "../api/client";
 import StatusBadge, { STATUS_BAR } from "../components/StatusBadge";
-import { Checkbox, Field, Icon, Notice, PageHeader, Segmented } from "../components/ui";
+import { Checkbox, Field, Icon, Notice, PageHeader } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
 
 const PAGE_SIZE = 25;
 const emptyFilters = { date: "", user: "", gate: "", status: "" };
-const emptyOverrideForm = { student_or_employee_id: "", direction: "entry", reason: "" };
+// Entries only - SecureTap doesn't record exits, so there's no direction to
+// pick or show (the backend records every manual entry as an entry).
+const emptyOverrideForm = { student_or_employee_id: "", reason: "" };
 
-const ADMIN_COLS = "minmax(0,1.6fr) 160px 84px minmax(0,1.5fr) minmax(0,1.2fr) 52px minmax(0,1.3fr) minmax(0,90px)";
-const OFFICER_COLS = "minmax(0,1.5fr) 150px 76px minmax(0,1.4fr) minmax(0,1.1fr) 48px minmax(0,1.1fr) minmax(0,80px)";
+const ADMIN_COLS = "minmax(0,1.6fr) 160px minmax(0,1.5fr) minmax(0,1.2fr) 52px minmax(0,1.3fr) minmax(0,90px)";
+const OFFICER_COLS = "minmax(0,1.5fr) 150px minmax(0,1.4fr) minmax(0,1.1fr) 48px minmax(0,1.1fr) minmax(0,80px)";
 
 function formatTimestamp(value) {
   const date = new Date(value);
@@ -74,7 +76,7 @@ function ManualOverrideForm({ username, onLogged }) {
     setIsSubmitting(true);
     try {
       const { data } = await apiClient.post("/logs/manual-override", form);
-      setNotice(`Logged: ${data.person_name} (${data.direction}).`);
+      setNotice(`Entry logged: ${data.person_name}.`);
       setForm(emptyOverrideForm);
       onLogged();
     } catch (err) {
@@ -104,17 +106,6 @@ function ManualOverrideForm({ username, onLogged }) {
           className="input font-mono"
         />
       </Field>
-      <div className="flex flex-col gap-s2">
-        <span className="field-label">Direction</span>
-        <Segmented
-          value={form.direction}
-          onChange={(direction) => setForm((prev) => ({ ...prev, direction }))}
-          options={[
-            { value: "entry", label: "Entry", icon: "sign-in" },
-            { value: "exit", label: "Exit", icon: "sign-out" },
-          ]}
-        />
-      </div>
       <Field label="Reason">
         <textarea
           required
@@ -183,11 +174,10 @@ export default function Logs() {
   };
 
   const exportCsv = () => {
-    const header = ["Name", "Timestamp", "Direction", "Method", "Status", "Confidence", "Reason", "Gate", "On duty"];
+    const header = ["Name", "Timestamp", "Method", "Status", "Confidence", "Reason", "Gate", "On duty"];
     const rows = visibleLogs.map((log) => [
       log.person_name,
       log.timestamp,
-      log.direction,
       log.verification_method,
       log.status,
       log.match_confidence != null ? Math.round(log.match_confidence * 100) : "",
@@ -280,7 +270,6 @@ export default function Logs() {
               <div className="table-head grid h-9 items-center gap-s3 border-b border-line px-s4" style={{ gridTemplateColumns: cols }}>
                 <span>Name</span>
                 <span>Timestamp</span>
-                <span>Direction</span>
                 <span>Method</span>
                 <span>Status</span>
                 <span className="text-right">Conf.</span>
@@ -298,10 +287,6 @@ export default function Logs() {
                     <span className="truncate font-bold">{log.person_name || "Unknown"}</span>
                     <span className="whitespace-nowrap font-mono text-xs font-medium text-ink-600">
                       {formatTimestamp(log.timestamp)}
-                    </span>
-                    <span className="flex items-center gap-s1 capitalize">
-                      <Icon name={log.direction === "exit" ? "sign-out" : "sign-in"} size={16} className="text-ink-600" />
-                      {log.direction}
                     </span>
                     <MethodCell log={log} />
                     <StatusBadge status={log.status} />

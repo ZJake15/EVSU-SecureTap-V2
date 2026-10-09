@@ -6,8 +6,10 @@ from users.models import Person
 
 class EntryLog(models.Model):
     class Direction(models.TextChoices):
+        # Entries only: the university doesn't record people leaving, so every
+        # gate checks people coming in. Exits used to be recorded too -
+        # migration 0013 deleted those records.
         ENTRY = "entry", "Entry"
-        EXIT = "exit", "Exit"
 
     class VerificationMethod(models.TextChoices):
         # Kept for historical rows - the dual-check tap flow was replaced by

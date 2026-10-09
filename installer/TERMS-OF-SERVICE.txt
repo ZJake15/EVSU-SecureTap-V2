@@ -1,6 +1,6 @@
 EVSU SECURETAP - TERMS OF SERVICE
 Campus entry monitoring system, Eastern Visayas State University
-Version 1.0
+Version 1.1
 
 Please read these Terms carefully before installing. They are the rules for
 installing and using EVSU SecureTap. By choosing "I accept" and installing,
@@ -376,17 +376,24 @@ charge of it must:
 18. BACKUPS, UPDATES AND MOVING THE DATA
 
   - SecureTap keeps its Data in its own folder on this computer
-    (%LOCALAPPDATA%\EVSU SecureTap). The University is responsible for
-    deciding whether to back it up. Any backup must be protected
-    (encrypted), kept safe, and deleted when no longer needed.
+    (%LOCALAPPDATA%\EVSU SecureTap). The University decides how often it
+    is backed up and who may do it.
+  - Make backups only with the launcher's "Back up data", which locks
+    each backup file with a password. Never copy the data folder itself.
+  - Choose a strong backup password, keep it apart from the backup drive,
+    and share it only with the people allowed to restore the Data. If the
+    password is lost, the backup can't be opened - by anyone.
+  - Keep backup drives in a locked place, keep only the latest few
+    backups, and delete older ones when they are no longer needed.
   - Installing a newer version over an older one keeps the Data and
     updates it automatically. Install updates only from the project team
     or the University.
-  - When bringing Data over from an older copy of SecureTap, the older
-    copy is left unchanged, and the previous Data is kept as a backup
-    file. Delete them when they are no longer needed.
+  - When bringing Data over from an older copy of SecureTap or a backup,
+    the older copy or backup is left unchanged, and the previous Data is
+    kept as a backup file. Delete them when they are no longer needed.
   - Move the Data to another computer only with the University's
-    approval, and delete it from any drive used to carry it.
+    approval, using a password-locked backup, and delete it from any drive
+    used to carry it.
 
 
 19. HARDWARE AND THE COMPUTER IT RUNS ON

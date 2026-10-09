@@ -51,11 +51,19 @@ class SettingsView(APIView):
 class SessionPolicyView(APIView):
     """The few settings every signed-in dashboard user's page needs - not
     the whole Settings page, which is Admin only: when to log them out for
-    inactivity (0 = automatic logout off), and whether the Add Person form
-    offers single-photo registration (the server enforces that too)."""
+    inactivity (0 = automatic logout off), whether the Add Person form
+    offers single-photo registration (the server enforces that too), and
+    the retention periods the Printable forms page puts on the consent form
+    and gate notice (public anyway - they're printed on the gate notice)."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         minutes = store.get("idle_logout_minutes") if store.get("idle_logout_enabled") else 0
-        return Response({"idle_logout_minutes": minutes, "allow_single_photo": store.get("allow_single_photo")})
+        return Response({
+            "idle_logout_minutes": minutes,
+            "allow_single_photo": store.get("allow_single_photo"),
+            "auto_delete_enabled": store.get("auto_delete_enabled"),
+            "keep_entry_records_days": store.get("keep_entry_records_days"),
+            "keep_gate_photos_days": store.get("keep_gate_photos_days"),
+        })

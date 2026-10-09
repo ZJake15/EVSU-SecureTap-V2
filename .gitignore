@@ -14,6 +14,10 @@ backend/media/
 db.sqlite3
 db.sqlite3-*
 db.sqlite3.bak*
+# Backups from the launcher's "Back up data" - locked, but still everyone's
+# faces and records; they belong on a USB drive, never in git.
+*.securetap-backup
+*.securetap-backup.partial
 
 # Env / secrets
 .env

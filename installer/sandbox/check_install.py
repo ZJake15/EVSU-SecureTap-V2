@@ -93,6 +93,18 @@ def main():
     except Exception as exc:
         record("speed test (face AI, offline)", False, exc)
 
+    # The launcher's "Back up data", then unlocking it again as setup does.
+    backups = Path(os.environ["TEMP"]) / "securetap-check-backup"
+    unlocked = Path(os.environ["TEMP"]) / "securetap-check-unlocked"
+    backups.mkdir(exist_ok=True)
+    unlocked.mkdir(exist_ok=True)
+    code, output = manage("backup_data", str(backups), stdin=PASSWORD + "\n")
+    made = sorted(backups.glob("*.securetap-backup"))
+    if code == 0 and made:
+        code, output = manage("open_backup", str(made[0]), str(unlocked), stdin=PASSWORD + "\n")
+    record("backup made and unlocked", code == 0 and made and (unlocked / "backend" / "db.sqlite3").exists(),
+           output.splitlines()[-1] if output else "")
+
     check = subprocess.run(
         [PYTHON, "-c", "import config, camera, camera_select, ui, student_display, offline_queue, main; "
                        "c = config.load_config(); offline_queue.OfflineQueue(c.offline_db_path, None); "

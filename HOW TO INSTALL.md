@@ -43,6 +43,25 @@ That's it!
 
 ---
 
+## Back up your data (do this often)
+
+1. Open **EVSU SecureTap** and click **Back up data**, then **Back up now…**.
+2. Type a password twice (at least 10 characters). **Write it down** and keep it away from the USB drive - without it, nobody can open the backup.
+3. Choose your **USB drive** and wait for "Saved".
+
+**To bring it back** (new or repaired computer): **Speed mode → Run setup again → Your data → Choose backup file…**, then type the password.
+
+## Forms to print
+
+On the dashboard, open **Printable forms**:
+
+- **Consent form** - each student or employee signs it before their face is registered.
+- **Gate notice** - post it at the gate, where people see it before the camera.
+
+Click **Print**.
+
+---
+
 ## If something goes wrong
 
 | Problem | What to do |

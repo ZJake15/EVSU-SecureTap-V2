@@ -10,6 +10,7 @@ import Reports from "./pages/Reports";
 import SystemSettings from "./pages/SystemSettings";
 import AccountManagement from "./pages/AccountManagement";
 import AuditLog from "./pages/AuditLog";
+import PrintableForms from "./pages/PrintableForms";
 
 export default function App() {
   const { user } = useAuth();
@@ -47,6 +48,14 @@ export default function App() {
           element={
             <ProtectedRoute roles={["admin", "saso"]}>
               <AuditLog />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="forms"
+          element={
+            <ProtectedRoute roles={["admin", "saso"]}>
+              <PrintableForms />
             </ProtectedRoute>
           }
         />

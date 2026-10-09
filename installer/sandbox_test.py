@@ -3,7 +3,7 @@ throwaway Windows that's wiped when closed) with its internet switched OFF,
 installs installer/output/EVSU-SecureTap-Setup.exe silently there and runs
 installer/sandbox/check_install.py, then prints its results.
 
-    .venv\\Scripts\\python.exe installer\\sandbox_test.py         # automatic: 14 checks
+    .venv\\Scripts\\python.exe installer\\sandbox_test.py         # automatic: 15 checks
     .venv\\Scripts\\python.exe installer\\sandbox_test.py --try   # try it by hand
 
 --try opens a fresh Sandbox with the installer on its desktop, the webcam

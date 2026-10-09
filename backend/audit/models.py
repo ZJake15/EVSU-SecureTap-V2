@@ -48,6 +48,10 @@ class AuditLogEntry(models.Model):
         SETTING_CHANGED = "setting_changed", "Setting changed"
         # The scheduled clean-up (manage.py purge_old_data) - what it deleted.
         DATA_PURGED = "data_purged", "Old data deleted"
+        # A backup file saved from the launcher (manage.py backup_data) -
+        # everything in the system leaving it in one file, so it's recorded
+        # with where it went.
+        DATA_BACKED_UP = "data_backed_up", "Data backed up"
         # Failed login lockout tripped (Settings page, off by default).
         ACCOUNT_LOCKED = "account_locked", "Account locked"
         # A guard starting / ending a shift at a gate monitor (see

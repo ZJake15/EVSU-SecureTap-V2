@@ -13,6 +13,30 @@ body {
   min-height: 100vh;
 }
 
+/* Printing (the Printable forms page): one A4 sheet, the page's own frame
+   and the menu left off (print:hidden), and the maroon bands kept - browsers
+   drop background colors when printing unless told otherwise. */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+  body,
+  #root {
+    background: #ffffff;
+    min-height: 0;
+  }
+  .print-sheet {
+    border: 0;
+    padding: 0;
+    max-width: none;
+    min-height: 0;
+    height: calc(297mm - 24mm);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
 /* Type roles - hierarchy comes from Archivo's width axis as much as its size:
    condensed small caps for labels, semi-expanded for titles, expanded for the
    one hero number per page. */

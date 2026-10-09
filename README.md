@@ -133,7 +133,7 @@ That builds the dashboard into `dashboard/dist`, which **the backend serves at `
 
 Editing the dashboard? `npm run dev` still works (live reload at `http://localhost:5173`); it forwards `/api` and `/media` to the backend on port 8000.
 
-The dashboard loads its fonts (Archivo, Atkinson Hyperlegible Next, IBM Plex Mono) from Google Fonts, so it needs internet access to look as designed; offline it still works, just in the browser's default fonts. Its icons come from the `@phosphor-icons/web` npm package and work offline. The entry-agent and launcher don't need internet for this - their fonts are bundled in `entry-agent/assets/fonts/`. See `documentation.md` §8.1 for the design system.
+The dashboard's fonts (Archivo, Atkinson Hyperlegible Next, IBM Plex Mono) are bundled with it in `dashboard/src/assets/fonts/` (`src/fonts.css`), so it looks as designed with no internet and makes no request to Google. Its icons come from the `@phosphor-icons/web` npm package and work offline too. The entry-agent and launcher have their own bundled fonts in `entry-agent/assets/fonts/`. See `documentation.md` §8.1 for the design system.
 
 ## Getting your secrets
 
@@ -198,7 +198,7 @@ Afterwards use only the new desktop icon - don't run the old `SecureTap.bat` at 
 The first time `SecureTap.bat` opens on a computer, a setup window comes first (and again from the launcher's **Speed mode → Run setup again**). Each step that's already done is just confirmed:
 
 1. **Welcome** - creates `backend\.env` and `entry-agent\.env` from their templates, with a fresh secret key and a gate key written into both, so they match.
-2. **Your data** - start empty, keep the data that's already here, or **bring the data from an older SecureTap copy** on this computer (for example the one already set up on the presentation laptop). Point it at that copy's folder - it's found by itself when it sits next to this one or in Documents/Desktop/Downloads. Everything comes along: people and their faces, entry records, accounts (same usernames and passwords), settings, the audit log, the photos, the trained covered-face model, and the gate's own settings (gate name, direction, camera, card reader, guard name). Nobody has to be registered again. The old copy is only read, never changed - it can be MySQL (its MySQL service has to be running, and this copy needs `requirements-mysql.txt`) or SQLite. Afterwards it checks that every table arrived complete and that the faces still match their photos.
+2. **Your data** - start empty, keep the data that's already here, bring it back from a **backup file** (below), or **bring the data from an older SecureTap copy** on this computer (for example the one already set up on the presentation laptop). Point it at that copy's folder - it's found by itself when it sits next to this one or in Documents/Desktop/Downloads. Everything comes along: people and their faces, entry records, accounts (same usernames and passwords), settings, the audit log, the photos, the trained covered-face model, and the gate's own settings (gate name, direction, camera, card reader, guard name). Nobody has to be registered again. The old copy is only read, never changed - it can be MySQL (its MySQL service has to be running, and this copy needs `requirements-mysql.txt`) or SQLite. Afterwards it checks that every table arrived complete and that the faces still match their photos.
 3. **Admin account** - if there isn't one yet, you type the first one in (no default password exists). Further accounts are made on the dashboard.
 4. **Camera and card reader** - a quick check; it never stops you. It shows which camera the gate monitor will use: a **plugged-in (USB) camera always comes before the laptop's built-in one** (see "Which camera" below).
 5. **Speed test** - about half a minute: it times the gate's face check on this computer and picks a **speed mode** (below). You can pick a different one right there.
@@ -208,6 +208,12 @@ Command-line equivalents: `python manage.py import_securetap "C:\path\to\old\cop
 ### Where the data is kept
 
 Running from this code folder (as in the steps above), everything stays where it always was: `backend\.env`, `backend\db.sqlite3`, `backend\media\`, `entry-agent\.env` and so on. An **installed** copy (from the installer, which marks it with `securetap-installed.txt`) never writes into its program folder - everything goes to one data folder, `%LOCALAPPDATA%\EVSU SecureTap\` (`backend.env`, `entry-agent.env`, `db.sqlite3`, `media\`, the covered-face model, the card-tap queue, the speed mode and the launcher's settings), so reinstalling or updating never touches the students' data. `SECURETAP_DATA_DIR` points it somewhere else.
+
+### Backups
+
+In the launcher, open **Back up data → Back up now…**, choose a password (10+ characters, typed twice) and a folder - a USB drive is best; it warns if you pick this computer's own drive. It saves one file, `SecureTap backup <date> <time>.securetap-backup`, holding everyone registered with their faces and photos, the entry records, accounts, settings, the audit log and the gate's own settings - **locked with that password** (AES-256-GCM, key from the password with scrypt). Nothing readable is written to the drive, and **without the password nobody can open it**, so write it down and keep it apart from the drive. It's safe while the gate monitor runs. Each backup is recorded in the Audit Log, and the launcher shows when the last one was made (in caution colour after a week).
+
+To bring a backup back - on a new or repaired computer, or after a mistake: **Speed mode → Run setup again → Your data → Choose backup file…**, then the password. Any data already here is kept as `db.sqlite3.bak`. Command line: `python manage.py backup_data "E:\"` and `python manage.py open_backup <file> <empty folder>` followed by `import_securetap <that folder>` (both read the password from the first line of input).
 
 ### Speed modes
 
@@ -252,8 +258,8 @@ Then: log into the dashboard and register a real person via the Users page - gui
 
 This system processes **biometric data** (face embeddings, reference photos) on **everyone who passes the gate**, not just people who choose to tap a card - the continuous camera scan identifies every face it sees, including visitors and anyone else in view. This is a meaningfully bigger privacy footprint than a purely tap-triggered check, and falls under the **Philippine Data Privacy Act of 2012 (RA 10173)**. Before deploying this at an actual gate:
 
-- Collect explicit written consent for biometric data collection and processing from every student/staff member being enrolled.
-- Post clear, visible notice at the gate that facial recognition is in continuous operation, covering anyone who passes through - not just enrolled students/staff.
+- Collect explicit written consent for biometric data collection and processing from every student/staff member being enrolled - the dashboard's **Printable forms** page (Admin/SASO) prints a ready consent form, one A4 page with a parent/guardian section for minors.
+- Post clear, visible notice at the gate that facial recognition is in continuous operation, covering anyone who passes through - not just enrolled students/staff. The same page prints the gate notice, with the retention periods from the Settings page filled in.
 - Explain how the data will be used, stored, retained, and for how long - and set those periods under Settings → Privacy & Data Retention, then switch on Automatic deletion (it's off until you do, so nothing is ever deleted by default).
 - Provide a documented way to request correction or deletion.
 - Confirm this broader always-on scanning scope (versus a consent-gated tap-triggered check) is something the institution's data protection officer/process has actually signed off on.

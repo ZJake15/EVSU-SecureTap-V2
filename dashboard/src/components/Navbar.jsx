@@ -14,6 +14,7 @@ const ALL_LINKS = [
   { to: "/users", label: "User Management", icon: "users", roles: ["admin", "saso"] },
   { to: "/reports", label: "Reports", icon: "chart-bar", roles: ["admin", "saso"] },
   { to: "/audit-log", label: "Audit Log", icon: "clipboard-text", roles: ["admin", "saso"] },
+  { to: "/forms", label: "Printable forms", icon: "printer", roles: ["admin", "saso"] },
   { to: "/accounts", label: "Accounts", icon: "user-gear", roles: ["admin"] },
   { to: "/settings", label: "Settings", icon: "gear-six", roles: ["admin"] },
 ];
@@ -33,7 +34,7 @@ export default function Navbar() {
   const roleLabel = ROLE_LABELS[user?.role] || user?.role;
 
   return (
-    <aside className="sticky top-0 flex h-screen w-[72px] flex-none flex-col bg-maroon-deep pb-s4 pt-s5 text-white lg:w-[232px]">
+    <aside className="sticky top-0 flex h-screen w-[72px] flex-none flex-col bg-maroon-deep pb-s4 pt-s5 text-white lg:w-[232px] print:hidden">
       <div className="flex items-center gap-s3 px-4 pb-s6 lg:px-5">
         <img src={logo} alt="EVSU seal" className="h-10 w-10 flex-none" />
         <div className="hidden flex-col gap-0.5 lg:flex">

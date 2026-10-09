@@ -1,6 +1,6 @@
 EVSU SECURETAP - PRIVACY POLICY
 Campus entry monitoring system, Eastern Visayas State University
-Version 2.0
+Version 2.1
 
 Please read this before installing. By installing and using EVSU SecureTap,
 you agree to handle the personal information it collects as described here,
@@ -247,10 +247,9 @@ The gate monitor and the dashboard talk to the program behind them inside
 this computer only; they are not reachable from other computers on the
 network.
 
-The only internet use: when the computer is online, the dashboard
-downloads its text fonts from Google Fonts. No personal information is sent
-with that request, but, like any website visit, Google can see that this
-computer asked for the fonts.
+SecureTap does not use the internet at all. Even the dashboard's fonts and
+icons are part of the program, so nothing - not even a request for a font -
+goes to an outside server.
 
 
 9. WHO CAN SEE IT
@@ -447,6 +446,8 @@ the DPO or SASO.
     1 day, and leftover photo files are cleaned up automatically
   - The program and the data are kept in separate folders; installing an
     update never touches the data
+  - Backups are locked with a password (AES-256 encryption) as they are
+    written, so a lost backup drive shows nothing readable (section 21)
 
 No system is perfectly secure. Section 18 lists what Users and the
 University must do so these protections work.
@@ -512,18 +513,31 @@ automatically deleted by SecureTap. The User and the University are
 responsible for it: keep it only as long as needed, store it safely, and
 delete it when done.
 
-When data is brought over from an older copy of SecureTap, the older copy
-is left unchanged, and any data this copy had before is kept as a backup
-file (db.sqlite3.bak) in the data folder. Delete the older copy and the
-backup once they are no longer needed - Automatic deletion does not clean
-them.
+Backups: the launcher's "Back up data" saves everything - persons, face
+photos and face fingerprints, entry records, accounts, settings and the
+Audit Log - into one file, locked with a password chosen at that moment.
+The file is encrypted as it is written, and without the password nobody
+can open it. Each backup is recorded in the Audit Log with where it was
+saved. A backup holds the same personal information as the System, so:
+  - make backups only to keep the data safe, and only as often as needed
+  - keep the backup drive in a locked place, and the password apart from it
+  - keep only the latest few backups and delete older ones; Automatic
+    deletion does not reach backups, so data deleted from the System stays
+    in older backups until they are deleted
+  - restoring a backup brings back the data as it was when it was made
+
+When data is brought over from an older copy of SecureTap or a backup, the
+older copy or backup is left unchanged, and any data this copy had before is
+kept as a backup file (db.sqlite3.bak) in the data folder. Delete the older
+copy and the .bak file once they are no longer needed - Automatic deletion
+does not clean them.
 
 
 22. MOVING THE DATA TO ANOTHER COMPUTER
 
-The data folder can only be moved to another computer with the
-University's approval, on a protected (encrypted) drive, and must be
-deleted from any drive used to carry it. The old computer's copy should be
+The data can only be moved to another computer with the University's
+approval. Use a password-locked backup (section 21) to carry it, and delete
+the backup from the drive used to carry it once it has been restored. The old computer's copy should be
 deleted once the move is confirmed.
 
 

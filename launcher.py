@@ -33,7 +33,7 @@ import webbrowser
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 import requests
@@ -92,6 +92,12 @@ DASHBOARD_URL = "http://localhost:8000/"
 HEALTH_POLL_MS = 2000
 # How often the launcher re-runs the data clean-up while it stays open.
 CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+# "Back up data" (backend/manage.py backup_data): the row's hint turns to a
+# caution colour once the last backup is older than this. The password's
+# minimum length is configuration/backup_file.py's MIN_PASSWORD_LENGTH.
+BACKUP_REMINDER_DAYS = 7
+BACKUP_MIN_PASSWORD = 10
+BACKUP_RESULT_MARKER = "SECURETAP_RESULT"
 LOG_MAX_LINES = 500
 LOG_REFRESH_MS = 700
 
@@ -527,6 +533,7 @@ class LauncherWindow:
         # and the gate monitor when they start.
         self.profile = device_setup.load_profile()
         self._speed_test_running = False
+        self._backup_running = False
         # Set by "Run setup again" - main() reopens the setup window after
         # this window closes.
         self.setup_requested = False
@@ -966,6 +973,40 @@ class LauncherWindow:
         self.speed_note.pack(fill="x", pady=(10, 0))
         self._wrap_labels.append((self.speed_note, 34))
         self._render_speed()
+
+        # -- backup row --------------------------------------------------------
+        self.backup_rule = tk.Frame(card, bg=LINE, height=1)
+        self.backup_rule.pack(fill="x", padx=1)
+        self.backup_caret, self.backup_summary = self._accordion_row(card, "Back up data", self._toggle_backup_panel)
+        self.backup_panel_rule = tk.Frame(card, bg=LINE, height=1)
+        self.backup_panel = ctk.CTkFrame(card, fg_color="transparent")
+        self._backup_panel_visible = False
+        backup = ctk.CTkFrame(self.backup_panel, fg_color="transparent")
+        backup.pack(fill="x", padx=16, pady=16)
+        intro = ctk.CTkLabel(
+            backup, text="Saves everyone registered - their faces and photos - with the entry records, accounts and "
+                         "settings into one file, locked with a password you choose. Put it on a USB drive and keep "
+                         "it somewhere safe: if this computer breaks or is lost, setup can bring everything back "
+                         "from it.",
+            font=(FONT, 14), text_color=INK, anchor="w", justify="left",
+        )
+        intro.pack(fill="x")
+        self._wrap_labels.append((intro, 34))
+        buttons = ctk.CTkFrame(backup, fg_color="transparent")
+        buttons.pack(fill="x", pady=(14, 0))
+        self.backup_button = self._outline_button(buttons, "Back up now…", self._back_up)
+        self.backup_button.pack(side="left")
+        self.backup_note = ctk.CTkLabel(backup, text="", font=(FONT, 13), text_color=INK_600, anchor="w",
+                                        justify="left")
+        self.backup_note.pack(fill="x", pady=(10, 0))
+        self._wrap_labels.append((self.backup_note, 34))
+        restore = ctk.CTkLabel(
+            backup, text="To bring a backup back: Speed mode > Run setup again > Your data > Choose backup file.",
+            font=(FONT, 13), text_color=INK_600, anchor="w", justify="left",
+        )
+        restore.pack(fill="x", pady=(6, 0))
+        self._wrap_labels.append((restore, 34))
+        self._render_backup()
 
         # -- log row -----------------------------------------------------------
         self.log_rule = tk.Frame(card, bg=LINE, height=1)
@@ -1458,8 +1499,8 @@ class LauncherWindow:
             self.speed_panel_rule.pack_forget()
             self.speed_caret.configure(text=_icon("caret-right"))
         else:
-            self.speed_panel_rule.pack(fill="x", padx=1, before=self.log_rule)
-            self.speed_panel.pack(fill="x", before=self.log_rule)
+            self.speed_panel_rule.pack(fill="x", padx=1, before=self.backup_rule)
+            self.speed_panel.pack(fill="x", before=self.backup_rule)
             self.speed_caret.configure(text=_icon("caret-down"))
         self._speed_panel_visible = not self._speed_panel_visible
 
@@ -1583,6 +1624,163 @@ class LauncherWindow:
         self._stop_all()
         self.root.destroy()
 
+    # ---- backup ---------------------------------------------------------------
+
+    def _toggle_backup_panel(self):
+        if self._backup_panel_visible:
+            self.backup_panel.pack_forget()
+            self.backup_panel_rule.pack_forget()
+            self.backup_caret.configure(text=_icon("caret-right"))
+        else:
+            self.backup_panel_rule.pack(fill="x", padx=1, before=self.log_rule)
+            self.backup_panel.pack(fill="x", before=self.log_rule)
+            self.backup_caret.configure(text=_icon("caret-down"))
+        self._backup_panel_visible = not self._backup_panel_visible
+
+    def _render_backup(self):
+        """The row's hint: when the last backup was made - in caution colour
+        when there's none, or it's more than BACKUP_REMINDER_DAYS old."""
+        try:
+            last = datetime.fromisoformat(self.settings["last_backup_at"])
+        except (KeyError, TypeError, ValueError):
+            self.backup_summary.configure(text="Never backed up", text_color=CAUTION)
+            return
+        old = (datetime.now() - last).days > BACKUP_REMINDER_DAYS
+        self.backup_summary.configure(text=f"Last: {last:%d %b %Y}", text_color=CAUTION if old else INK_600)
+
+    def _backup_password_dialog(self):
+        """Asks for the backup's password twice, in the app's own look.
+        Returns the password, or None if cancelled."""
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("EVSU SecureTap")
+        dialog.configure(fg_color=SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.after(250, lambda: _apply_icon(dialog))
+        result = {"password": None}
+
+        body = ctk.CTkFrame(dialog, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=26, pady=(26, 20))
+        heading = ctk.CTkFrame(body, fg_color="transparent")
+        heading.pack(fill="x")
+        _icon_label(heading, "lock-simple", 24, INK).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(heading, text="Lock the backup with a password", font=(SEMI_HEAVY, 20), text_color=INK,
+                     anchor="w").pack(side="left")
+        ctk.CTkLabel(
+            body, text=f"At least {BACKUP_MIN_PASSWORD} characters. The backup can't be opened without it - not "
+                       "even by the SecureTap team - so write it down and keep it apart from the USB drive.",
+            font=(FONT, 14), text_color=INK, anchor="w", justify="left", wraplength=380,
+        ).pack(fill="x", pady=(12, 0))
+        fields = []
+        for label in ("Password", "Type it again"):
+            ctk.CTkLabel(body, text=label, font=(FONT, 14, "bold"), text_color=INK, anchor="w").pack(
+                fill="x", pady=(14, 0))
+            entry = self._entry(body)
+            entry.configure(show="•")
+            entry.pack(fill="x", pady=(6, 0))
+            fields.append(entry)
+        error = ctk.CTkLabel(body, text="", font=(FONT, 13, "bold"), text_color=DANGER, anchor="w", justify="left",
+                             wraplength=380)
+        error.pack(fill="x", pady=(8, 0))
+
+        def finish(save):
+            if save:
+                password, again = fields[0].get(), fields[1].get()
+                if len(password) < BACKUP_MIN_PASSWORD:
+                    error.configure(text=f"Use at least {BACKUP_MIN_PASSWORD} characters.")
+                    return
+                if password != again:
+                    error.configure(text="The two passwords aren't the same.")
+                    return
+                result["password"] = password
+            dialog.grab_release()
+            dialog.destroy()
+
+        buttons = ctk.CTkFrame(body, fg_color="transparent")
+        buttons.pack(fill="x", pady=(14, 0))
+        ctk.CTkButton(
+            buttons, text="Choose where to save  →", height=44, corner_radius=8, fg_color=MAROON,
+            hover_color=MAROON_DEEP, text_color="white", font=(FONT, 14, "bold"), command=lambda: finish(True),
+        ).pack(side="right")
+        ctk.CTkButton(
+            buttons, text="Cancel", width=90, height=44, corner_radius=8, fg_color=SURFACE, hover_color=CANVAS,
+            text_color=MAROON, font=(FONT, 14, "bold"), command=lambda: finish(False),
+        ).pack(side="right", padx=(0, 10))
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        dialog.bind("<Escape>", lambda _event: finish(False))
+        dialog.bind("<Return>", lambda _event: finish(True))
+        # Centered over the launcher, by the size it asks for - its actual
+        # size isn't known until Windows has drawn it.
+        dialog.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_reqwidth()) // 2
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dialog.winfo_reqheight()) // 3)
+        tk.Toplevel.geometry(dialog, f"+{max(0, x)}+{max(0, y)}")
+        dialog.grab_set()
+        dialog.focus_force()
+        fields[0].focus_set()
+        self.root.wait_window(dialog)
+        return result["password"]
+
+    def _back_up(self):
+        """Password, then a folder, then backend/manage.py backup_data in the
+        background (the password goes in through its input, never on its
+        command line). Safe while the backend and the gate monitor run."""
+        if self._backup_running:
+            return
+        password = self._backup_password_dialog()
+        if not password:
+            return
+        folder = filedialog.askdirectory(parent=self.root, title="Where should the backup go? (a USB drive, for example)")
+        if not folder:
+            return
+        data_drive = os.path.splitdrive(str(device_setup.DATA_DIR or ROOT))[0].upper()
+        if os.path.splitdrive(folder)[0].upper() == data_drive and not messagebox.askokcancel(
+            "Back up data",
+            "That folder is on this computer's own drive. If the computer breaks or is lost, the backup is lost "
+            "with it - a USB drive is safer.\n\nSave it there anyway?", parent=self.root,
+        ):
+            return
+        self._backup_running = True
+        self.backup_button.configure(state="disabled", text="Backing up…")
+        self.backup_note.configure(text="Saving the backup - a minute or so when there are many photos.",
+                                   text_color=INK_600)
+
+        def work():
+            result = subprocess.run(
+                [venv_python(), "manage.py", "backup_data", folder], cwd=BACKEND_DIR, input=password + "\n",
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3600,
+                creationflags=_NO_WINDOW,
+            )
+            return result.returncode, (result.stdout + result.stderr).strip()
+
+        def done(outcome):
+            self._backup_running = False
+            self.backup_button.configure(state="normal", text="Back up now…")
+            code, output = outcome if outcome else (1, "the backup didn't run")
+            lines = [line for line in output.splitlines() if line.strip()]
+            for line in lines:
+                if not line.startswith(BACKUP_RESULT_MARKER):
+                    self._append_log(f"[backup] {line}")
+            result = next((line for line in reversed(lines) if line.startswith(BACKUP_RESULT_MARKER)), None)
+            if code != 0 or result is None:
+                reason = next((line.split("Error:", 1)[1].strip() for line in reversed(lines) if "Error:" in line),
+                              lines[-1] if lines else "unknown error")
+                self.backup_note.configure(text=f"Couldn't make the backup: {reason}", text_color=DANGER)
+                return
+            made = json.loads(result.split(" ", 1)[1])
+            self.settings.update(last_backup_at=datetime.now().isoformat(timespec="minutes"),
+                                 last_backup_file=made["file"])
+            _save_settings(self.settings)
+            self._render_backup()
+            self.backup_note.configure(
+                text=f"Saved: {made['file']} ({made['size_mb']} MB - {made['people']} people, {made['entry_logs']} "
+                     "entry records). Keep the password safe: without it the backup can't be opened.",
+                text_color=VERIFIED,
+            )
+
+        self._run_in_background(work, done)
+
     def _current_entry_agent_settings(self):
         """Reads the settings widgets directly rather than trusting whatever
         was last saved - covers the case where a field was edited but never
@@ -1595,7 +1793,8 @@ class LauncherWindow:
         }
 
     def _save_current_settings(self):
-        self.settings = self._current_entry_agent_settings()
+        # Merged, so what else is remembered here (the last backup) stays.
+        self.settings = {**self.settings, **self._current_entry_agent_settings()}
         _save_settings(self.settings)
         self._update_settings_summary()
 

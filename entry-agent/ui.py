@@ -161,6 +161,7 @@ ICONS = {
     "plugs": "\ueb56",
     "check": "\ue182",
     "arrow-right": "\ue06c",
+    "lock-simple": "\ue308",
 }
 
 

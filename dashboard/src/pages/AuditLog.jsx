@@ -16,6 +16,7 @@ const ACTIONS = {
   confusable_pair_removed: { label: "Look-alike pair removed", icon: "users" },
   setting_changed: { label: "Setting changed", icon: "sliders-horizontal" },
   data_purged: { label: "Old data deleted", icon: "broom" },
+  data_backed_up: { label: "Data backed up", icon: "floppy-disk" },
   account_locked: { label: "Account locked", icon: "lock-simple", danger: true },
 };
 

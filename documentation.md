@@ -390,7 +390,7 @@ manual-override channel:
 | Component | Language | Framework / key libraries |
 |---|---|---|
 | **backend** | Python | Django 5.x, Django REST Framework, djangorestframework-simplejwt (JWT auth), django-filter, django-cors-headers, django-environ, WhiteNoise (serves the built dashboard), SQLite (built into Python; MySQL via `mysqlclient` optional), **InsightFace** (ArcFace) + **MiniFASNetV2** on **ONNX Runtime**, OpenCV, NumPy, Pillow (+ `pillow-heif` for iPhone HEIC photos, registered in `users/apps.py`), pandas + openpyxl (bulk import), bcrypt |
-| **dashboard** | JavaScript (React, JSX) | React 19, React Router 7, Axios, Recharts (charts), Tailwind CSS, `@phosphor-icons/web` (icons), `jwt-decode`, Vite (bundler; builds `dashboard/dist`, which the backend serves at `http://localhost:8000/` — Node.js is only needed to build it, not to run it); fonts Archivo, Atkinson Hyperlegible Next and IBM Plex Mono from Google Fonts |
+| **dashboard** | JavaScript (React, JSX) | React 19, React Router 7, Axios, Recharts (charts), Tailwind CSS, `@phosphor-icons/web` (icons), `jwt-decode`, Vite (bundler; builds `dashboard/dist`, which the backend serves at `http://localhost:8000/` — Node.js is only needed to build it, not to run it); fonts Archivo, Atkinson Hyperlegible Next and IBM Plex Mono, bundled in `dashboard/src/assets/fonts/` (no Google Fonts request) |
 | **entry-agent** | Python | CustomTkinter (UI), OpenCV (webcam capture only, no ML), Pillow, `requests` (HTTP client), `python-dotenv`, `winsound` (Windows alert tone), SQLite (offline queue); bundled fonts in `entry-agent/assets/fonts/` (see §8.1) |
 | **Database** | — | **SQLite** by default — one file (`backend/db.sqlite3`, or `DB_PATH`), nothing to install, WAL mode so the gate's frequent writes and the dashboard's reads don't block each other. **MySQL 8.0+** optional (`DB_ENGINE=mysql`), e.g. for a deployment with a separate database server; `manage.py copy_mysql_to_sqlite` moves existing data across |
 | **Face recognition model** | — | InsightFace `buffalo_s` model pack (ArcFace recognition + RetinaFace-family detection), run via ONNX Runtime, CPU only |
@@ -846,7 +846,7 @@ entry-agent is treated as a trusted device, not a logged-in user.
 | `/api/accounts/` | GET/POST/PUT/PATCH/DELETE | JWT (admin only) | Dashboard account (Admin/SASO/Security Officer) CRUD — Account Management |
 | `/api/audit-log/` | GET | JWT (admin/SASO) | Admin sees every entry; SASO sees only entries where they're the actor (§13) |
 | `/api/settings` | GET, PATCH | JWT (admin only — 403 for other roles) | Every setting with its value, limits and wording; PATCH `{"values": {...}, "confirmed": bool}` saves all-or-nothing (400 with per-setting errors, 409 if a risky change wasn't confirmed). See §8.2 |
-| `/api/session-policy` | GET | JWT (any role) | The two settings every page needs: inactivity-logout minutes (0 = off) and whether single-photo registration is allowed |
+| `/api/session-policy` | GET | JWT (any role) | The few settings every page needs: inactivity-logout minutes (0 = off), whether single-photo registration is allowed, and the retention periods (Automatic deletion on/off, entry-record and gate-photo days) the Printable forms page prints |
 | `/api/reports/summary` | GET | JWT (admin/SASO) | Daily/weekly counts, peak hour, by-method breakdown, confidence histogram, busiest hours |
 | `/api/reports/far-frr` | GET | JWT (admin/SASO) | Preliminary FAR/FRR table (§5.7) |
 | `/admin/` | — | Django superuser | Full Django admin panel |
@@ -989,6 +989,20 @@ the page's main action beside it. See §8.1 for the visual design system.
   (manual overrides) already shows up distinctly in Logs, not here. See §13.
   Filterable by actor and action; each action shows with its own icon, a
   permanent deletion in red, and a manual override with a brass left edge.
+- **Printable forms** *(admin/SASO)* — the two papers the privacy policy
+  requires before real use, each one A4 page printed with the browser's Print
+  (the menu and the page's own controls are left off the paper): the **consent
+  form** each student or employee signs before their face is registered (what's
+  kept and why, saying no and withdrawing, their rights under RA 10173,
+  signature lines, a parent/guardian section for minors, an office-use strip),
+  and the **gate notice** posted before the camera ("Face recognition in use",
+  what happens to visitors' faces, no video, how to ask for an ID check
+  instead, who to contact). A few fields fill in the wording — the contact,
+  the office that handles withdrawals, the other way in for people who say no,
+  the gate name — and are remembered in that browser. The retention periods
+  come from the Settings page through `/api/session-policy`; while Automatic
+  deletion is off, the paper says records are kept until the university
+  deletes them, and the page says so.
 - **Settings** *(Admin only — SASO and Security Officer get a 403 from the
   server)* — every setting that controls the system, in nine sections plus
   Advanced, each with a plain-English description, changeable from the page
@@ -1110,8 +1124,11 @@ from the redesign mockups in `docs/Redesign UI/` (brief: `docs/design-brief.md`)
 - **Spacing** — an asymmetric scale of 4 / 6 / 10 / 16 / 26 / 42 / 68 / 110px,
   corners of 3 / 8 / 14px.
 
-The dashboard loads the fonts from Google Fonts and the icons from the
-`@phosphor-icons/web` package; the tokens live in `dashboard/tailwind.config.js`
+The dashboard's fonts are bundled with it — the latin and latin-ext WOFF2
+files in `dashboard/src/assets/fonts/` (with their SIL Open Font License
+texts), declared under the same family names in `dashboard/src/fonts.css` — so
+it looks the same offline and makes no request to Google Fonts. The icons come
+from the `@phosphor-icons/web` package; the tokens live in `dashboard/tailwind.config.js`
 and shared pieces (icon, page header, notice, avatar, segmented toggle) in
 `dashboard/src/components/ui.jsx`. The two Windows apps can't use a web font, and
 Tk on Windows can't select a width or weight out of a variable font, so
@@ -1283,7 +1300,8 @@ five-step setup window comes first; anything already done is just confirmed:
    into both files (`ENTRY_AGENT_SERVICE_TOKEN` / `SERVICE_TOKEN`), so they
    can't mismatch. An existing `.env` is never touched.
 2. **Your data** — start empty, keep what's here, or bring everything over from
-   an older SecureTap copy's folder (`manage.py import_securetap`, below).
+   an older SecureTap copy's folder (`manage.py import_securetap`, below) or
+   from a backup file (`manage.py open_backup`, then the same import - below).
 3. **Admin account** — typed in here when there's no active Admin
    (`manage.py create_first_admin`, password passed on standard input, never the
    command line; the dashboard's own password rules apply). A fresh install
@@ -1317,6 +1335,27 @@ matched by its exact name. Safety rules, each tested:
   thrown away and the previous database put back. Every table's row count is
   compared afterwards, and a few stored faces are re-computed from their photos
   (similarity must be ≥ 0.98, else `recompute_embeddings` runs).
+
+**Backups (`backup_data` / `open_backup`).** The launcher's **Back up data**
+row saves everything into one file, `SecureTap backup <date> <time>.securetap-backup`,
+wherever the person chooses (a USB drive; it warns when the folder is on the
+computer's own drive). It asks for a password twice (10+ characters) and runs
+`manage.py backup_data <folder>` with the password on standard input. Inside
+(`configuration/backup_file.py`) is a zip laid out like a copy's folder — the
+database (copied with SQLite's own backup API, so it's consistent while the gate
+keeps scanning), the photos, the covered-face model, the time zone and the
+gate's own settings, never the gate key or secret key — encrypted as it's
+written with AES-256-GCM under a key made from the password with scrypt
+(2^16 × 8, 64 MB), so nothing readable reaches the drive and any change to the
+file is detected. The file only gets its real name once complete. Each backup
+is an Audit Log entry ("Data backed up", with where it went), and the row's
+hint shows the last backup date, in caution colour after 7 days. To bring one
+back: **Run setup again → Your data → Choose backup file…** — `open_backup`
+checks the password (a wrong one is told at once, from a check value stored
+with the scrypt salt) and unlocks into a temporary folder, `import_securetap`
+reads that folder like an old copy (all its safety rules apply), and the
+temporary folder is deleted whatever happens. Without the password the file
+can't be opened by anyone.
 
 **Where the data lives (`SECURETAP_DATA_DIR`).** An installed copy can't
 write into its program folder, and reinstalling it must never touch the

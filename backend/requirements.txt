@@ -33,6 +33,9 @@ pillow-heif>=0.18
 pandas>=2.2
 openpyxl>=3.1
 bcrypt>=4.2
+# Locks backup files with the password chosen when backing up (AES-GCM) -
+# configuration/backup_file.py.
+cryptography>=44
 # Occlusion-quality classifier (RandomForestClassifier) - train_occlusion_
 # classifier.py only; not used anywhere in the live gate-scan pipeline yet.
 scikit-learn>=1.5

@@ -55,7 +55,7 @@ VC_RUNTIME = ("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp14
 # Imported by the check after building - one per library the system needs.
 IMPORT_CHECK = ("django, rest_framework, rest_framework_simplejwt, django_filters, corsheaders, environ, dotenv, "
                 "whitenoise, insightface, onnxruntime, cv2, numpy, PIL, pillow_heif, pandas, openpyxl, bcrypt, "
-                "sklearn, joblib, MySQLdb, customtkinter, requests, pygrabber, tkinter")
+                "sklearn, joblib, MySQLdb, customtkinter, requests, pygrabber, tkinter, cryptography")
 
 
 def step(message):
@@ -151,6 +151,13 @@ def program_files():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
     print(f"   {len(listed)} files")
+    # New files git doesn't know about yet are left out - say so, or a new
+    # command or page silently goes missing from the installer.
+    untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "--", *CODE], cwd=REPO,
+                               capture_output=True, text=True, check=True).stdout.split()
+    if untracked:
+        print("   NOT INCLUDED (not added to git yet - `git add` them if they belong in the program): "
+              + ", ".join(untracked))
 
 
 def dashboard():

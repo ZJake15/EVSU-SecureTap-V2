@@ -17,11 +17,13 @@ Every long step runs off the Tk thread, so the window never freezes.
 
 import json
 import queue
+import shutil
 import subprocess
+import tempfile
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 
 import customtkinter as ctk
 from PIL import Image
@@ -62,6 +64,9 @@ CONTENT_WIDTH = 560
 # the setup window's progress log.
 _NOISE = ("Applied providers", "model ignore", "find model", "set det-size", "FutureWarning", "tform.estimate")
 RESULT_MARKER = "SECURETAP_RESULT"
+# A backup made with the launcher's "Back up data" (backend: manage.py
+# backup_data) - backend/configuration/backup_file.py's SUFFIX.
+BACKUP_SUFFIX = ".securetap-backup"
 
 
 def _icon_label(parent, name, size, color, bold=True, **kwargs):
@@ -289,6 +294,9 @@ class SetupWizard:
         log.pack(fill="x", pady=(10, 0))
         log.configure(state="disabled")
         label.bar = bar
+        # It's added under the page's choices - scroll down to it, or a short
+        # window hides the progress (and any error) below the fold.
+        self.root.after(100, lambda: self.body._parent_canvas.yview_moveto(1.0))
         return label, log
 
     @staticmethod
@@ -329,14 +337,19 @@ class SetupWizard:
         )
         return result.returncode, (result.stdout + result.stderr).strip()
 
-    def _stream(self, args, log_box, done):
+    def _stream(self, args, log_box, done, secret=None):
         """Runs backend/manage.py with args, showing its output in log_box as
-        it comes, then done(exit code, all output lines) on the Tk thread."""
+        it comes, then done(exit code, all output lines) on the Tk thread.
+        secret (a password) goes in as the first line of its input - never
+        on the command line, where other programs could see it."""
         process = subprocess.Popen(
             [self.python, "-u", "manage.py", *args], cwd=BACKEND_DIR, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-            creationflags=_NO_WINDOW,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL if secret is None else subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", creationflags=_NO_WINDOW,
         )
+        if secret is not None:
+            process.stdin.write(secret + "\n")
+            process.stdin.close()
         lines = []
 
         def pump():
@@ -441,32 +454,33 @@ class SetupWizard:
                                      f"{status['entry_logs']} entry records and {status['accounts']} accounts.",
                        INK_600)
             options = [("keep", "Keep this data", "Nothing is changed."),
-                       ("import", "Replace it with another copy's data",
+                       ("import", "Replace it with another copy's data, or a backup's",
                         "The data here is kept as a backup file, not deleted.")]
             selected = "keep"
         else:
-            self._text(self.content, "Do you have an older SecureTap copy with people already enrolled? Bring its "
-                                     "data over so nobody has to be registered again.", INK_600)
-            options = [("import", "Bring the data from an older copy",
+            self._text(self.content, "Do you have an older SecureTap copy with people already enrolled, or a backup "
+                                     "file? Bring its data over so nobody has to be registered again.", INK_600)
+            options = [("import", "Bring the data from an older copy or a backup",
                         "People and their faces, entry records, accounts, settings, photos and the gate's own "
-                        "settings come along. The old copy isn't changed."),
+                        "settings come along. The old copy or backup isn't changed."),
                        ("empty", "Start empty", "No people yet - register them on the dashboard.")]
             selected = "import" if self._old_copies else "empty"
         self._data_choice = self._choices(options, selected, on_change=self._toggle_folder_picker)
 
         self._folder_card = ctk.CTkFrame(self.content, fg_color="transparent")
-        ctk.CTkLabel(self._folder_card, text="The older copy's folder", font=(FONT, 14, "bold"), text_color=INK,
-                     anchor="w").pack(fill="x")
+        ctk.CTkLabel(self._folder_card, text="The older copy's folder, or a backup file", font=(FONT, 14, "bold"),
+                     text_color=INK, anchor="w").pack(fill="x")
+        ctk.CTkEntry(self._folder_card, textvariable=self._folder, height=40, corner_radius=3, border_width=1,
+                     border_color=LINE, fg_color=SURFACE, text_color=INK, font=(FONT, 13)).pack(fill="x", pady=(6, 0))
         row = ctk.CTkFrame(self._folder_card, fg_color="transparent")
-        row.pack(fill="x", pady=(6, 0))
-        ctk.CTkButton(row, text="Choose folder...", font=(FONT, 14, "bold"), height=40, corner_radius=8,
-                      fg_color=SURFACE, hover_color=CANVAS, text_color=INK, border_width=1, border_color=LINE,
-                      command=self._pick_folder).pack(side="right", padx=(10, 0))
-        ctk.CTkEntry(row, textvariable=self._folder, height=40, corner_radius=3, border_width=1, border_color=LINE,
-                     fg_color=SURFACE, text_color=INK, font=(FONT, 13)).pack(side="left", fill="x", expand=True)
+        row.pack(fill="x", pady=(8, 0))
+        for text, command in (("Choose folder...", self._pick_folder), ("Choose backup file...", self._pick_backup_file)):
+            ctk.CTkButton(row, text=text, font=(FONT, 14, "bold"), height=40, corner_radius=8, fg_color=SURFACE,
+                          hover_color=CANVAS, text_color=INK, border_width=1, border_color=LINE,
+                          command=command).pack(side="left", padx=(0, 10))
         hint = ("Found on this computer: " + ", ".join(str(path) for path in self._old_copies[:3])
                 if self._old_copies else "The folder that holds the old copy's backend, dashboard and entry-agent "
-                                         "folders.")
+                                         "folders - or a backup file made with \"Back up data\" in the launcher.")
         ctk.CTkLabel(self._folder_card, text=hint, font=(FONT, 12), text_color=INK_600, anchor="w", justify="left",
                      wraplength=CONTENT_WIDTH).pack(fill="x", pady=(4, 0))
         self._toggle_folder_picker(selected)
@@ -483,6 +497,14 @@ class SetupWizard:
         if chosen:
             self._folder.set(str(Path(chosen)))
 
+    def _pick_backup_file(self):
+        chosen = filedialog.askopenfilename(
+            parent=self.root, title="Choose the SecureTap backup file",
+            filetypes=[("SecureTap backup", "*" + BACKUP_SUFFIX), ("All files", "*.*")],
+        )
+        if chosen:
+            self._folder.set(str(Path(chosen)))
+
     def _apply_data_choice(self):
         choice = self._data_choice.get()
         if choice in ("keep", "empty"):
@@ -493,6 +515,26 @@ class SetupWizard:
             return
 
         folder = self._folder.get().strip()
+        is_backup = bool(folder) and Path(folder).is_file() and folder.lower().endswith(BACKUP_SUFFIX)
+        if is_backup:
+            if self._backend_running():
+                messagebox.showerror(
+                    "Close the other SecureTap first",
+                    "A SecureTap backend is already running on this computer. Close it (and its launcher) first, so "
+                    "the data can be brought in safely.", parent=self.root)
+                return
+            replacing = any(self.status.get(key) for key in ("people", "entry_logs", "accounts"))
+            if replacing and not messagebox.askokcancel(
+                "Replace this computer's data?",
+                f"This replaces the data here ({self.status['people']} people, {self.status['entry_logs']} entry "
+                "records) with the backup's. The current data is kept as a backup file (db.sqlite3.bak).",
+                parent=self.root):
+                return
+            password = simpledialog.askstring(
+                "Backup password", "The password this backup was locked with:", show="•", parent=self.root)
+            if password:
+                self._run_restore(folder, password, replacing)
+            return
         if not folder or not _is_securetap_folder(folder):
             messagebox.showerror("Choose the older copy", "That folder isn't a SecureTap copy - choose the folder "
                                  "that holds its backend, dashboard and entry-agent folders.", parent=self.root)
@@ -538,7 +580,33 @@ class SetupWizard:
 
         self._stream(["migrate"], log, done)
 
-    def _run_import(self, folder, replacing):
+    def _run_restore(self, backup, password, replacing):
+        """Unlocks a backup file into a temporary folder (manage.py
+        open_backup), then brings it in like an old copy. The unlocked folder
+        holds the photos and database readable, so it's deleted again
+        whatever happens."""
+        self._set_busy(True)
+        label, log = self._progress("Unlocking the backup...")
+        unlocked = tempfile.mkdtemp(prefix="securetap_restore_")
+
+        def done(code, lines):
+            label.bar.stop()
+            if code != 0:
+                shutil.rmtree(unlocked, ignore_errors=True)
+                self._set_busy(False)
+                label.configure(text="Couldn't open the backup: " + self._error_from("\n".join(lines)),
+                                text_color=DANGER)
+                self._set_primary("Try again", self._apply_data_choice)
+                return
+            label.configure(text="The backup is unlocked.", text_color=VERIFIED)
+            self._run_import(unlocked, replacing, source=backup, cleanup=unlocked)
+
+        self._stream(["open_backup", backup, unlocked], log, done, secret=password)
+
+    def _run_import(self, folder, replacing, source=None, cleanup=None):
+        """Brings the data in from folder. source: what to call it on the
+        result page (the backup file, for a restore); cleanup: a temporary
+        folder to delete once the import is done."""
         self._set_busy(True)
         label, log = self._progress("Bringing the data over... (a minute or two for a lot of photos)")
         args = ["import_securetap", folder] + (["--replace"] if replacing else [])
@@ -546,6 +614,8 @@ class SetupWizard:
         def done(code, lines):
             label.bar.stop()
             if code != 0:
+                if cleanup:
+                    shutil.rmtree(cleanup, ignore_errors=True)
                 self._set_busy(False)
                 label.configure(text="Couldn't bring the data over: " + self._error_from("\n".join(lines)),
                                 text_color=DANGER)
@@ -558,7 +628,9 @@ class SetupWizard:
             except OSError as exc:
                 brought = []
                 self._log(log, f"Couldn't bring the gate settings over: {exc}")
-            self.imported_from = folder
+            if cleanup:
+                shutil.rmtree(cleanup, ignore_errors=True)
+            self.imported_from = source or folder
             if result.get("faces_need_recompute"):
                 label.configure(text="Updating the face data for this copy's face model...")
                 label.bar.start()
@@ -577,8 +649,9 @@ class SetupWizard:
             # A clean page for the result - the choices above it are done with.
             self._set_busy(False)
             self._step(1, "Your data", "Continue", self._show_admin)
-            self._text(self.content, f"The data from {self.imported_from} is here. The old copy wasn't changed.",
-                       INK_600)
+            unchanged = ("The backup file wasn't changed." if str(self.imported_from).lower().endswith(BACKUP_SUFFIX)
+                         else "The old copy wasn't changed.")
+            self._text(self.content, f"The data from {self.imported_from} is here. {unchanged}", INK_600)
             card = self._card()
             self._status_row(card, True, f"{result.get('people', 0)} people with {result.get('faces', 0)} face "
                                          f"photos' data, {result.get('entry_logs', 0)} entry records and "

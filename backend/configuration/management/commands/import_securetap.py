@@ -4,7 +4,7 @@
     python manage.py import_securetap "C:\\path\\to\\the\\old\\copy" --replace
 
 Point it at the old copy's folder (the one holding backend\\, dashboard\\,
-entry-agent\\). It reads that copy's database settings from its own
+entry-agent\\), or at a backup unlocked by manage.py open_backup. It reads that copy's database settings from its own
 backend\\.env - MySQL or SQLite - and copies into this copy's SQLite
 database:
   - the database: people and their faces, entry records, accounts, settings,
@@ -38,7 +38,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError, connections
 from dotenv import dotenv_values
 
-from configuration import datacopy
+from configuration import backup_file, datacopy
 
 RESULT_MARKER = "SECURETAP_RESULT"
 # Re-computing a stored photo's face fingerprint should give the stored one
@@ -139,7 +139,9 @@ class Command(BaseCommand):
         write = self.stdout.write
         old_root = Path(options["folder"]).expanduser().resolve()
         old_backend = old_root / "backend"
-        if not (old_backend / "manage.py").exists():
+        # An unlocked backup (manage.py open_backup) is laid out like a copy,
+        # just without the program files.
+        if not (old_backend / "manage.py").exists() and not backup_file.is_unlocked_backup(old_root):
             raise CommandError(f"{old_root} isn't a SecureTap folder - it has no backend\\manage.py.")
         if old_backend == Path(settings.BASE_DIR).resolve():
             raise CommandError("That's this copy's own folder - choose the other copy's folder.")

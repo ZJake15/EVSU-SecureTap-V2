@@ -1792,7 +1792,12 @@ key; this proves *which guard* is on duty, so "who was watching the gate?" has
 an answer.
 
 - **Signing in.** The status bar shows an amber **No guard signed in · Sign
-  in**. The guard either types their own dashboard username and password, or
+  in**, and the **sign-in window opens by itself** whenever nobody is on duty
+  — when the gate monitor opens, and the moment a shift ends (signed out, or
+  the shift timed out). **Not now** puts it away; it asks again 5 minutes later
+  (`ui.SIGN_IN_REMIND_MS`) while the post is still empty. It never stops the
+  gate: scanning and card taps carry on behind it, and those entries are marked
+  Unattended. The guard either types their own dashboard username and password, or
   **taps their own staff ID card** — `AdminProfile.staff_card_id`, set once on
   the Accounts page by tapping the card into the field. A staff card is never
   looked up as a student: `/api/verify` checks staff cards first and never logs

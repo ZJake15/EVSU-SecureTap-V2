@@ -60,6 +60,9 @@ VIDEO_BG = INK
 
 FOCUS_CHECK_MS = 300
 RESET_DELAY_MS = 8000
+# Guard sign-in on: with nobody on duty the sign-in window opens by itself;
+# "Not now" puts it away for this long, then it asks again.
+SIGN_IN_REMIND_MS = 5 * 60 * 1000
 # ~15 fps - smooth enough for a live view, and on a low-power laptop (the
 # Intel N100 the system is presented on) it leaves CPU for the face AI.
 VIDEO_REFRESH_MS = 66
@@ -586,6 +589,8 @@ class GateMonitorWindow:
         self._on_sign_out = on_sign_out
         self._sign_in = {"enabled": False, "on_duty": None}
         self._sign_in_dialog = None
+        # The pending "ask again" after Not now (see _dismiss_sign_in_dialog).
+        self._sign_in_reminder = None
         # From the launcher's speed mode (config.py) - VIDEO_REFRESH_MS when
         # run without one.
         self._video_refresh_ms = round(1000 / video_fps) if video_fps else VIDEO_REFRESH_MS
@@ -1442,8 +1447,13 @@ class GateMonitorWindow:
     def _render_gate_sign_in(self, status):
         """Status bar: the typed-in guard name while sign-in is off; "On
         duty: <name> · Sign out" or an amber "No guard signed in · Sign in"
-        while it's on."""
+        while it's on. With nobody on duty - the gate monitor just opened, or
+        a shift ended - the sign-in window opens by itself too: the post
+        shouldn't go unattended just because nobody noticed the amber line.
+        Scanning carries on either way."""
         self._sign_in = status or {"enabled": False, "on_duty": None}
+        if not self._sign_in.get("enabled") or self._sign_in.get("on_duty"):
+            self._cancel_sign_in_reminder()
         if not self._sign_in.get("enabled"):
             self._duty.pack_forget()
             if self._identity_label is not None and not self._identity_label.winfo_manager():
@@ -1464,6 +1474,26 @@ class GateMonitorWindow:
             self._duty_icon.configure(text=_icon("warning"), text_color=CAUTION)
             self._duty_label.configure(text="No guard signed in", text_color=CAUTION)
             self._duty_action.configure(text="Sign in")
+            # Not while a "Not now" reminder is pending - it asks again then.
+            if self._sign_in_reminder is None:
+                self._open_sign_in_dialog()
+
+    def _cancel_sign_in_reminder(self):
+        if self._sign_in_reminder is not None:
+            self.window.after_cancel(self._sign_in_reminder)
+            self._sign_in_reminder = None
+
+    def _dismiss_sign_in_dialog(self):
+        """Not now (or the window's X): put the sign-in window away, and ask
+        again in SIGN_IN_REMIND_MS if the post is still empty."""
+        self._close_sign_in_dialog()
+        self._cancel_sign_in_reminder()
+        self._sign_in_reminder = self.window.after(SIGN_IN_REMIND_MS, self._remind_sign_in)
+
+    def _remind_sign_in(self):
+        self._sign_in_reminder = None
+        if not self._closed and self._sign_in.get("enabled") and not self._sign_in.get("on_duty"):
+            self._open_sign_in_dialog()
 
     def _duty_clicked(self):
         on_duty = self._sign_in.get("on_duty")
@@ -1486,14 +1516,18 @@ class GateMonitorWindow:
         dialog.configure(fg_color=SURFACE)
         dialog.resizable(False, False)
         dialog.transient(self.window)
-        dialog.protocol("WM_DELETE_WINDOW", self._close_sign_in_dialog)
+        dialog.protocol("WM_DELETE_WINDOW", self._dismiss_sign_in_dialog)
         _apply_icon(dialog)
 
         body = ctk.CTkFrame(dialog, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=28, pady=24)
         self._label(body, "Sign in for duty", (SEMI_HEAVY, 22), INK, anchor="w").pack(fill="x")
-        self._label(body, "Tap your staff ID card on the reader, or type your username and password.",
-                    (FONT, 14), INK_600, anchor="w", justify="left", wraplength=380).pack(fill="x", pady=(6, 16))
+        self._label(body, f"Nobody is on duty at {self.gate_location}. Tap your staff ID card on the reader, or "
+                          "type your username and password.",
+                    (FONT, 14), INK_600, anchor="w", justify="left", wraplength=380).pack(fill="x", pady=(6, 4))
+        self._label(body, "The gate keeps scanning meanwhile - its entries are marked Unattended until a guard "
+                          "signs in.",
+                    (FONT, 13), INK_600, anchor="w", justify="left", wraplength=380).pack(fill="x", pady=(0, 16))
         self._sign_in_fields = {}
         for key, text, secret in (("username", "Username", False), ("password", "Password", True)):
             self._label(body, text, (FONT, 14, "bold"), INK, anchor="w").pack(fill="x")
@@ -1518,15 +1552,16 @@ class GateMonitorWindow:
         )
         self._sign_in_submit.pack(side="right")
         ctk.CTkButton(
-            buttons, text="Cancel", font=(FONT, 14, "bold"), height=42, corner_radius=8, fg_color=SURFACE,
+            buttons, text="Not now", font=(FONT, 14, "bold"), height=42, corner_radius=8, fg_color=SURFACE,
             hover_color=CANVAS, text_color=INK, border_width=math.ceil(1 / self._scale), border_color=INK_400,
-            command=self._close_sign_in_dialog,
+            command=self._dismiss_sign_in_dialog,
         ).pack(side="right", padx=(0, 10))
 
         self._sign_in_dialog = dialog
+        # Centered by the size it asks for - its drawn size isn't known yet.
         dialog.update_idletasks()
-        x = self.window.winfo_rootx() + (self.window.winfo_width() - dialog.winfo_width()) // 2
-        y = self.window.winfo_rooty() + (self.window.winfo_height() - dialog.winfo_height()) // 3
+        x = self.window.winfo_rootx() + (self.window.winfo_width() - dialog.winfo_reqwidth()) // 2
+        y = self.window.winfo_rooty() + (self.window.winfo_height() - dialog.winfo_reqheight()) // 3
         dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
         dialog.after(150, lambda: (dialog.lift(), self._sign_in_fields["username"].focus_force()))
 

@@ -191,6 +191,13 @@ def check(python):
                "ENTRY_AGENT_SERVICE_TOKEN": "build-check-only"}
         env.pop("PYTHONPATH", None)
         run([python, "manage.py", "check"], cwd=APP / "backend", env=env)
+    # Listing cameras makes comtypes (used by pygrabber) write helper modules
+    # for Windows' DirectShow into its own comtypes/gen folder the first time.
+    # Do that here, so they ship ready-made and an installed copy never writes
+    # into its program folder.
+    run([python, "-c", "from camera import list_available_cameras; "
+                       "print('   cameras on the build computer:', list_available_cameras())"],
+        cwd=APP / "entry-agent")
     run([python, "-m", "compileall", "-q", APP / "backend", APP / "entry-agent", APP / "launcher.py",
          APP / "setup_wizard.py", APP / "device_setup.py"])
 

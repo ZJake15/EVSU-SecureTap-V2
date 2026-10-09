@@ -42,6 +42,17 @@ def main():
         sys.exit("Windows Sandbox isn't turned on (Turn Windows features on or off -> Windows Sandbox, restart).")
     if not SETUP.exists():
         sys.exit(f"{SETUP} doesn't exist yet - run installer/build.py first.")
+    # Only one Sandbox can run, and an open one keeps the installer and
+    # results folders shared (locked). Its virtual machine's memory process
+    # is the reliable sign it's running - WindowsSandboxServer can stay
+    # around after it closes, and tasklist doesn't show the VM at all.
+    running = subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         "[bool](Get-Process -Name vmmemWindowsSandbox -ErrorAction SilentlyContinue)"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if running == "True":
+        sys.exit("A Windows Sandbox is already open - close its window (the X, then OK), then run this again.")
     if "--try" in sys.argv[1:]:
         try_by_hand(sandbox)
         return

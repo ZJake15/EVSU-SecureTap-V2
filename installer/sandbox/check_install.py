@@ -118,7 +118,21 @@ def main():
 
     new_files = sorted(program_files() - before)
     record("nothing written into the program folder", not new_files, new_files[:10])
-    record("shortcut on the desktop", any(Path(os.environ["USERPROFILE"], "Desktop").glob("EVSU SecureTap*.lnk")))
+    # The Admin icon opens the launcher; the Gate icon the same with --gate
+    # (straight to the gate monitor).
+    links = {}
+    for name in ("EVSU SecureTap Admin", "EVSU SecureTap Gate"):
+        path = Path(os.environ["USERPROFILE"], "Desktop", f"{name}.lnk")
+        read = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"$l = (New-Object -ComObject WScript.Shell).CreateShortcut('{path}'); $l.TargetPath + '|' + $l.Arguments"],
+            capture_output=True, text=True,
+        ) if path.exists() else None
+        links[name] = read.stdout.strip() if read else "missing"
+    admin, gate = links["EVSU SecureTap Admin"], links["EVSU SecureTap Gate"]
+    record("Admin and Gate icons on the desktop",
+           admin.endswith('launcher.py"') and "pythonw.exe|" in admin and gate.endswith('launcher.py" --gate'),
+           links)
 
 
 try:

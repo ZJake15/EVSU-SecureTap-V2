@@ -53,7 +53,12 @@ LicenseAccepted=I have read and &accept the privacy policy
 LicenseNotAccepted=I &do not accept
 
 [Tasks]
-Name: "desktopicon"; Description: "Put an EVSU SecureTap icon on the desktop"
+; Two ways in, for the two kinds of people at this computer. Both are ticked
+; by default; a computer used only at a gate would keep just the Gate icon.
+Name: "adminicon"; Description: "EVSU SecureTap Admin - dashboard, settings, backups and setup (Admin, SASO)"; \
+  GroupDescription: "Desktop icons:"
+Name: "gateicon"; Description: "EVSU SecureTap Gate - opens the gate monitor for the guard on duty"; \
+  GroupDescription: "Desktop icons:"
 
 [InstallDelete]
 ; A newer version replaces the old program files completely, so nothing
@@ -63,6 +68,10 @@ Type: filesandordirs; Name: "{app}\backend"
 Type: filesandordirs; Name: "{app}\entry-agent"
 Type: filesandordirs; Name: "{app}\dashboard"
 Type: filesandordirs; Name: "{app}\face-models"
+; The single "EVSU SecureTap" icon older versions made - replaced by the
+; Admin and Gate icons below.
+Type: files; Name: "{autodesktop}\{#AppName}.lnk"
+Type: files; Name: "{autoprograms}\{#AppName}.lnk"
 
 [Files]
 ; Read by the terms and privacy pages before installing (InitializeWizard's
@@ -76,11 +85,21 @@ Source: "PRIVACY-POLICY.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "TERMS-OF-SERVICE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-; pythonw.exe: no black console window behind the launcher.
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\launcher.py"""; \
-  WorkingDir: "{app}"; IconFilename: "{app}\entry-agent\assets\icon.ico"; Comment: "Open EVSU SecureTap"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\launcher.py"""; \
-  WorkingDir: "{app}"; IconFilename: "{app}\entry-agent\assets\icon.ico"; Tasks: desktopicon
+; pythonw.exe: no black console window behind the launcher. Admin = the
+; launcher (dashboard, gate monitor, settings, backups, setup); Gate =
+; launcher.py --gate, straight to the gate monitor with nothing else.
+Name: "{autoprograms}\{#AppName} Admin"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\launcher.py"""; \
+  WorkingDir: "{app}"; IconFilename: "{app}\entry-agent\assets\icon.ico"; \
+  Comment: "Dashboard, settings, backups and setup - for the Admin and SASO"
+Name: "{autoprograms}\{#AppName} Gate"; Filename: "{app}\python\pythonw.exe"; \
+  Parameters: """{app}\launcher.py"" --gate"; WorkingDir: "{app}"; IconFilename: "{app}\entry-agent\assets\icon-gate.ico"; \
+  Comment: "The gate monitor, for the guard on duty"
+Name: "{autodesktop}\{#AppName} Admin"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\launcher.py"""; \
+  WorkingDir: "{app}"; IconFilename: "{app}\entry-agent\assets\icon.ico"; Tasks: adminicon; \
+  Comment: "Dashboard, settings, backups and setup - for the Admin and SASO"
+Name: "{autodesktop}\{#AppName} Gate"; Filename: "{app}\python\pythonw.exe"; \
+  Parameters: """{app}\launcher.py"" --gate"; WorkingDir: "{app}"; IconFilename: "{app}\entry-agent\assets\icon-gate.ico"; \
+  Tasks: gateicon; Comment: "The gate monitor, for the guard on duty"
 Name: "{autoprograms}\{#AppName} Privacy Policy"; Filename: "{app}\PRIVACY-POLICY.txt"; \
   Comment: "How EVSU SecureTap handles personal information"
 Name: "{autoprograms}\{#AppName} Terms of Service"; Filename: "{app}\TERMS-OF-SERVICE.txt"; \
@@ -88,7 +107,7 @@ Name: "{autoprograms}\{#AppName} Terms of Service"; Filename: "{app}\TERMS-OF-SE
 
 [Run]
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\launcher.py"""; WorkingDir: "{app}"; \
-  Description: "Open EVSU SecureTap now"; Flags: nowait postinstall skipifsilent
+  Description: "Open EVSU SecureTap Admin now (to finish setting it up)"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; Python writes compiled files next to the program while it runs.

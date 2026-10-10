@@ -30,7 +30,7 @@ CONFIG = INSTALLER / "build" / "securetap-test.wsb"
 TRY_CONFIG = INSTALLER / "build" / "securetap-try.wsb"
 
 RUN_CHECK = r"""@echo off
-C:\setup\EVSU-SecureTap-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=desktopicon /LOG="C:\results\setup-log.txt"
+C:\setup\EVSU-SecureTap-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=adminicon,gateicon /LOG="C:\results\setup-log.txt"
 "%LOCALAPPDATA%\Programs\EVSU SecureTap\python\python.exe" C:\tools\check_install.py > C:\results\log.txt 2>&1
 echo done > C:\results\finished.txt
 """

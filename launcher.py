@@ -124,6 +124,9 @@ LARGE_LAYOUT_MIN_WIDTH = 900
 # it - so the animation ends when the window is actually up, not when a timer
 # says it should be. Keep in sync with entry-agent/main.py.
 ENTRY_AGENT_READY_MARKER = "SECURETAP_ENTRY_AGENT_READY"
+# Printed instead when another gate monitor already runs on this computer
+# (one per computer - see entry-agent/main.py's _claim_single_instance).
+ENTRY_AGENT_ALREADY_OPEN_MARKER = "SECURETAP_GATE_MONITOR_ALREADY_OPEN"
 
 # How often a "starting" card checks whether it has waited too long - the
 # visible motion is the card's indeterminate progress bar.
@@ -520,6 +523,7 @@ class LauncherWindow:
         # Set by the entry-agent's output-reader thread, acted on by the Tk
         # main thread in _flush_log - same rule as the Vite URL above.
         self._entry_agent_ready = False
+        self._entry_agent_already_open = False
         # "Did we start it and see it run", so the card's state strip can be
         # cleared once it stops instead of describing a window that's closed.
         self._entry_agent_started = False
@@ -1303,6 +1307,7 @@ class LauncherWindow:
 
         self._append_log(f"[launcher] starting entry-agent (gate={self.settings['gate_location']!r})")
         self._entry_agent_ready = False
+        self._entry_agent_already_open = False
         # GATE_LOCATION/OFFICER_NAME are the exact names
         # entry-agent/config.py already reads from the environment (with its
         # own entry-agent/.env-file defaults) - passing them as subprocess
@@ -1421,6 +1426,8 @@ class LauncherWindow:
         self._append_log(line)
         if ENTRY_AGENT_READY_MARKER in line:
             self._entry_agent_ready = True
+        elif ENTRY_AGENT_ALREADY_OPEN_MARKER in line:
+            self._entry_agent_already_open = True
 
     # ---- settings -----------------------------------------------------------
 
@@ -1863,6 +1870,13 @@ class LauncherWindow:
             self._set_status("backend", "starting")
         elif self._backend_update_failed:
             self._backend_ok = False
+        elif self._backend_external:
+            # The backend we were borrowing (the Gate icon's, say) has closed -
+            # start this window's own rather than sitting on "Stopped".
+            self._backend_ok = False
+            self._backend_external = False
+            self._append_log("[launcher] the backend this window was using has closed - starting its own")
+            self._start_backend()
         else:
             self._backend_ok = False
             self._set_status("backend", "stopped")
@@ -1892,6 +1906,12 @@ class LauncherWindow:
         if self.entry_agent.is_running():
             self._entry_agent_started = True
             self._set_status("entry-agent", "running")
+        elif self._spinning("entry-agent") and self._entry_agent_already_open:
+            # Another gate monitor (opened from the Gate icon) already runs
+            # here - it said so and quit, which isn't a failure.
+            self._stop_spinner("entry-agent", "The gate monitor is already open on this computer", "slow")
+            self._set_status("entry-agent", "off")
+            self._entry_agent_started = False
         elif self._spinning("entry-agent"):
             # It exited before ever signalling ready - almost always a camera
             # that wouldn't open or a bad .env, and the traceback is in the log.
@@ -1991,17 +2011,234 @@ class LauncherWindow:
             self._stop_all()
 
 
+class GateStarter:
+    """The "EVSU SecureTap Gate" icon (launcher.py --gate), for the guard:
+    the gate monitor straight away, with nothing of the Admin launcher in
+    front of it - no dashboard, settings, backups or setup. It uses the
+    backend the Admin launcher already runs, or starts one quietly; opens the
+    gate monitor, which asks the guard to sign in; and when the guard closes
+    it, stops the backend again if it started it. If the backend it was using
+    goes away (the Admin launcher quit), it starts its own, so the gate keeps
+    working. A small window says what's happening until the gate monitor is
+    up, and explains any problem in plain words."""
+
+    BACKEND_TIMEOUT_SECONDS = 120
+    WATCH_MS = 300
+    # How often the open gate checks that a backend still answers.
+    BACKEND_CHECK_SECONDS = 5
+
+    def __init__(self):
+        self.settings = _load_settings()
+        self.profile = device_setup.load_profile()
+        self._lines = deque(maxlen=200)
+        self._lines_lock = threading.Lock()
+        self._ready = False
+        self._already_open = False
+        self._started_backend = False
+        self._checking_backend = False
+        self._last_backend_check = 0.0
+        self.backend = ManagedProcess("backend", self._record)
+        self.entry_agent = ManagedProcess("entry-agent", self._entry_agent_output)
+
+        self.root = ctk.CTk()
+        self.root.title("EVSU SecureTap Gate")
+        self.root.configure(fg_color=SURFACE)
+        self.root.resizable(False, False)
+        self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
+        _apply_icon(self.root)
+        header = ctk.CTkFrame(self.root, fg_color=MAROON_DEEP, corner_radius=0, height=64)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        ctk.CTkFrame(self.root, fg_color=BRASS, corner_radius=0, height=3).pack(fill="x")
+        title = ctk.CTkFrame(header, fg_color="transparent")
+        title.pack(side="left", padx=22)
+        ctk.CTkLabel(title, text="EVSU", font=(WIDE_BLACK, 22), text_color="white").pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(title, text="SecureTap Gate", font=(SEMI_HEAVY, 22), text_color="white").pack(side="left")
+        body = ctk.CTkFrame(self.root, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=24, pady=(20, 20))
+        self.status = ctk.CTkLabel(body, text="Starting…", font=(FONT, 15, "bold"), text_color=INK, anchor="w",
+                                   justify="left", wraplength=400)
+        self.status.pack(fill="x")
+        self.bar = ctk.CTkProgressBar(body, height=4, corner_radius=2, mode="indeterminate", fg_color=LINE,
+                                      progress_color=PROMPT)
+        self.bar.pack(fill="x", pady=(12, 0))
+        self.bar.start()
+        self.detail = ctk.CTkLabel(body, text="", font=(FONT_MONO, 11), text_color=INK_600, anchor="w",
+                                   justify="left", wraplength=400)
+        self.close_button = ctk.CTkButton(
+            body, text="Close", width=100, height=40, corner_radius=8, fg_color=MAROON, hover_color=MAROON_DEEP,
+            text_color="white", font=(FONT, 14, "bold"), command=self.root.destroy,
+        )
+        fit_to_screen(self.root, 460, 210, 460, 210)
+
+    # Reader threads: record only - the Tk thread reacts in _watch_gate.
+    def _record(self, line):
+        with self._lines_lock:
+            self._lines.append(line)
+
+    def _entry_agent_output(self, line):
+        self._record(line)
+        if ENTRY_AGENT_READY_MARKER in line:
+            self._ready = True
+        elif ENTRY_AGENT_ALREADY_OPEN_MARKER in line:
+            self._already_open = True
+
+    def _background(self, work, done):
+        box = {}
+
+        def runner():
+            try:
+                box["result"] = work()
+            except Exception as exc:  # explained in the window, never a crash
+                box["error"] = exc
+                self._record(f"[gate] {exc}")
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+
+        def check():
+            if thread.is_alive():
+                self.root.after(100, check)
+            else:
+                done(box.get("result"))
+
+        self.root.after(100, check)
+
+    def _say(self, text):
+        self.status.configure(text=text)
+
+    def _fail(self, text):
+        self.bar.stop()
+        self.bar.pack_forget()
+        self.status.configure(text=text, text_color=DANGER)
+        with self._lines_lock:
+            tail = [line for line in self._lines if line.strip()][-4:]
+        if tail:
+            self.detail.configure(text="\n".join(line[:90] for line in tail))
+            self.detail.pack(fill="x", pady=(10, 0))
+        self.close_button.pack(anchor="e", pady=(14, 0))
+        self.root.deiconify()
+        # Grow to fit the message - through plain Tk, since CTk's geometry()
+        # only takes a size.
+        tk.Tk.geometry(self.root, "")
+
+    def run(self):
+        self.root.after(200, self._begin)
+        try:
+            self.root.mainloop()
+        finally:
+            self.entry_agent.stop()
+            if self._started_backend:
+                self.backend.stop()
+
+    def _begin(self):
+        if device_setup.needs_setup():
+            self._fail("SecureTap isn't set up on this computer yet. Open EVSU SecureTap Admin first and finish "
+                       "its setup, then open the Gate again.")
+            return
+        self._say("Starting SecureTap…")
+        self._background(lambda: backend_identity(timeout=1.5), self._after_identity)
+
+    def _after_identity(self, identity):
+        if identity == "old":
+            self._fail("An older SecureTap is still running on this computer. Close it, then open EVSU SecureTap "
+                       "Gate again.")
+        elif identity == "ours":
+            self._open_gate_monitor()  # the Admin launcher's backend - use it
+        else:
+            self._background(self._migrate, self._after_migrate)
+
+    @staticmethod
+    def _migrate():
+        result = subprocess.run(
+            [venv_python(), "manage.py", "migrate", "--noinput"], cwd=BACKEND_DIR, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=600, creationflags=_NO_WINDOW,
+        )
+        return result.returncode, (result.stdout + result.stderr).strip()
+
+    def _after_migrate(self, result):
+        code, output = result if result else (1, "")
+        if code != 0:
+            for line in output.splitlines()[-4:]:
+                self._record(line)
+            self._fail("Couldn't update the database. Open EVSU SecureTap Admin and check its log.")
+            return
+        self._start_own_backend()
+        self._wait_for_backend(time.monotonic())
+
+    def _start_own_backend(self):
+        self.backend.start([venv_python(), "-u", "manage.py", "runserver", "--noreload"], BACKEND_DIR,
+                           env_overrides=device_setup.backend_env_overrides(self.profile))
+        self._started_backend = True
+
+    def _wait_for_backend(self, started_at):
+        def done(identity):
+            if identity == "ours":
+                # The daily clean-up, as the Admin launcher runs it when its
+                # backend comes up - unknown faces' data and leftover photos.
+                threading.Thread(target=lambda: subprocess.run(
+                    [venv_python(), "manage.py", "purge_old_data"], cwd=BACKEND_DIR, capture_output=True,
+                    timeout=600, creationflags=_NO_WINDOW), daemon=True).start()
+                self._open_gate_monitor()
+            elif not self.backend.is_running():
+                self._fail("The backend couldn't start. Open EVSU SecureTap Admin and check its log.")
+            elif time.monotonic() - started_at > self.BACKEND_TIMEOUT_SECONDS:
+                self._fail("The backend is taking too long to start. Close this and try again.")
+            else:
+                self.root.after(1000, lambda: self._wait_for_backend(started_at))
+
+        self._background(lambda: backend_identity(timeout=1.5), done)
+
+    def _open_gate_monitor(self):
+        self._say("Opening the gate monitor…")
+        overrides = {"GATE_LOCATION": self.settings.get("gate_location") or DEFAULT_GATE_LOCATION}
+        if self.settings.get("officer_name"):
+            overrides["OFFICER_NAME"] = self.settings["officer_name"]
+        overrides.update(device_setup.entry_agent_env_overrides(self.profile))
+        self.entry_agent.start([venv_python(), "-u", "main.py"], ENTRY_AGENT_DIR, env_overrides=overrides)
+        self.root.after(self.WATCH_MS, self._watch_gate)
+
+    def _watch_gate(self):
+        if not self.entry_agent.is_running():
+            if self._already_open or self._ready:
+                # It said "already open" itself, or the guard closed it.
+                self.root.destroy()
+            else:
+                self._fail("The gate monitor couldn't start. Check that the camera isn't being used by another "
+                           "program, then open the Gate again.")
+            return
+        if self._ready and self.root.state() != "withdrawn":
+            self.root.withdraw()  # the gate monitor is up - nothing more to say
+        if self._ready and not self._checking_backend and \
+                time.monotonic() - self._last_backend_check > self.BACKEND_CHECK_SECONDS:
+            self._checking_backend = True
+            self._last_backend_check = time.monotonic()
+            self._background(lambda: backend_identity(timeout=1.5), self._after_backend_check)
+        self.root.after(self.WATCH_MS, self._watch_gate)
+
+    def _after_backend_check(self, identity):
+        self._checking_backend = False
+        if identity is None and not self.backend.is_running():
+            # The backend this gate was using closed (the Admin launcher quit).
+            self._record("[gate] the backend closed - starting this gate's own")
+            self._start_own_backend()
+
+
 def main():
     # Distinct from the entry-agent's own id (see entry-agent/main.py) - each
     # process needs its own so Windows' taskbar treats them as separate apps
     # with separate icons, rather than grouping both under plain python.exe's.
-    set_app_user_model_id("EVSU.SecureTap.Launcher")
+    gate = "--gate" in sys.argv[1:]
+    set_app_user_model_id("EVSU.SecureTap.Gate" if gate else "EVSU.SecureTap.Launcher")
     if not (ROOT / ".venv").exists() and not (ROOT / "python").exists() and sys.stderr is not None:
         print(
             "WARNING: no .venv at the repo root - falling back to the interpreter "
             "running this script. See README.md if imports fail.",
             file=sys.stderr,
         )
+    if gate:
+        GateStarter().run()
+        return
     run_setup = device_setup.needs_setup()
     while True:
         if run_setup:

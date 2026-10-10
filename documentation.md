@@ -1946,7 +1946,26 @@ Before packaging it checks the bundle imports every library and passes
 no admin prompt — into `%LOCALAPPDATA%\Programs\EVSU SecureTap`, with Start
 menu and desktop shortcuts that run the launcher through `pythonw.exe` (no
 console window; the launcher gives its child programs `python.exe` so their
-output still reaches its log). A newer version replaces the program files
+output still reaches its log). There are two, each a tick box on the
+installer's "Desktop icons" page (both on by default; upgrading removes the
+single icon older versions made):
+- **EVSU SecureTap Admin** — `launcher.py`, the launcher as described in §9.1.
+- **EVSU SecureTap Gate** — `launcher.py --gate` (`launcher.GateStarter`), for
+  the guard: no launcher window, just a small "Starting…" panel until the gate
+  monitor is up. It refuses (with a "open the Admin icon first" message) until
+  the first-time setup is done, and on an older SecureTap's backend; uses the
+  backend the Admin launcher already runs, or migrates and starts its own
+  (plus the daily clean-up); opens the gate monitor with the remembered gate
+  name, guard name and speed mode; and stops the backend it started when the
+  gate monitor closes. If its borrowed backend goes away, it starts its own;
+  the Admin launcher does the same the other way round. Its icon,
+  `entry-agent/assets/icon-gate.ico`, is the seal with a sign-in badge.
+- **One gate monitor per computer.** `entry-agent/main.py` takes a Windows
+  named mutex (`EVSU.SecureTap.GateMonitor`) at start; a second one prints
+  `SECURETAP_GATE_MONITOR_ALREADY_OPEN`, says so and quits before touching the
+  camera — otherwise it would also end the shift of the guard on duty
+  (opening a gate monitor signs its gate's guard out). The launcher shows
+  "already open on this computer" rather than "Failed". A newer version replaces the program files
 only; uninstalling removes them and asks (default: no) before deleting the
 data folder. The file is unsigned, so Windows SmartScreen asks once ("More
 info → Run anyway").
@@ -1958,7 +1977,8 @@ folder, the settings files with a matching gate key, the database, the first
 Admin, the backend starting, the dashboard served, an Admin login, the
 Settings API, the face-AI speed test (offline, from the bundled models), the
 gate monitor's and launcher's code loading, nothing written into the program
-folder, and the desktop shortcut. All 14 passed; the speed test there picked
+folder, a backup made and unlocked, and the Admin and Gate desktop icons
+(the Gate one pointing at `launcher.py --gate`). All passed; the speed test there picked
 Light (the Sandbox has 4 GB of memory) at 21.6 ms per face check. With
 `--try` it instead opens a Sandbox to click through by hand: the installer on
 its desktop, the host's webcam shared (`VideoInput`), 8 GB of memory like the

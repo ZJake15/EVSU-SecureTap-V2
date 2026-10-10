@@ -14,8 +14,11 @@ Get `EVSU-SecureTap-Setup.exe` from your team (for example, on a USB stick) and 
 2. If a blue box says **"Windows protected your PC"**, click **More info**, then **Run anyway**. This is normal.
 3. Read the **Terms of Service** (the rules for using the app), choose **I have read and accept the terms of service**, and click **Next**.
 4. Read the **Privacy Policy** (how the app handles face photos and records), choose **I have read and accept the privacy policy**, and click **Next**.
-5. Click **Next** and then **Install**.
-6. Leave **"Open EVSU SecureTap now"** checked and click **Finish**.
+5. **Desktop icons** — leave both ticked and click **Next**:
+   - **EVSU SecureTap Admin** — for the Admin and SASO.
+   - **EVSU SecureTap Gate** — for the guard.
+6. Click **Install**.
+7. Leave **"Open EVSU SecureTap Admin now"** checked and click **Finish**.
 
 You can read both again any time: Start menu → **EVSU SecureTap Terms of Service** or **EVSU SecureTap Privacy Policy**.
 
@@ -34,10 +37,15 @@ A setup window opens. Follow it:
 
 ## Step 4 — Use it
 
-Open **EVSU SecureTap** from the icon on your desktop. Then choose:
+There are **two icons** on your desktop:
 
-- **Dashboard** — to register students, see records and reports.
-- **Entry Agent** — to open the gate camera and card reader.
+- **EVSU SecureTap Admin** (the seal) — for the Admin and SASO. Choose:
+  - **Dashboard** — to register students, see records and reports.
+  - **Entry Agent** — to open the gate camera and card reader.
+  - Settings, **Back up data**, and setup are here too.
+- **EVSU SecureTap Gate** (the seal with an arrow) — for the **guard**. It opens the gate camera straight away and asks the guard to **sign in** (username and password, or tap their staff ID card). Nothing else — no settings, no backups.
+
+Do the first-time setup (Step 3) with the **Admin** icon first. Only one gate camera window can be open at a time.
 
 That's it!
 
@@ -45,7 +53,7 @@ That's it!
 
 ## Back up your data (do this often)
 
-1. Open **EVSU SecureTap** and click **Back up data**, then **Back up now…**.
+1. Open **EVSU SecureTap Admin** and click **Back up data**, then **Back up now…**.
 2. Type a password twice (at least 10 characters). **Write it down** and keep it away from the USB drive - without it, nobody can open the backup.
 3. Choose your **USB drive** and wait for "Saved".
 
@@ -70,6 +78,8 @@ Click **Print**.
 | Bringing the old data over fails | Close the old SecureTap, restart the computer, then open EVSU SecureTap and try again. Your old data is never changed. |
 | Camera not found | Plug it in. It's picked up on its own. |
 | Card reader not found | Plug it in, then open Entry Agent again. |
+| Gate icon says "isn't set up yet" | Open **EVSU SecureTap Admin** and finish the first-time setup. |
+| "The gate monitor is already open" | It's already running — look for it on the taskbar. |
 | It feels slow | Plug the laptop in and close other apps. |
 
 ## To remove it

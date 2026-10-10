@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import threading
 import traceback
@@ -26,6 +27,45 @@ STATUS_CHECK_INTERVAL_SECONDS = 5
 # a "last session" line before the entry-agent is even started again - in
 # the data folder (config.data_file), whatever the working directory.
 LAST_SESSION_PATH = Path(data_file("last_session.json"))
+
+# One gate monitor per computer. Two would fight over the camera, and each
+# one opening ends the shift of whoever is on duty at its gate - so with both
+# the Admin launcher and the Gate icon able to open it, the second one says
+# so and quits (launcher.py matches the marker).
+GATE_MONITOR_MUTEX = "EVSU.SecureTap.GateMonitor"
+ALREADY_OPEN_MARKER = "SECURETAP_GATE_MONITOR_ALREADY_OPEN"
+_instance_lock = None  # held for the life of this process
+
+
+def _claim_single_instance():
+    """True unless another gate monitor already runs on this computer (a
+    Windows named mutex, released by Windows when this process ends)."""
+    global _instance_lock
+    if os.name != "nt":
+        return True
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    _instance_lock = kernel32.CreateMutexW(None, False, GATE_MONITOR_MUTEX)
+    return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
+
+
+def _say_already_open():
+    print(ALREADY_OPEN_MARKER, flush=True)
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showinfo("EVSU SecureTap", "The gate monitor is already open on this computer - look for it on "
+                                              "the taskbar.", parent=root)
+        root.destroy()
+    except Exception:
+        pass  # no display to show it on - the marker is enough
 
 
 def _write_last_session_summary(config, monitor):
@@ -347,6 +387,9 @@ def main():
     # needs its own so Windows' taskbar treats them as separate apps with
     # separate icons, rather than grouping both under plain python.exe's.
     set_app_user_model_id("EVSU.SecureTap.EntryAgent")
+    if not _claim_single_instance():
+        _say_already_open()
+        return
     config = load_config()
     if not config.service_token:
         print(

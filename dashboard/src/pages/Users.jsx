@@ -1074,6 +1074,12 @@ export default function Users() {
                     ))}
                     {photoCount === 0 && <p className="text-xs text-ink-600">No enrollment photos yet.</p>}
                   </div>
+                  {photoCount > 0 && (
+                    <span className="-mt-s1 text-xs text-ink-600">
+                      Saved photos are shown the way the gate camera sees the person - not mirrored like the live
+                      camera view, so a slight left turn looks like a slight right turn here.
+                    </span>
+                  )}
                   {retakeNotice && <Notice tone="verified">{retakeNotice}</Notice>}
                   {isRetaking ? (
                     <div className="flex flex-col gap-s3 rounded-sm border border-line p-s3">

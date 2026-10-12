@@ -19,7 +19,15 @@ const SLOTS = [
 ];
 
 const emptySlotState = () =>
-  Object.fromEntries(SLOTS.map((slot) => [slot.key, { status: "empty", file: null, previewUrl: null, reason: null }]));
+  Object.fromEntries(
+    SLOTS.map((slot) => [slot.key, { status: "empty", file: null, previewUrl: null, reason: null, mirrored: false }])
+  );
+
+// A webcam shot is shown mirrored, like the live view it was taken from (see
+// WebcamCapture), so a "Slight left" shot still looks turned to the left. The
+// file itself stays the right way round - the way the gate camera sees the
+// person. An uploaded file is shown as it is.
+const MIRRORED = { transform: "scaleX(-1)" };
 
 // Centralizes every visual decision per tile-state so the tile markup below
 // just reads a config object, rather than a wall of conditional classNames.
@@ -65,7 +73,7 @@ export default function GuidedEnrollment({ onChange, disabled, saveLabel = "Save
     if (!singlePhotoAllowed && mode === "fallback") setMode("guided");
   }, [singlePhotoAllowed, mode]);
   const [slots, setSlots] = useState(emptySlotState);
-  const [fallback, setFallback] = useState({ file: null, previewUrl: null });
+  const [fallback, setFallback] = useState({ file: null, previewUrl: null, mirrored: false });
   const [fallbackError, setFallbackError] = useState("");
 
   const activeSlotKey = SLOTS.find((slot) => slots[slot.key].status !== "ok")?.key || null;
@@ -99,7 +107,7 @@ export default function GuidedEnrollment({ onChange, disabled, saveLabel = "Save
     }
   };
 
-  const captureIntoSlot = async (key, file) => {
+  const captureIntoSlot = async (key, file, mirrored = false) => {
     // Rejected locally before the round-trip, and surfaced on the slot itself
     // so an unsupported file reads the same as a failed quality check.
     const formatError = photoFormatError(file);
@@ -120,7 +128,7 @@ export default function GuidedEnrollment({ onChange, disabled, saveLabel = "Save
         // previewUrlFor returns null for HEIC - accepted, but unrenderable in
         // any non-Apple browser, so the slot shows a placeholder rather than a
         // broken image. `file` is what actually gets uploaded either way.
-        return { ...prev, [key]: { status: "ok", file, previewUrl: previewUrlFor(file), reason: null } };
+        return { ...prev, [key]: { status: "ok", file, previewUrl: previewUrlFor(file), reason: null, mirrored } };
       }
       return { ...prev, [key]: { status: "error", file: null, previewUrl: null, reason: result.reason } };
     });
@@ -134,14 +142,14 @@ export default function GuidedEnrollment({ onChange, disabled, saveLabel = "Save
     });
   };
 
-  const captureFallback = (file) => {
+  const captureFallback = (file, mirrored = false) => {
     // photoFormatError(null) is null, so "Retake / remove" still clears cleanly.
     const formatError = photoFormatError(file);
     setFallbackError(formatError || "");
     if (formatError) return;
     setFallback((prev) => {
       if (prev.previewUrl) URL.revokeObjectURL(prev.previewUrl);
-      return { file, previewUrl: previewUrlFor(file) };
+      return { file, previewUrl: previewUrlFor(file), mirrored };
     });
   };
 
@@ -197,7 +205,12 @@ export default function GuidedEnrollment({ onChange, disabled, saveLabel = "Save
                       className={`relative flex aspect-[3/4] w-full items-center justify-center overflow-hidden rounded-sm ${visuals.tile}`}
                     >
                       {state.previewUrl ? (
-                        <img src={state.previewUrl} alt={slot.label} className="h-full w-full object-cover" />
+                        <img
+                          src={state.previewUrl}
+                          alt={slot.label}
+                          style={state.mirrored ? MIRRORED : undefined}
+                          className="h-full w-full object-cover"
+                        />
                       ) : (
                         // Captured and passed, just not renderable here (HEIC).
                         <span className="flex flex-col items-center text-[11px] text-ink-600">
@@ -256,7 +269,7 @@ export default function GuidedEnrollment({ onChange, disabled, saveLabel = "Save
                   </span>
                 </div>
               </div>
-              <WebcamCapture onCapture={(file) => captureIntoSlot(activeSlot.key, file)} />
+              <WebcamCapture onCapture={(file) => captureIntoSlot(activeSlot.key, file, true)} />
               <span className="text-xs text-ink-600">or upload a file instead (JPEG, PNG or HEIC only):</span>
               <input
                 type="file"
@@ -287,7 +300,12 @@ export default function GuidedEnrollment({ onChange, disabled, saveLabel = "Save
           {fallback.file ? (
             <div className="flex items-center gap-s3 rounded-sm border border-line p-s3">
               {fallback.previewUrl ? (
-                <img src={fallback.previewUrl} alt="Captured preview" className="h-20 w-20 rounded-sm object-cover" />
+                <img
+                  src={fallback.previewUrl}
+                  alt="Captured preview"
+                  style={fallback.mirrored ? MIRRORED : undefined}
+                  className="h-20 w-20 rounded-sm object-cover"
+                />
               ) : (
                 <div className="flex h-20 w-20 flex-col items-center justify-center rounded-sm bg-canvas text-[11px] text-ink-600">
                   <span className="font-bold">HEIC</span>
@@ -300,7 +318,7 @@ export default function GuidedEnrollment({ onChange, disabled, saveLabel = "Save
             </div>
           ) : (
             <div className="flex flex-col gap-s2 rounded-sm border border-line p-s3">
-              <WebcamCapture onCapture={captureFallback} />
+              <WebcamCapture onCapture={(file) => captureFallback(file, true)} />
               <span className="text-xs text-ink-600">or upload a file instead (JPEG, PNG or HEIC only):</span>
               <input
                 type="file"

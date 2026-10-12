@@ -18,6 +18,12 @@ MAX_UPLOAD_DIMENSION = 960  # face_recognition's HOG detector roughly doubles in
 # JPEG quality of each frame sent to the backend - 85 is visually the same
 # to the face AI as OpenCV's default 95, at a noticeably smaller file.
 UPLOAD_JPEG_QUALITY = 85
+# Camera zoom (the launcher's Entry Agent settings, per gate): the middle
+# 1/zoom of each frame, cropped before anything is shrunk - so a face farther
+# away arrives at the face check bigger, in real pixels. 2x is the most: a
+# 1280x720 frame's middle half is 640x360, still at least the 640 px sent in
+# Light mode; past that the picture would only be enlarged, which adds blur.
+MIN_ZOOM, MAX_ZOOM = 1.0, 2.0
 
 # How often to retry opening the camera while it isn't connected - covers
 # both "never was" (nothing plugged in at startup) and "used to be, isn't
@@ -44,9 +50,10 @@ class Camera:
     what was actually being recognized. One detector, one source of truth.
     """
 
-    def __init__(self, index=0, exposure=None, max_upload_dimension=MAX_UPLOAD_DIMENSION):
+    def __init__(self, index=0, exposure=None, max_upload_dimension=MAX_UPLOAD_DIMENSION, zoom=1.0):
         self.index = index
         self.max_upload_dimension = max_upload_dimension
+        self.zoom = min(MAX_ZOOM, max(MIN_ZOOM, float(zoom or 1.0)))
         # Optional, off by default - see _apply_exposure below for why this
         # can't be a value picked in advance for every webcam.
         self.exposure = exposure
@@ -184,11 +191,23 @@ class Camera:
                 self._latest_frame = frame
 
     def get_preview_frame(self):
-        """Latest raw frame, no overlay - the camera scanner window draws
-        recognition boxes itself, from the backend's /api/identify results,
-        not from anything computed here."""
+        """Latest frame (zoomed - see _zoomed), no overlay - the camera
+        scanner window draws recognition boxes itself, from the backend's
+        /api/identify results, not from anything computed here. The guard's
+        view, the student display and capture_jpeg() all come through here,
+        so what's shown is exactly what's checked and the boxes line up."""
         with self._lock:
-            return None if self._latest_frame is None else self._latest_frame.copy()
+            frame = self._latest_frame
+        return None if frame is None else self._zoomed(frame).copy()
+
+    def _zoomed(self, frame):
+        """The middle 1/zoom of the frame - the whole frame at 1x."""
+        if self.zoom <= MIN_ZOOM:
+            return frame
+        height, width = frame.shape[:2]
+        crop_w, crop_h = round(width / self.zoom), round(height / self.zoom)
+        left, top = (width - crop_w) // 2, (height - crop_h) // 2
+        return frame[top:top + crop_h, left:left + crop_w]
 
     def capture_jpeg(self):
         """The latest raw frame, downscaled if needed and JPEG-encoded, for

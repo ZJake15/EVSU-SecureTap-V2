@@ -302,7 +302,7 @@ def fix_gate_key():
 # (No direction: every gate checks people coming in - exits aren't recorded,
 # so an old copy's DIRECTION=exit isn't brought along.)
 GATE_ENV_KEYS = ("GATE_LOCATION", "CAMERA_INDEX", "CAMERA_EXPOSURE", "NFC_READER_USB_IDS", "OFFICER_NAME")
-LAUNCHER_KEYS = ("gate_location", "officer_name", "auto_launch_entry_agent")
+LAUNCHER_KEYS = ("gate_location", "officer_name", "auto_launch_entry_agent", "camera_zoom")
 
 
 def import_gate_settings(old_root):

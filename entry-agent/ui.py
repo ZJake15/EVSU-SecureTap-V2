@@ -578,8 +578,11 @@ class GateMonitorWindow:
     def __init__(self, gate_location, direction, get_preview_frame, on_tap,
                  officer_name="", version="", on_close=None,
                  camera_options=None, on_camera_change=None, initial_camera_index=None,
-                 video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None):
+                 video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0):
         self._get_preview_frame = get_preview_frame
+        # This gate's camera zoom (launcher's Entry Agent settings) - the frames
+        # arrive already zoomed; this is only for the video caption.
+        self._camera_zoom = camera_zoom or 1.0
         # Guard sign-in (Settings -> "Guards sign in at the gate monitor"):
         # on_sign_in(username, password) and on_sign_out(shift_id) are main.py's,
         # run off the Tk thread; the answers come back through
@@ -2230,7 +2233,8 @@ class GateMonitorWindow:
                 self._draw_box(item, origin_x, origin_y, img_w, img_h, src_w, src_h)
 
         count = len(self._latest_recognitions)
-        self._caption_text = f"{src_w}×{src_h} · {count} face{'s' if count != 1 else ''} tracked"
+        zoom = f" · zoom {self._camera_zoom:.1f}x" if self._camera_zoom > 1.0 else ""
+        self._caption_text = f"{src_w}×{src_h}{zoom} · {count} face{'s' if count != 1 else ''} tracked"
         self._draw_overlays(rect)
 
     @staticmethod

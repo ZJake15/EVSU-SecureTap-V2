@@ -260,6 +260,18 @@ def service_responds(url, timeout=1.0):
 # both are set, because load_dotenv() doesn't override existing values.
 SETTINGS_PATH = device_setup.LAUNCHER_SETTINGS_PATH
 DEFAULT_GATE_LOCATION = "Main Gate"
+# Camera zoom, per gate name ("camera_zoom": {"Main Gate": 1.5} in the
+# settings file): 1.0-2.0 in 0.1 steps - see entry-agent/camera.py's MAX_ZOOM.
+MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM = 1.0, 2.0
+
+
+def camera_zoom_for(settings, gate):
+    """This gate's camera zoom from the launcher settings - 1.0 if unset."""
+    try:
+        value = float((settings.get("camera_zoom") or {}).get(gate, MIN_CAMERA_ZOOM))
+    except (TypeError, ValueError, AttributeError):
+        value = MIN_CAMERA_ZOOM
+    return round(min(MAX_CAMERA_ZOOM, max(MIN_CAMERA_ZOOM, value)), 1)
 
 # Where main.py's on_close() writes a small summary of the session just
 # ended (entries/unknown/spoof/occlusion counts, gate, a
@@ -944,6 +956,34 @@ class LauncherWindow:
             fg_color=MAROON, hover_color=MAROON_DEEP, border_color=INK_400, corner_radius=3,
             checkbox_width=20, checkbox_height=20, command=self._save_current_settings,
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
+
+        # Camera zoom - for the gate named above, remembered per gate name.
+        zoom_label = ctk.CTkFrame(grid, fg_color="transparent")
+        zoom_label.grid(row=5, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        ctk.CTkLabel(zoom_label, text="Camera zoom", font=(FONT, 14, "bold"), text_color=INK, height=20).pack(
+            side="left")
+        ctk.CTkLabel(zoom_label, text="(this gate)", font=(FONT, 14), text_color=INK_600, height=20).pack(
+            side="left", padx=(4, 0))
+        zoom_row = ctk.CTkFrame(grid, fg_color="transparent")
+        zoom_row.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.zoom_value = ctk.CTkLabel(zoom_row, text="", font=(FONT_MONO, 14, "bold"), text_color=INK, width=48,
+                                       anchor="e")
+        self.zoom_value.pack(side="right", padx=(10, 0))
+        self.zoom_slider = ctk.CTkSlider(
+            zoom_row, from_=MIN_CAMERA_ZOOM, to=MAX_CAMERA_ZOOM, number_of_steps=10, height=18,
+            fg_color=LINE, progress_color=MAROON, button_color=MAROON, button_hover_color=MAROON_DEEP,
+            command=self._on_zoom_change,
+        )
+        self.zoom_slider.pack(side="left", fill="x", expand=True)
+        zoom_note = ctk.CTkLabel(
+            grid, text="Zooms into the middle of the camera's view, so people farther away are bigger and easier "
+                       "to recognize - but the camera sees less of the sides. Aim it at where people walk. Takes "
+                       "effect the next time the gate monitor opens.",
+            font=(FONT, 13), text_color=INK_600, anchor="w", justify="left",
+        )
+        zoom_note.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self._wrap_labels.append((zoom_note, 66))
+        self._render_zoom()
         self._update_settings_summary()
 
         # -- speed mode row ------------------------------------------------------
@@ -1316,7 +1356,10 @@ class LauncherWindow:
         # hand. OFFICER_NAME is only overridden when the guard actually typed
         # one - an empty override would blank out .env's own default instead
         # of leaving it alone.
-        env_overrides = {"GATE_LOCATION": self.settings["gate_location"]}
+        env_overrides = {
+            "GATE_LOCATION": self.settings["gate_location"],
+            "CAMERA_ZOOM": str(camera_zoom_for(self.settings, self.settings["gate_location"])),
+        }
         if self.settings.get("officer_name"):
             env_overrides["OFFICER_NAME"] = self.settings["officer_name"]
         # The speed mode's video smoothness, upload size and scan pace.
@@ -1752,7 +1795,26 @@ class LauncherWindow:
         self._update_settings_summary()
 
     def _update_settings_summary(self):
-        self.settings_summary.configure(text=self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION)
+        gate = self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION
+        zoom = camera_zoom_for(self.settings, gate)
+        self.settings_summary.configure(text=f"{gate} · zoom {zoom:.1f}x" if zoom > MIN_CAMERA_ZOOM else gate)
+        if hasattr(self, "zoom_slider"):
+            self._render_zoom()
+
+    def _render_zoom(self):
+        """The slider shows the zoom saved for the gate name typed above - a
+        different gate name has its own."""
+        zoom = camera_zoom_for(self.settings, self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION)
+        self.zoom_slider.set(zoom)
+        self.zoom_value.configure(text=f"{zoom:.1f}x")
+
+    def _on_zoom_change(self, value):
+        gate = self.gate_entry.get().strip() or DEFAULT_GATE_LOCATION
+        zooms = dict(self.settings.get("camera_zoom") or {})
+        zooms[gate] = round(float(value), 1)
+        self.settings["camera_zoom"] = zooms
+        self.zoom_value.configure(text=f"{zooms[gate]:.1f}x")
+        self._save_current_settings()
 
     # ---- loading state ------------------------------------------------------
 
@@ -2191,7 +2253,8 @@ class GateStarter:
 
     def _open_gate_monitor(self):
         self._say("Opening the gate monitor…")
-        overrides = {"GATE_LOCATION": self.settings.get("gate_location") or DEFAULT_GATE_LOCATION}
+        gate = self.settings.get("gate_location") or DEFAULT_GATE_LOCATION
+        overrides = {"GATE_LOCATION": gate, "CAMERA_ZOOM": str(camera_zoom_for(self.settings, gate))}
         if self.settings.get("officer_name"):
             overrides["OFFICER_NAME"] = self.settings["officer_name"]
         overrides.update(device_setup.entry_agent_env_overrides(self.profile))

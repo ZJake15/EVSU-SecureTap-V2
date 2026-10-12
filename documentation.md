@@ -1404,6 +1404,18 @@ guard would otherwise only discover once already standing at the gate:
   repo) — see the entry-agent's own **Configuration** paragraph above for exactly
   how these values reach that process without editing `.env`. There's no
   Entry/Exit choice: every gate is an entry gate.
+- **Camera zoom (per gate)** — a 1.0x–2.0x slider (0.1 steps) in the same
+  panel, saved per gate name (`"camera_zoom": {"Main Gate": 1.5}`), passed to
+  the gate monitor as `CAMERA_ZOOM` by the Admin launcher and the Gate icon
+  alike, and carried in backups and imports. `entry-agent/camera.py` crops the
+  middle 1/zoom of each 1280×720 frame *before* it's shrunk for upload, so a
+  face farther away reaches the face check bigger in real pixels — not
+  enlarged — and the guard's view, the student display and the frames
+  checked are the same picture (the boxes still line up). 2x is the limit
+  because the middle half (640×360) is still at least the 640 px a Light-mode
+  computer sends; past that it would only enlarge, which adds blur. The cost:
+  the camera sees less of the sides. The gate monitor's caption shows
+  "zoom 1.5x" when it's above 1x.
 - **Pre-flight checks** run right before the Entry Agent button actually spawns
   the process: whether the backend currently responds, and a best-effort check
   for the NFC card reader via Windows' own Plug-and-Play device list, matched

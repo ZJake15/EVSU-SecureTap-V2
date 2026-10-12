@@ -415,7 +415,8 @@ def main():
     print(f"camera: using {camera_names.get(camera_index, f'#{camera_index}')}", file=sys.stderr)
 
     camera = Camera(
-        camera_index, exposure=config.camera_exposure, max_upload_dimension=config.upload_max_dimension
+        camera_index, exposure=config.camera_exposure, max_upload_dimension=config.upload_max_dimension,
+        zoom=config.camera_zoom,
     )
 
     def pick_camera(index):
@@ -479,6 +480,7 @@ def main():
         get_preview_frame=camera.get_preview_frame,
         on_tap=on_tap,
         officer_name=config.officer_name,
+        camera_zoom=config.camera_zoom,
         version=config.app_version,
         on_close=on_close,
         camera_options=camera_options,

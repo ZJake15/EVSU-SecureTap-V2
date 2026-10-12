@@ -65,11 +65,16 @@ export default function WebcamCapture({ onCapture }) {
           Open webcam
         </button>
       )}
+      {/* Mirrored like a selfie camera, so the person moves the way they
+          see themselves move (and the PoseGuide drawings, which read like a
+          mirror, match). Only the preview: the photo saved by capture() is
+          drawn from the unflipped video - the way the gate camera sees them. */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
+        style={{ transform: "scaleX(-1)" }}
         className={`w-full max-w-xs rounded-sm bg-ink ${isActive ? "" : "hidden"}`}
       />
       {isActive && (

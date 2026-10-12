@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import apiClient from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { Avatar, Icon, PageHeader } from "../components/ui";
+import { Avatar, Icon, Notice, PageHeader } from "../components/ui";
 
 const POLL_INTERVAL_MS = 1000;
+// Who's guarding each gate changes rarely - a slower poll than the feed.
+const DUTY_POLL_INTERVAL_MS = 10000;
+const ROLE_LABELS = { security_officer: "Security Officer", saso: "SASO", admin: "Admin" };
 const MAX_EVENTS_SHOWN = 500;
 
 const TABLE_COLS = "36px minmax(0,2.4fr) 110px 110px minmax(0,1.5fr) 56px minmax(0,84px)";
@@ -195,6 +198,128 @@ function AttentionCard({ event }) {
   );
 }
 
+function shortTime(value) {
+  return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+// One gate: the guard on duty there now (green edge), or nobody (caution) with
+// who was last - plus today's entries, how many were unattended, and the
+// Security Officers assigned to it.
+function GateDutyCard({ gate }) {
+  const duty = gate.on_duty;
+  const last = gate.last_on_duty;
+  return (
+    <div
+      className="flex flex-col gap-s2 rounded-l-sm rounded-r-md border border-l-[3px] border-line bg-surface p-s4"
+      style={{ borderLeftColor: duty ? "#1E7B45" : "#9A5B00" }}
+    >
+      <div className="flex items-center justify-between gap-s3">
+        <span className="truncate font-bold">{gate.gate_location}</span>
+        <span
+          className={`flex flex-none items-center gap-s1 font-display stretch-condensed text-xs font-extrabold uppercase tracking-[0.06em] ${
+            duty ? "text-verified" : "text-caution"
+          }`}
+        >
+          <Icon name={duty ? "shield-check" : "warning"} bold size={14} />
+          {duty ? "On duty" : "No guard"}
+        </span>
+      </div>
+      {duty ? (
+        <div className="flex flex-col">
+          <span className="truncate text-lg font-bold leading-tight">{duty.name}</span>
+          <span className="text-xs text-ink-600">
+            {ROLE_LABELS[duty.role] || "Staff"} &middot; since {shortTime(duty.since)} &middot; signed in with{" "}
+            {duty.method === "card" ? "staff ID card" : "password"}
+          </span>
+        </div>
+      ) : (
+        <div className="flex flex-col">
+          <span className="text-lg font-bold leading-tight text-caution">Nobody signed in</span>
+          <span className="text-xs text-ink-600">
+            {last
+              ? `Last: ${last.name}, until ${shortTime(last.ended_at)}${last.reason ? ` (${last.reason.toLowerCase()})` : ""}`
+              : "No guard has signed in here yet."}
+          </span>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-x-s4 gap-y-s1 border-t border-line pt-s2 text-xs text-ink-600">
+        <span>
+          <span className="font-mono font-medium text-ink">{gate.entries_today}</span>{" "}
+          {gate.entries_today === 1 ? "entry" : "entries"} today
+        </span>
+        {gate.unattended_today > 0 && (
+          <span className="font-bold text-caution">
+            <span className="font-mono">{gate.unattended_today}</span> unattended
+          </span>
+        )}
+        {gate.assigned_officers.length > 0 && (
+          <span className="truncate" title={gate.assigned_officers.join(", ")}>
+            Assigned: {gate.assigned_officers.join(", ")}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Admin and SASO: who is guarding each gate right now (/api/gate-duty).
+function DutyBoard() {
+  const [board, setBoard] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const load = () =>
+      apiClient
+        .get("/gate-duty")
+        .then(({ data }) => {
+          if (isCancelled) return;
+          setBoard(data);
+          setFailed(false);
+        })
+        .catch(() => !isCancelled && setFailed(true));
+    load();
+    const intervalId = setInterval(load, DUTY_POLL_INTERVAL_MS);
+    return () => {
+      isCancelled = true;
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  if (!board) return null;
+  const staffed = board.gates.filter((gate) => gate.on_duty).length;
+  return (
+    <div className="mt-s6 flex flex-none flex-col gap-s3">
+      <div className="flex items-baseline justify-between gap-s3">
+        <span className="t-section">On duty at the gates</span>
+        {board.enabled && board.gates.length > 0 && (
+          <span className="font-mono text-sm font-medium text-ink-600">
+            {staffed} of {board.gates.length} gate{board.gates.length === 1 ? "" : "s"} guarded
+            {failed ? " · reconnecting" : ""}
+          </span>
+        )}
+      </div>
+      {!board.enabled ? (
+        <Notice tone="neutral" icon="info">
+          Guard sign-in is switched off (Settings &gt; Security &amp; Accounts), so guards don&rsquo;t sign in at the
+          gates and nobody is shown on duty.
+        </Notice>
+      ) : board.gates.length === 0 ? (
+        <span className="text-sm text-ink-600">
+          No gates yet. A gate shows here once a guard signs in at it, a Security Officer is assigned to it, or it
+          records an entry today.
+        </span>
+      ) : (
+        <div className="grid grid-cols-1 gap-s3 md:grid-cols-2 xl:grid-cols-3">
+          {board.gates.map((gate) => (
+            <GateDutyCard key={gate.gate_location} gate={gate} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function LiveMonitoring() {
   const { user } = useAuth();
   const isSecurityOfficer = user?.role === "security_officer";
@@ -277,6 +402,8 @@ export default function LiveMonitoring() {
         <SubStat label="Face covered" icon="hand-palm" value={occludedCount} tone="text-prompt" />
         <SubStat label="Avg. confidence" icon="gauge" value={avgConfidence} />
       </div>
+
+      {!isSecurityOfficer && <DutyBoard />}
 
       {error && (
         <div className="notice mt-s5 flex-none items-center bg-caution-tint">

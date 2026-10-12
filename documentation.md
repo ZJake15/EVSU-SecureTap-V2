@@ -833,6 +833,7 @@ entry-agent is treated as a trusted device, not a logged-in user.
 | `/api/identify` | POST | service token | Continuous camera-frame face identification + liveness check (§2.1, §5) |
 | `/api/verify` | POST | service token | NFC tap lookup, tiebreak resolution (§2.2) |
 | `/api/gate-summary` | GET | service token | Today's entries/unknown/spoof/occlusion counts for the entry-agent's stats strip |
+| `/api/gate-duty` | GET | JWT (Admin/SASO) | Who is guarding each gate now: per gate, the guard on duty (name, role, since, password/card) or the last one and when they left, the assigned Security Officers, today's entries and unattended entries; plus whether guard sign-in is on |
 | `/api/logs/live` | GET | JWT (any role) | "New logs since X" feed for Live Monitoring (polling, not push) — gate-scoped, today-only for Security Officer (§13) |
 | `/api/logs/` | GET | JWT (any role) | Paginated, filterable log history (read-only) — same gate/today scoping for Security Officer |
 | `/api/logs/manual-override` | POST | JWT (Security Officer only) | Logs a scanner-failure entry by hand after a visual ID check (§13); always `verification_method=manual_override`, `performed_by=`the caller |
@@ -886,7 +887,14 @@ the page's main action beside it. See §8.1 for the visual design system.
   state ("Waiting for the first scan of the day") and a reconnecting notice if
   the feed drops. Scoped to the caller's own gate, today only, for a Security
   Officer (§13) — the same server-side scoping `/api/logs/live` itself enforces,
-  not a client-side filter.
+  not a client-side filter. For Admin and SASO, an **On duty at the gates**
+  section under the numbers shows who is guarding each gate right now
+  (`/api/gate-duty`, refreshed every 10 seconds): one card per gate known today
+  (a guard signed in there, a Security Officer assigned to it, or entries or
+  shifts today) with the guard's name, role, since when and how they signed in
+  — or, in caution colour, "Nobody signed in" and who was last on duty until
+  when — plus today's entries, how many were Unattended, and the assigned
+  officers. With guard sign-in switched off it says so instead (§13.4).
 - **Logs** — paginated (25/page), filterable by date/name/gate/status (including
   Spoof suspected and Face covered), with a "hide unknown" toggle and a
   **client-side CSV export** (built in-browser from loaded rows; there's no

@@ -13,6 +13,7 @@ from accounts import lockout
 from accounts.models import AdminProfile
 from accounts.permissions import (
     HasServiceToken,
+    IsAdminOrSaso,
     IsAnyDashboardRole,
     IsSecurityOfficer,
     get_assigned_gate,
@@ -196,6 +197,17 @@ class GateSignOutView(APIView):
         else:
             gate_shifts.end_shifts_at(gate_location, data["reason"])
         return Response(gate_shifts.status(gate_location))
+
+
+class GateDutyView(APIView):
+    """Who is guarding each gate right now - the dashboard's "On duty"
+    section on Live Monitoring. Admin and SASO only: a Security Officer
+    only ever sees their own gate (and is the one signed in there)."""
+
+    permission_classes = [IsAdminOrSaso]
+
+    def get(self, request):
+        return Response(gate_shifts.duty_board())
 
 
 class EntryLogViewSet(viewsets.ReadOnlyModelViewSet):

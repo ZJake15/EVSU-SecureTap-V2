@@ -7,6 +7,7 @@ from accounts.views import DashboardAccountViewSet, LoginView
 from audit.views import AuditLogViewSet
 from logs.views import (
     EntryLogViewSet,
+    GateDutyView,
     GateSignInView,
     GateSignOutView,
     GateSummaryView,
@@ -46,6 +47,7 @@ urlpatterns = [
     path("api/gate-summary", GateSummaryView.as_view(), name="gate-summary"),
     path("api/gate/sign-in", GateSignInView.as_view(), name="gate-sign-in"),
     path("api/gate/sign-out", GateSignOutView.as_view(), name="gate-sign-out"),
+    path("api/gate-duty", GateDutyView.as_view(), name="gate-duty"),
     path("api/logs/live", LiveLogsView.as_view(), name="logs-live"),
     path("api/logs/manual-override", ManualOverrideView.as_view(), name="logs-manual-override"),
     path("api/users/bulk-import", BulkImportView.as_view(), name="users-bulk-import"),

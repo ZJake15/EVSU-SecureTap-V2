@@ -106,20 +106,71 @@ def end_shifts_at(gate_location, reason):
             end_shift(shift, reason)
 
 
+def _on_duty(shift):
+    """Who a running shift belongs to, as the gate monitor and the dashboard
+    show it - or None for no shift (or one whose account was deleted)."""
+    if shift is None or shift.user is None:
+        return None
+    user = shift.user
+    return {
+        "shift_id": shift.id,
+        "name": user.get_full_name() or user.username,
+        "username": user.username,
+        "role": getattr(getattr(user, "admin_profile", None), "role", None),
+        "since": timezone.localtime(shift.signed_in_at).isoformat(timespec="seconds"),
+        "method": shift.method,
+    }
+
+
 def status(gate_location):
     """What the gate monitor shows: is sign-in on, and who's on duty."""
     if not enabled():
         return {"enabled": False, "on_duty": None}
-    shift = active_shift(gate_location)
-    on_duty = None
-    if shift is not None and shift.user is not None:
-        user = shift.user
-        on_duty = {
-            "shift_id": shift.id,
-            "name": user.get_full_name() or user.username,
-            "username": user.username,
-            "role": getattr(getattr(user, "admin_profile", None), "role", None),
-            "since": timezone.localtime(shift.signed_in_at).isoformat(timespec="seconds"),
-            "method": shift.method,
-        }
-    return {"enabled": True, "on_duty": on_duty}
+    return {"enabled": True, "on_duty": _on_duty(active_shift(gate_location))}
+
+
+def duty_board():
+    """Who is guarding each gate, for the dashboard (Admin and SASO): every
+    gate the system knows about today - one with a guard signed in, a
+    Security Officer's assigned gate, or one with entries or shifts today -
+    with who's on duty there now, or who was last and when they left, the
+    Security Officers assigned to it, and today's entries (and how many of
+    them were unattended)."""
+    from .models import EntryLog
+
+    today = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
+    officers = {}
+    for profile in AdminProfile.objects.select_related("user").filter(
+            role=AdminProfile.Role.SECURITY_OFFICER, user__is_active=True).exclude(assigned_gate_location=""):
+        officers.setdefault(profile.assigned_gate_location, []).append(
+            profile.user.get_full_name() or profile.user.username)
+    gates = set(officers)
+    gates |= set(GateShift.objects.filter(ended_at__isnull=True).values_list("gate_location", flat=True))
+    gates |= set(GateShift.objects.filter(ended_at__gte=today).values_list("gate_location", flat=True))
+    gates |= set(EntryLog.objects.filter(timestamp__gte=today).values_list("gate_location", flat=True))
+
+    sign_in_on = enabled()
+    board = []
+    for gate in sorted(gate for gate in gates if gate):
+        on_duty = _on_duty(active_shift(gate)) if sign_in_on else None
+        last_on_duty = None
+        if on_duty is None:
+            previous = (GateShift.objects.select_related("user").filter(gate_location=gate, ended_at__isnull=False)
+                        .order_by("-ended_at").first())
+            if previous is not None:
+                last_on_duty = {
+                    "name": (previous.user.get_full_name() or previous.user.username) if previous.user else
+                    "(deleted account)",
+                    "ended_at": timezone.localtime(previous.ended_at).isoformat(timespec="seconds"),
+                    "reason": GateShift.EndReason(previous.end_reason).label if previous.end_reason else "",
+                }
+        today_logs = EntryLog.objects.filter(gate_location=gate, timestamp__gte=today)
+        board.append({
+            "gate_location": gate,
+            "on_duty": on_duty,
+            "last_on_duty": last_on_duty,
+            "assigned_officers": sorted(officers.get(gate, [])),
+            "entries_today": today_logs.count(),
+            "unattended_today": today_logs.filter(unattended=True).count(),
+        })
+    return {"enabled": sign_in_on, "gates": board}

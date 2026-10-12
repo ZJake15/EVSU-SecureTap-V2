@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import apiClient from "../api/client";
 import GuidedEnrollment from "../components/GuidedEnrollment";
 import WebcamCapture from "../components/WebcamCapture";
-import { Avatar, Field, Icon, Notice, PageHeader, Segmented } from "../components/ui";
+import { Avatar, Checkbox, Field, Icon, Notice, PageHeader, Segmented } from "../components/ui";
 import { PHOTO_ACCEPT, photoFormatError, previewUrlFor, readPhotoInput } from "../lib/photoUpload";
 import { useAuth } from "../auth/AuthContext";
 
@@ -124,6 +124,15 @@ export default function Users() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [addPhotoError, setAddPhotoError] = useState("");
   const [isAddingPhoto, setIsAddingPhoto] = useState(false);
+  // "Retake face enrollment" on an existing person: a fresh guided capture
+  // that replaces all their face photos once saved.
+  const [isRetaking, setIsRetaking] = useState(false);
+  const [retakeEnrollment, setRetakeEnrollment] = useState(emptyEnrollment);
+  const [retakeKey, setRetakeKey] = useState(0);
+  const [retakeUseAsDisplay, setRetakeUseAsDisplay] = useState(true);
+  const [retakeError, setRetakeError] = useState("");
+  const [retakeNotice, setRetakeNotice] = useState("");
+  const [isSavingRetake, setIsSavingRetake] = useState(false);
   const [confusablePairs, setConfusablePairs] = useState([]);
   const [confusableForm, setConfusableForm] = useState(emptyConfusableForm);
   const [confusableError, setConfusableError] = useState("");
@@ -192,7 +201,51 @@ export default function Users() {
     setEnrollment(emptyEnrollment);
     setEnrollmentResetKey((k) => k + 1); // remounts GuidedEnrollment with fresh slot state
     setProfilePhoto(null);
+    closeRetake();
+    setRetakeNotice("");
     setIsDrawerOpen(false);
+  };
+
+  const openRetake = () => {
+    setRetakeEnrollment(emptyEnrollment);
+    setRetakeKey((k) => k + 1); // a fresh GuidedEnrollment, all slots empty
+    setRetakeUseAsDisplay(true);
+    setRetakeError("");
+    setRetakeNotice("");
+    setIsRetaking(true);
+  };
+
+  const closeRetake = () => {
+    setIsRetaking(false);
+    setRetakeError("");
+  };
+
+  const handleRetakeSave = async () => {
+    if (!editingId || !retakeEnrollment.isReady) return;
+    const count = editingPerson?.face_embeddings?.length || 0;
+    if (count && !window.confirm(`Replace ${editingPerson.full_name}'s ${count} current face photo${count > 1 ? "s" : ""} ` +
+        "with these new ones? The old photos and their face data are deleted.")) {
+      return;
+    }
+    setRetakeError("");
+    setIsSavingRetake(true);
+    const payload = new FormData();
+    // Front first - the order the server expects (and the display photo).
+    [retakeEnrollment.primaryPhoto, ...retakeEnrollment.extraPhotos].forEach((file) => payload.append("photos", file));
+    payload.append("fallback_enrollment", retakeEnrollment.mode === "fallback" ? "true" : "false");
+    payload.append("use_as_display_photo", retakeUseAsDisplay ? "true" : "false");
+    try {
+      await apiClient.post(`/users/${editingId}/retake-enrollment/`, payload, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setIsRetaking(false);
+      setRetakeNotice("New face photos saved - the old ones were deleted.");
+      loadPeople();
+    } catch (err) {
+      setRetakeError(extractErrorMessage(err));
+    } finally {
+      setIsSavingRetake(false);
+    }
   };
 
   const openAddDrawer = () => {
@@ -1021,7 +1074,49 @@ export default function Users() {
                     ))}
                     {photoCount === 0 && <p className="text-xs text-ink-600">No enrollment photos yet.</p>}
                   </div>
-                  {photoCount < photoMax ? (
+                  {retakeNotice && <Notice tone="verified">{retakeNotice}</Notice>}
+                  {isRetaking ? (
+                    <div className="flex flex-col gap-s3 rounded-sm border border-line p-s3">
+                      <Notice tone="caution" icon="arrow-counter-clockwise">
+                        <b>Retaking the face enrollment.</b> &ldquo;Save new photos&rdquo; below replaces all{" "}
+                        {photoCount} current photo{photoCount === 1 ? "" : "s"} and their face data - the old ones are
+                        deleted. Until then nothing changes.
+                      </Notice>
+                      <GuidedEnrollment
+                        key={retakeKey}
+                        onChange={setRetakeEnrollment}
+                        disabled={isSavingRetake}
+                        saveLabel="Save new photos"
+                        title="New face photos"
+                      />
+                      <Checkbox
+                        checked={retakeUseAsDisplay}
+                        onChange={(e) => setRetakeUseAsDisplay(e.target.checked)}
+                        label="Also use the new front photo as the photo shown to guards"
+                      />
+                      {retakeError && <Notice tone="danger">{retakeError}</Notice>}
+                      <div className="flex justify-end gap-s3">
+                        <button type="button" onClick={closeRetake} disabled={isSavingRetake} className="btn-ghost">
+                          Cancel retake
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRetakeSave}
+                          disabled={!retakeEnrollment.isReady || isSavingRetake}
+                          className="btn-primary"
+                        >
+                          <Icon name="check" bold size={16} />
+                          {isSavingRetake ? "Saving…" : "Save new photos"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={openRetake} className="btn-secondary self-start">
+                      <Icon name="arrow-counter-clockwise" size={16} />
+                      Retake face enrollment
+                    </button>
+                  )}
+                  {isRetaking ? null : photoCount < photoMax ? (
                     <div className="flex flex-col gap-s2 rounded-sm border border-line p-s3">
                       <WebcamCapture onCapture={handleAddPhoto} />
                       <span className="text-xs text-ink-600">or upload a file instead (JPEG, PNG or HEIC only):</span>

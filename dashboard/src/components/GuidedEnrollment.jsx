@@ -53,7 +53,10 @@ function ModeTab({ selected, disabled, onClick, children }) {
   );
 }
 
-export default function GuidedEnrollment({ onChange, disabled }) {
+// saveLabel: the button the five passed photos unlock - "Save person" when
+// registering, "Save new photos" when retaking an enrollment (with its own
+// title, under the person's existing "Face enrollment" section).
+export default function GuidedEnrollment({ onChange, disabled, saveLabel = "Save person", title = "Face enrollment" }) {
   const [mode, setMode] = useState("guided"); // "guided" | "fallback"
   // Settings page: "Allow single-photo registration" (the server enforces
   // it too - this just doesn't offer an option that would be refused).
@@ -149,7 +152,7 @@ export default function GuidedEnrollment({ onChange, disabled }) {
   return (
     <div className="flex flex-col gap-s3 border-t border-line pt-s4">
       <div className="flex items-baseline justify-between">
-        <span className="t-section">Face enrollment</span>
+        <span className="t-section">{title}</span>
         {mode === "guided" && (
           <span className="font-mono text-sm font-semibold">
             {passedCount} / {SLOTS.length} captured
@@ -176,7 +179,7 @@ export default function GuidedEnrollment({ onChange, disabled }) {
         <>
           <p className="text-xs leading-snug text-ink-600">
             Have the person face the camera for each shot - small variations only (a slight turn, neutral vs.
-            smile), not side profiles. All 5 must pass the quality check before &ldquo;Save person&rdquo; unlocks.
+            smile), not side profiles. All 5 must pass the quality check before &ldquo;{saveLabel}&rdquo; unlocks.
             Click a passed photo to retake it.
           </p>
           <div className="grid grid-cols-5 gap-s2">

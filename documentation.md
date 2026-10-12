@@ -917,7 +917,14 @@ the page's main action beside it. See §8.1 for the visual design system.
   left or right, no expression, smiling — and the shot being captured shows its
   drawing larger beside the camera for the person to copy) or a single-photo fallback
   (flagged low-confidence); add extra photos to an existing person (up to 8 once
-  flagged confusable — §5.8); an optional `distinguishing_note` field; **bulk
+  flagged confusable — §5.8); **retake face enrollment** on an existing person
+  (the same guided 5-shot or single-photo capture, sent to
+  `POST /api/users/<id>/retake-enrollment/`: every photo is quality-checked
+  first and nothing changes if one fails, then in one transaction the old
+  photos and face data are deleted — files included — and the new ones saved,
+  each through the look-alike check; optionally the new front photo becomes the
+  display photo); the camera preview is mirrored like a selfie camera, while
+  the saved photo is not; an optional `distinguishing_note` field; **bulk
   CSV/XLSX import** with per-row error and confusable-pair-warning reporting.
   Deactivating a record is immediate for an Admin, but for a SASO opens a
   reason-prompted `DeactivationRequest` instead (§13) — an Admin approves or

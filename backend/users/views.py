@@ -2,6 +2,7 @@ import os
 
 import pandas as pd
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import mixins, status, viewsets
@@ -14,6 +15,7 @@ from rest_framework.views import APIView
 from accounts.models import AdminProfile
 from accounts.permissions import IsAdmin, IsAdminOrSaso, get_role
 from audit.utils import log_action
+from configuration import store as system_settings
 
 from .confusable_utils import find_confusable_candidates, record_confusable_pairs
 from .insightface_utils import compute_face_embedding, ensure_supported_image_format, normalize_to_jpeg
@@ -26,6 +28,13 @@ from .serializers import (
 )
 
 REQUIRED_BULK_COLUMNS = {"full_name", "role", "student_or_employee_id", "nfc_id"}
+# A retaken guided enrollment: front, slight left, slight right, neutral,
+# smile - the same five shots as the dashboard's GuidedEnrollment.
+RETAKE_GUIDED_PHOTOS = 5
+
+
+def _truthy(value):
+    return str(value).strip().lower() in ("true", "1", "yes")
 BULK_PHOTOS_SUBDIR = os.path.join("seed_data", "photos")
 
 
@@ -192,6 +201,64 @@ class PersonViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_201_CREATED,
         )
+
+    @action(detail=True, methods=["post"], url_path="retake-enrollment")
+    def retake_enrollment(self, request, pk=None):
+        """Replaces all of a person's face photos with a fresh enrollment -
+        User Management's "Retake face enrollment", for a face that has
+        changed or an enrollment that matches poorly. add_photo() can only
+        add up to the cap; this starts over.
+
+        multipart: `photos` - RETAKE_GUIDED_PHOTOS files in guided order
+        (front first), or exactly one with fallback_enrollment=true when
+        single-photo registration is allowed; use_as_display_photo=true makes
+        the new front photo the one shown to guards. Every photo is checked
+        first and nothing changes if any fails; then, in one transaction, the
+        old photos and face data go - their files with them (users/
+        photo_files.py) - and the new ones are saved, each through the same
+        look-alike check as a new enrollment."""
+        person = self.get_object()
+        photos = request.FILES.getlist("photos")
+        single = _truthy(request.data.get("fallback_enrollment", False))
+        if single and not system_settings.get("allow_single_photo"):
+            return Response(
+                {"photos": "Single-photo registration is turned off in Settings - use the guided 5-photo capture."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        expected = 1 if single else RETAKE_GUIDED_PHOTOS
+        if len(photos) != expected:
+            return Response({"photos": f"Send exactly {expected} photo{'s' if expected > 1 else ''}."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        checked = []
+        for number, photo in enumerate(photos, start=1):
+            try:
+                ensure_supported_image_format(photo)
+                embedding, det_score = compute_face_embedding(photo)
+            except ValueError as exc:
+                return Response({"photos": f"Photo {number}: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+            photo.seek(0)
+            checked.append((photo, embedding, det_score))
+
+        with transaction.atomic():
+            person.face_embeddings.all().delete()
+            for photo, embedding, det_score in checked:
+                FaceEmbedding.objects.create(
+                    person=person, embedding=embedding, source_image=photo, detection_score=det_score,
+                    is_low_confidence=single,
+                )
+            if _truthy(request.data.get("use_as_display_photo", False)):
+                front = checked[0][0]
+                front.seek(0)
+                person.photo_reference = normalize_to_jpeg(front)
+                person.save(update_fields=["photo_reference"])
+
+        for _photo, embedding, _score in checked:
+            matches = find_confusable_candidates(embedding, exclude_person_id=person.id)
+            if matches:
+                record_confusable_pairs(person, matches)
+        person.refresh_from_db()
+        return Response(PersonSerializer(person, context=self.get_serializer_context()).data)
 
 
 class PhotoQualityCheckView(APIView):

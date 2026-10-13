@@ -587,17 +587,19 @@ class IdentifyView(APIView):
         max_distance = system_settings.get("max_scan_distance")
         camera_zoom = min(2.0, max(1.0, data["camera_zoom"]))
         results = []
+        distances = {}  # (left, top, right, bottom) -> metres, for "Show distance on face boxes"
         for embedding, box, det_score, blur_variance, yaw_ratio, mouth_ratio, texture_ratio, kps in detections:
             # Before everything else, and silently - no box, no hint, never
             # an attempt: a face this far away is too small for a fair
             # spoof check or match, so it's treated as not being there
             # rather than risk flagging a passer-by as Unknown or a fake.
-            if max_distance > 0:
-                distance = insightface_utils.estimate_distance_m(
-                    kps, box, image_width, image_height, camera_zoom, system_settings.get("camera_view_angle")
-                )
-                if distance is not None and distance > max_distance:
-                    continue
+            distance = insightface_utils.estimate_distance_m(
+                kps, box, image_width, image_height, camera_zoom, system_settings.get("camera_view_angle")
+            )
+            if max_distance > 0 and distance is not None and distance > max_distance:
+                continue
+            if distance is not None:
+                distances[box] = distance
             skip_result = self._skip_reason(box, blur_variance, yaw_ratio, image_width, image_height)
             if skip_result is not None:
                 results.append(skip_result)
@@ -652,6 +654,16 @@ class IdentifyView(APIView):
                     liveness_score, liveness_unsure=liveness_unsure,
                 )
             )
+        # Settings page (Advanced): "Show distance on face boxes" - for
+        # checking the distance estimate against a measured spot.
+        if system_settings.get("show_face_distance"):
+            for result in results:
+                face_box = result.get("box")
+                distance = face_box and distances.get(
+                    (face_box["left"], face_box["top"], face_box["right"], face_box["bottom"])
+                )
+                if distance is not None:
+                    result["distance_m"] = round(distance, 1)
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},

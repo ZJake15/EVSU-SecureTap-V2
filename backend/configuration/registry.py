@@ -307,7 +307,14 @@ DEFINITIONS = [
         "How wide the gate cameras see, corner to corner, as listed in the camera's specifications (often "
         "\"FOV\" or \"field of view\"). Used only to estimate how far away a face is.",
         INT, 78, 40, 150, 1, unit="degrees",
-        note="78 suits most webcams. A wide-angle camera is usually 90-120.",
+        note="78 suits most webcams. A wide-angle camera is usually 90-120. If faces read nearer than they "
+             "really are, lower it; farther, raise it (turn on Show distance on face boxes to check).",
+    ),
+    SettingDef(
+        "show_face_distance", "advanced", "Show distance on face boxes",
+        "Adds each face's estimated distance to its box on the gate monitor (for example \"UNKNOWN · 4.8 m\"), "
+        "for checking the distance limit: stand at a measured spot and compare. Turn it off again afterwards.",
+        BOOL, False,
     ),
     SettingDef(
         "covered_face_mode", "advanced", "Covered face detection method",

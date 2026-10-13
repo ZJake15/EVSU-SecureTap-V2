@@ -2288,6 +2288,8 @@ class GateMonitorWindow:
         if x1 - x0 < self._px(8) or y1 - y0 < self._px(8):
             return  # face is (almost) entirely in the cropped-off margin
         color, icon_name, label = self._box_style(item)
+        if item.get("distance_m") is not None:
+            label = f"{label} · {item['distance_m']:.1f} m"
 
         self.video_canvas.create_rectangle(x0, y0, x1, y1, outline=color, width=self._px(2))
 

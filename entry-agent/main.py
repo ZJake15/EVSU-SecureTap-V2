@@ -208,6 +208,8 @@ def _build_recognition(direction, result, api_client, photo_cache):
         "repeated_unknown": bool(result.get("repeated_unknown")),
         "repeated_unknown_count": result.get("repeated_unknown_count"),
         "direction": direction,
+        # Only sent with "Show distance on face boxes" on (Settings, Advanced).
+        "distance_m": result.get("distance_m"),
         "photo_bytes": _fetch_photo_cached(api_client, photo_cache, photo_url),
     }
 

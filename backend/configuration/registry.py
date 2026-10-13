@@ -307,9 +307,9 @@ DEFINITIONS = [
         "Corrects the estimated distance for your camera. Turn on Show distance on face boxes, stand at a "
         "measured distance facing the camera, and set this to the real distance divided by the one shown - "
         "for example, really 5 m but shown as 1.5 m: 5 / 1.5 = 3.33.",
-        FLOAT, 1.0, 0.25, 6.0, 0.01, unit="x",
-        note="1.00 suits a typical webcam. Cameras that see a narrower view (some 4K cameras at the gate's "
-             "picture size) need more.",
+        FLOAT, 3.33, 0.25, 6.0, 0.01, unit="x",
+        note="3.33 is measured for the EMEET SmartCam C60E 4K used at the gates (5 m showed as 1.5 m). A "
+             "typical webcam needs about 1.00 - check yours once if you use a different camera.",
     ),
     SettingDef(
         "show_face_distance", "advanced", "Show distance on face boxes",

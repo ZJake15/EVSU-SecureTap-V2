@@ -83,11 +83,12 @@ currently in frame.
    typical webcam makes every face read too near. Turn on *Show distance on
    face boxes* (`show_face_distance`, Advanced) — each box then ends in its
    estimate, e.g. "UNKNOWN · 4.8 m" — stand at a measured distance, and set
-   *Distance correction* (`distance_correction`, Advanced, default 1.00) to
-   real ÷ shown. One measurement is enough: the estimate scales in proportion
-   to distance. The EMEET SmartCam C60E 4K used in development showed 1.5 m
-   at a measured 5 m (correction 3.33), most likely because a 4K camera at
-   the gate's 1280×720 uses only the middle of its sensor.
+   *Distance correction* (`distance_correction`, Advanced) to real ÷ shown.
+   One measurement is enough: the estimate scales in proportion to distance.
+   The default, **3.33**, is measured for the EMEET SmartCam C60E 4K used at
+   the gates — it showed 1.5 m at a measured 5 m, most likely because a 4K
+   camera at the gate's 1280×720 uses only the middle of its sensor. A typical
+   webcam needs about 1.00, so check once with any other camera.
 4. **Per-face quality gate.** Each face is checked for (a) sitting too close to the
    frame's edge (`FACE_EDGE_MARGIN_RATIO` — likely partially cut off), (b) being
    turned too far away from the camera (`FACE_MAX_YAW_RATIO`), and (c) motion blur

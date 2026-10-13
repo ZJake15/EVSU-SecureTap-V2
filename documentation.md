@@ -73,15 +73,21 @@ currently in frame.
    dropped right here — no box, no hint, no attempt of any kind, so a passer-by
    in the background can never be voted Unknown or flagged as a fake. The
    estimate (`insightface_utils.estimate_distance_m`) scales from average adult
-   eye spacing (6.3 cm) and eye-to-mouth height (6.8 cm), using the camera's
-   field of view (`camera_view_angle`, Advanced, default 78° diagonal) and the
-   gate's camera zoom, which the gate monitor sends with every frame
-   (`camera_zoom`; a monitor that doesn't send it counts as 1x). The nearer of
-   the two readings wins, so a turned or tilted head never reads as farther
-   away than it is. Tested on real faces shrunk to known distances: within
-   ~10%, reading slightly near. At 1x zoom on the default 960 px upload, faces
-   past ~5 m are already too small for the detector to find; the cutoff
-   matters most at 1.5x–2x zoom, where faces up to ~10 m are found.
+   eye spacing (6.3 cm) and eye-to-mouth height (6.8 cm), assuming a typical
+   webcam's field of view (78° diagonal), then applies the gate's camera zoom,
+   which the gate monitor sends with every frame (`camera_zoom`; a monitor
+   that doesn't send it counts as 1x). The nearer of the two readings wins, so
+   a turned or tilted head never reads as farther away than it is.
+
+   **Calibrating it for a camera:** a camera that sees a narrower view than a
+   typical webcam makes every face read too near. Turn on *Show distance on
+   face boxes* (`show_face_distance`, Advanced) — each box then ends in its
+   estimate, e.g. "UNKNOWN · 4.8 m" — stand at a measured distance, and set
+   *Distance correction* (`distance_correction`, Advanced, default 1.00) to
+   real ÷ shown. One measurement is enough: the estimate scales in proportion
+   to distance. The EMEET SmartCam C60E 4K used in development showed 1.5 m
+   at a measured 5 m (correction 3.33), most likely because a 4K camera at
+   the gate's 1280×720 uses only the middle of its sensor.
 4. **Per-face quality gate.** Each face is checked for (a) sitting too close to the
    frame's edge (`FACE_EDGE_MARGIN_RATIO` — likely partially cut off), (b) being
    turned too far away from the camera (`FACE_MAX_YAW_RATIO`), and (c) motion blur

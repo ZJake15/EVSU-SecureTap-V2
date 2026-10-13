@@ -130,8 +130,8 @@ DEFINITIONS = [
         "Faces farther from the camera than this are ignored - never checked, matched, or recorded as unknown "
         "or as a fake. A face that far away is too small to check reliably. 0 checks every face it can see.",
         FLOAT, 5.0, 0.0, 15.0, 0.5, unit="metres",
-        note="Estimated from the size of each face in the picture and the gate's camera zoom, so treat it as "
-             "approximate. If the cutoff seems off, set the camera's field of view under Advanced.",
+        note="Estimated from the size of each face in the picture and the gate's camera zoom. Check it once "
+             "with Show distance on face boxes (Advanced), and if it's off, set Distance correction there.",
     ),
     SettingDef(
         "covered_face_enabled", "quality", "Covered face detection",
@@ -303,12 +303,13 @@ DEFINITIONS = [
         FLOAT, _from_settings("FACE_EDGE_MARGIN_RATIO"), 0.0, 0.20, 0.01, depends_on="whole_face_required",
     ),
     SettingDef(
-        "camera_view_angle", "advanced", "Camera field of view",
-        "How wide the gate cameras see, corner to corner, as listed in the camera's specifications (often "
-        "\"FOV\" or \"field of view\"). Used only to estimate how far away a face is.",
-        INT, 78, 40, 150, 1, unit="degrees",
-        note="78 suits most webcams. A wide-angle camera is usually 90-120. If faces read nearer than they "
-             "really are, lower it; farther, raise it (turn on Show distance on face boxes to check).",
+        "distance_correction", "advanced", "Distance correction",
+        "Corrects the estimated distance for your camera. Turn on Show distance on face boxes, stand at a "
+        "measured distance facing the camera, and set this to the real distance divided by the one shown - "
+        "for example, really 5 m but shown as 1.5 m: 5 / 1.5 = 3.33.",
+        FLOAT, 1.0, 0.25, 6.0, 0.01, unit="x",
+        note="1.00 suits a typical webcam. Cameras that see a narrower view (some 4K cameras at the gate's "
+             "picture size) need more.",
     ),
     SettingDef(
         "show_face_distance", "advanced", "Show distance on face boxes",

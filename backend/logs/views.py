@@ -593,9 +593,11 @@ class IdentifyView(APIView):
             # an attempt: a face this far away is too small for a fair
             # spoof check or match, so it's treated as not being there
             # rather than risk flagging a passer-by as Unknown or a fake.
-            distance = insightface_utils.estimate_distance_m(
-                kps, box, image_width, image_height, camera_zoom, system_settings.get("camera_view_angle")
-            )
+            distance = insightface_utils.estimate_distance_m(kps, box, image_width, image_height, camera_zoom)
+            if distance is not None:
+                # Settings page (Advanced): "Distance correction" - measured
+                # real distance / shown, for a camera unlike a typical webcam.
+                distance *= system_settings.get("distance_correction")
             if max_distance > 0 and distance is not None and distance > max_distance:
                 continue
             if distance is not None:

@@ -199,6 +199,51 @@ def head_yaw_ratio(kps):
     return abs(float(np.dot(nose_offset, eye_axis))) / eye_distance
 
 
+# Average adult face measurements estimate_distance_m scales from.
+EYE_SPACING_M = 0.063  # pupil to pupil
+EYES_TO_MOUTH_M = 0.068  # eye line down to the mouth-corner line
+FACE_BOX_WIDTH_M = 0.16  # the detector's box, used only without keypoints
+
+
+def estimate_distance_m(kps, box, image_width, image_height, zoom=1.0, diagonal_fov_degrees=78):
+    """Roughly how far (in metres) a face is from the camera, from how big it
+    looks: an average adult's eyes are ~6.3 cm apart, so the fewer pixels
+    apart they are, the farther away the face. `image_width`/`image_height`
+    are the frame the face was found in; `zoom` is the gate's camera zoom
+    (the frame is the middle 1/zoom of the camera's view - see the
+    entry-agent's camera.py); `diagonal_fov_degrees` is the camera's field
+    of view as webcam specs list it (corner to corner).
+
+    Two measurements, and the nearer answer wins: eye spacing shrinks when a
+    head turns, eye-to-mouth height when it tilts up or down - so a turned
+    or tilted face never reads as farther than it is. That also means any
+    error leans toward "close enough to check", the behaviour from before
+    there was a distance limit. Falls back to the box width without
+    keypoints; None if nothing usable."""
+    if image_width <= 0 or image_height <= 0:
+        return None
+    half_width_tan = (
+        np.tan(np.radians(diagonal_fov_degrees) / 2.0) * image_width / np.hypot(image_width, image_height)
+    )
+    focal_px = (image_width / 2.0) * max(zoom, 1.0) / half_width_tan
+    estimates = []
+    if kps is not None and len(kps) >= 5:
+        points = np.asarray(kps, dtype=np.float64)
+        eye_left, eye_right = points[0], points[1]
+        eye_px = float(np.linalg.norm(eye_right - eye_left))
+        eyes_to_mouth_px = float(np.linalg.norm((points[3] + points[4]) / 2.0 - (eye_left + eye_right) / 2.0))
+        if eye_px > 1e-6:
+            estimates.append(EYE_SPACING_M * focal_px / eye_px)
+        if eyes_to_mouth_px > 1e-6:
+            estimates.append(EYES_TO_MOUTH_M * focal_px / eyes_to_mouth_px)
+    if not estimates:
+        box_width_px = box[2] - box[0]
+        if box_width_px <= 0:
+            return None
+        estimates.append(FACE_BOX_WIDTH_M * focal_px / box_width_px)
+    return float(min(estimates))
+
+
 def mouth_visibility_ratio(kps):
     """A proxy for whether the mouth/nose are occluded (a hand, mask, or high
     collar), derived from the same 5 keypoints head_yaw_ratio uses - so, like
@@ -333,8 +378,9 @@ def compute_face_embeddings_and_boxes(bgr_image):
     turned away, occluded) using settings-configurable thresholds. Returns a
     list of (embedding: list[float], box: (x1, y1, x2, y2) as ints,
     detection_score: float, blur_variance: float, yaw_ratio: float | None,
-    mouth_ratio: float | None, texture_ratio: float | None) tuples, one per
-    detected face - uses the smaller/faster scan-dedicated detector (see
+    mouth_ratio: float | None, texture_ratio: float | None, kps: the 5
+    keypoints or None - for estimate_distance_m) tuples, one per detected
+    face - uses the smaller/faster scan-dedicated detector (see
     _get_scan_app), not the full-size enrollment one."""
     faces = _find_faces(bgr_image, settings.GATE_SCAN_DET_SIZE)
     results = []
@@ -348,7 +394,7 @@ def compute_face_embeddings_and_boxes(bgr_image):
         texture_ratio = lower_face_texture_ratio(bgr_image, box)
         results.append((
             face.normed_embedding.tolist(), box, float(face.det_score), blur_variance,
-            yaw_ratio, mouth_ratio, texture_ratio,
+            yaw_ratio, mouth_ratio, texture_ratio, kps,
         ))
     return results
 

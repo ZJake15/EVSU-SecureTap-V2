@@ -260,7 +260,9 @@ def scan_loop(config, api_client, camera, ui, stop_event):
             continue
 
         try:
-            response = api_client.identify(config.gate_location, config.direction, image_bytes)
+            response = api_client.identify(
+                config.gate_location, config.direction, image_bytes, camera_zoom=camera.zoom
+            )
             ui.show_offline(False)
             threshold = response.get("threshold")
             if threshold is not None and threshold != last_threshold:

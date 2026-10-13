@@ -145,3 +145,7 @@ class IdentifyRequestSerializer(serializers.Serializer):
         choices=EntryLog.Direction.choices, default=EntryLog.Direction.ENTRY
     )
     image = serializers.ImageField()
+    # The gate's camera zoom (launcher's Entry Agent settings) - the frame is
+    # the middle 1/zoom of the camera's view, which the distance estimate
+    # needs. Optional so an older gate monitor (no zoom) still works.
+    camera_zoom = serializers.FloatField(required=False, default=1.0)

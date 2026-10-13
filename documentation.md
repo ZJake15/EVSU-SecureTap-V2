@@ -68,6 +68,20 @@ currently in frame.
    every face in the frame. Because InsightFace's `FaceAnalysis.get()` computes
    detection and recognition together, each detected face already has its 512-d
    ArcFace embedding at this point, regardless of what happens in later steps.
+   **Distance cutoff:** a face estimated to be farther than the Settings page's
+   *Ignore faces farther than* (`max_scan_distance`, default 5 m, 0 = off) is
+   dropped right here — no box, no hint, no attempt of any kind, so a passer-by
+   in the background can never be voted Unknown or flagged as a fake. The
+   estimate (`insightface_utils.estimate_distance_m`) scales from average adult
+   eye spacing (6.3 cm) and eye-to-mouth height (6.8 cm), using the camera's
+   field of view (`camera_view_angle`, Advanced, default 78° diagonal) and the
+   gate's camera zoom, which the gate monitor sends with every frame
+   (`camera_zoom`; a monitor that doesn't send it counts as 1x). The nearer of
+   the two readings wins, so a turned or tilted head never reads as farther
+   away than it is. Tested on real faces shrunk to known distances: within
+   ~10%, reading slightly near. At 1x zoom on the default 960 px upload, faces
+   past ~5 m are already too small for the detector to find; the cutoff
+   matters most at 1.5x–2x zoom, where faces up to ~10 m are found.
 4. **Per-face quality gate.** Each face is checked for (a) sitting too close to the
    frame's edge (`FACE_EDGE_MARGIN_RATIO` — likely partially cut off), (b) being
    turned too far away from the camera (`FACE_MAX_YAW_RATIO`), and (c) motion blur

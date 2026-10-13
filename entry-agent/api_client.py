@@ -80,13 +80,15 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
-    def identify(self, gate_location, direction, image_bytes):
+    def identify(self, gate_location, direction, image_bytes, camera_zoom=1.0):
         """POSTs a sampled camera frame to /identify for 1:N face matching.
-        Raises requests.RequestException on any network failure."""
+        camera_zoom tells the backend the frame is the middle 1/zoom of the
+        camera's view, for its distance cutoff. Raises
+        requests.RequestException on any network failure."""
         response = self.session.post(
             f"{self.base_url}/identify",
             headers={"X-Service-Token": self.service_token},
-            data={"gate_location": gate_location, "direction": direction},
+            data={"gate_location": gate_location, "direction": direction, "camera_zoom": camera_zoom},
             files={"image": ("frame.jpg", image_bytes, "image/jpeg")},
             timeout=self.timeout,
         )

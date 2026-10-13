@@ -582,8 +582,22 @@ class IdentifyView(APIView):
             })
 
         known_matrix, owners = self._build_candidate_matrix(candidates)
+        # Settings page: "Ignore faces farther than" (0 = off). Clamped to the
+        # same 1x-2x the gate monitor allows.
+        max_distance = system_settings.get("max_scan_distance")
+        camera_zoom = min(2.0, max(1.0, data["camera_zoom"]))
         results = []
-        for embedding, box, det_score, blur_variance, yaw_ratio, mouth_ratio, texture_ratio in detections:
+        for embedding, box, det_score, blur_variance, yaw_ratio, mouth_ratio, texture_ratio, kps in detections:
+            # Before everything else, and silently - no box, no hint, never
+            # an attempt: a face this far away is too small for a fair
+            # spoof check or match, so it's treated as not being there
+            # rather than risk flagging a passer-by as Unknown or a fake.
+            if max_distance > 0:
+                distance = insightface_utils.estimate_distance_m(
+                    kps, box, image_width, image_height, camera_zoom, system_settings.get("camera_view_angle")
+                )
+                if distance is not None and distance > max_distance:
+                    continue
             skip_result = self._skip_reason(box, blur_variance, yaw_ratio, image_width, image_height)
             if skip_result is not None:
                 results.append(skip_result)

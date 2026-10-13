@@ -126,6 +126,14 @@ DEFINITIONS = [
         BOOL, True,
     ),
     SettingDef(
+        "max_scan_distance", "quality", "Ignore faces farther than",
+        "Faces farther from the camera than this are ignored - never checked, matched, or recorded as unknown "
+        "or as a fake. A face that far away is too small to check reliably. 0 checks every face it can see.",
+        FLOAT, 5.0, 0.0, 15.0, 0.5, unit="metres",
+        note="Estimated from the size of each face in the picture and the gate's camera zoom, so treat it as "
+             "approximate. If the cutoff seems off, set the camera's field of view under Advanced.",
+    ),
+    SettingDef(
         "covered_face_enabled", "quality", "Covered face detection",
         "Asks people to uncover their face when a hand, mask or scarf is covering it, instead of trying "
         "to recognize a covered face.",
@@ -293,6 +301,13 @@ DEFINITIONS = [
         "edge_margin", "advanced", "Edge margin",
         "How close to the edge of the picture a face can be before it counts as cut off.",
         FLOAT, _from_settings("FACE_EDGE_MARGIN_RATIO"), 0.0, 0.20, 0.01, depends_on="whole_face_required",
+    ),
+    SettingDef(
+        "camera_view_angle", "advanced", "Camera field of view",
+        "How wide the gate cameras see, corner to corner, as listed in the camera's specifications (often "
+        "\"FOV\" or \"field of view\"). Used only to estimate how far away a face is.",
+        INT, 78, 40, 150, 1, unit="degrees",
+        note="78 suits most webcams. A wide-angle camera is usually 90-120.",
     ),
     SettingDef(
         "covered_face_mode", "advanced", "Covered face detection method",

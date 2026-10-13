@@ -177,7 +177,7 @@ class Command(BaseCommand):
                 # guess which detection is the actual enrolled person.
                 skipped += 1
                 continue
-            _embedding, box, det_score, _blur, _yaw, mouth_ratio, texture_ratio = detections[0]
+            _embedding, box, det_score, _blur, _yaw, mouth_ratio, texture_ratio, _kps = detections[0]
 
             filename = f"clean_{face_embedding.person_id}_{face_embedding.id}.jpg"
             with open(os.path.join(clean_dir, filename), "wb") as out:
@@ -242,7 +242,7 @@ class Command(BaseCommand):
                 f"  skipped - {'no' if not detections else 'more than one'} face detected, try again"
             ))
             return
-        _embedding, box, det_score, _blur, _yaw, mouth_ratio, texture_ratio = detections[0]
+        _embedding, box, det_score, _blur, _yaw, mouth_ratio, texture_ratio, _kps = detections[0]
 
         counts[subtype] = counts.get(subtype, 0) + 1
         filename = f"{label}_{subtype}_{int(time.time() * 1000)}.jpg"

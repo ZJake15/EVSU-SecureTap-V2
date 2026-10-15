@@ -31,6 +31,7 @@ dashboard/.vite/
 
 # Entry agent local state
 entry-agent/offline_queue.db
+entry-agent/speed-tests/
 entry-agent/*.log
 entry-agent/last_session.json
 entry-agent/camera_choice.json

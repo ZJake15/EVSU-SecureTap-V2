@@ -583,6 +583,7 @@ class GateMonitorWindow:
         # This gate's camera zoom (launcher's Entry Agent settings) - the frames
         # arrive already zoomed; this is only for the video caption.
         self._camera_zoom = camera_zoom or 1.0
+        self._speed_caption = None  # TEMPORARY - see speed_test.py
         # Guard sign-in (Settings -> "Guards sign in at the gate monitor"):
         # on_sign_in(username, password) and on_sign_out(shift_id) are main.py's,
         # run off the Tk thread; the answers come back through
@@ -1308,6 +1309,11 @@ class GateMonitorWindow:
 
     def show_offline(self, offline):
         self._queue.put(("offline", offline))
+
+    def set_speed_caption(self, text):
+        """TEMPORARY - see speed_test.py. A plain attribute (one string,
+        swapped whole), read by the next frame drawn."""
+        self._speed_caption = text
 
     def seed_stats(self, entries_today, unknown_today, spoof_today=0, occlusion_today=0):
         self._queue.put(("seed", (entries_today, unknown_today, spoof_today, occlusion_today)))
@@ -2235,6 +2241,8 @@ class GateMonitorWindow:
         count = len(self._latest_recognitions)
         zoom = f" · zoom {self._camera_zoom:.1f}x" if self._camera_zoom > 1.0 else ""
         self._caption_text = f"{src_w}×{src_h}{zoom} · {count} face{'s' if count != 1 else ''} tracked"
+        if self._speed_caption:
+            self._caption_text += f" · {self._speed_caption}"
         self._draw_overlays(rect)
 
     @staticmethod
@@ -2290,6 +2298,8 @@ class GateMonitorWindow:
         color, icon_name, label = self._box_style(item)
         if item.get("distance_m") is not None:
             label = f"{label} · {item['distance_m']:.1f} m"
+        if item.get("speed_ms") is not None:  # TEMPORARY - see speed_test.py
+            label = f"{label} · {item['speed_ms']:.0f} ms"
 
         self.video_canvas.create_rectangle(x0, y0, x1, y1, outline=color, width=self._px(2))
 

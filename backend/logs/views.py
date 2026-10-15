@@ -685,6 +685,7 @@ class IdentifyView(APIView):
             "liveness_threshold": system_settings.get("spoof_strictness"),
             "alerts": {"spoof": system_settings.get("alert_spoof")},
             "gate_sign_in": gate_shifts.status(gate_location),
+            "speed_test": system_settings.get("speed_test_enabled"),  # TEMPORARY - see registry.py
         }
 
     @staticmethod

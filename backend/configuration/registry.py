@@ -317,6 +317,17 @@ DEFINITIONS = [
         "for checking the distance limit: stand at a measured spot and compare. Turn it off again afterwards.",
         BOOL, False,
     ),
+    # TEMPORARY - for timing the camera scanner during testing (see the
+    # entry-agent's speed_test.py); remove after the test.
+    SettingDef(
+        "speed_test_enabled", "advanced", "Speed test recording (temporary)",
+        "Times the camera scanner: each face's box shows how long it took to be decided (for example "
+        "\"Maria Santos · 92% · 843 ms\"), the gate monitor's caption shows the time per frame, and each "
+        "decided face is saved as one row of a CSV file in the data folder (speed-tests): its result, time to "
+        "decide, frames and average frame time, in milliseconds. No names or photos are saved.",
+        BOOL, False,
+        note="For testing only. Turn it off when the test is done; each time it's turned on starts a new file.",
+    ),
     SettingDef(
         "covered_face_mode", "advanced", "Covered face detection method",
         "How the system decides a face is covered: a model trained on example photos, or three simple "

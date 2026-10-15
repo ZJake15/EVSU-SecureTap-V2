@@ -72,13 +72,16 @@ def _get_model():
     return _model
 
 
-def rule_based_occluded(mouth_ratio, texture_ratio, det_score):
+def rule_based_occluded(mouth_ratio, texture_ratio, det_score, margin=1.0):
     """The original check: covered if ANY of the three signals trips. A
     measurement that couldn't be taken (None) is simply left out, never
-    counted as a trip."""
-    mouth_flagged = mouth_ratio is not None and mouth_ratio < system_settings.get("covered_rule_mouth")
-    texture_flagged = texture_ratio is not None and texture_ratio < system_settings.get("covered_rule_texture")
-    det_score_flagged = det_score < system_settings.get("covered_rule_det_score")
+    counted as a trip. `margin` above 1 raises every cutoff by that factor
+    (see is_slightly_covered)."""
+    mouth_flagged = mouth_ratio is not None and mouth_ratio < system_settings.get("covered_rule_mouth") * margin
+    texture_flagged = (
+        texture_ratio is not None and texture_ratio < system_settings.get("covered_rule_texture") * margin
+    )
+    det_score_flagged = det_score < system_settings.get("covered_rule_det_score") * margin
     return mouth_flagged or texture_flagged or det_score_flagged
 
 
@@ -104,6 +107,28 @@ def is_occluded(mouth_ratio, texture_ratio, det_score):
         if probability is not None:
             return probability >= system_settings.get("covered_face_cutoff")
     return rule_based_occluded(mouth_ratio, texture_ratio, det_score)
+
+
+# Simple rules' version of "slightly": every cutoff 15% looser. Only a
+# fallback - the trained model, when it's there, uses slight_cover_cutoff.
+SLIGHT_RULE_MARGIN = 1.15
+
+
+def is_slightly_covered(mouth_ratio, texture_ratio, det_score):
+    """A looser is_occluded, for a face that matches nobody but still looks
+    partly like a registered person (see IdentifyView._covered_and_
+    unrecognized) - there, "even a little covered" is the likelier story
+    than "a stranger", so a weaker sign of covering is enough. Measured on
+    the labelled training photos: the trained model at its normal 0.50
+    catches 82% of covered faces (41-72% of a hand over one eye); at 0.20
+    it catches 95% - but would also flag about half the clean ones, which
+    is why this is only ever asked of faces that already look partly like
+    someone, never of every face."""
+    if system_settings.get("covered_face_mode") == MODE_CLASSIFIER:
+        probability = classifier_occlusion_probability(mouth_ratio, texture_ratio, det_score)
+        if probability is not None:
+            return probability >= system_settings.get("slight_cover_cutoff")
+    return rule_based_occluded(mouth_ratio, texture_ratio, det_score, margin=SLIGHT_RULE_MARGIN)
 
 
 def active_mode_description():

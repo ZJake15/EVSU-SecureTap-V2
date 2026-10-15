@@ -642,11 +642,11 @@ class IdentifyView(APIView):
             #
             # Skipped outright for a face that already matches an enrolled
             # person - see _already_recognizable - and when "Covered face
-            # detection" is switched off on the Settings page.
-            if (
-                system_settings.get("covered_face_enabled")
-                and not self._already_recognizable(embedding, known_matrix)
-                and self._occlusion_reason(mouth_ratio, texture_ratio, det_score)
+            # detection" is switched off on the Settings page. A face only
+            # slightly covered gets the same prompt - see
+            # _covered_and_unrecognized.
+            if system_settings.get("covered_face_enabled") and self._covered_and_unrecognized(
+                embedding, known_matrix, mouth_ratio, texture_ratio, det_score
             ):
                 results.append(self._occlusion_prompt(box, gate_location))
                 continue
@@ -824,8 +824,40 @@ class IdentifyView(APIView):
         that clears it still goes through liveness and the normal match vote
         afterwards, including the near-threshold tiebreak (card tap), so a
         weak match here can't wave anyone through on its own."""
-        query = np.array(embedding, dtype=np.float32)
-        return float((known_matrix @ query).max()) >= system_settings.get("match_strictness")
+        return IdentifyView._best_similarity(embedding, known_matrix) >= system_settings.get("match_strictness")
+
+    @staticmethod
+    def _best_similarity(embedding, known_matrix):
+        """How much this face looks like its closest enrolled photo (cosine
+        similarity: ~0.8 the same person, under ~0.2 someone else)."""
+        return float((known_matrix @ np.array(embedding, dtype=np.float32)).max())
+
+    def _covered_and_unrecognized(self, embedding, known_matrix, mouth_ratio, texture_ratio, det_score):
+        """Whether to show "Please uncover your face" instead of trying to
+        match this face. Never for a face that already matches someone (see
+        _already_recognizable); otherwise for a clearly covered face
+        (_occlusion_reason) - and, with "Ask slightly covered faces to
+        uncover" on, also for a face with only a slight sign of covering
+        (occlusion_utils.is_slightly_covered) if it still looks partly like a
+        registered person (slight_cover_similarity, 0.30).
+
+        That last part is what keeps a slightly covered student from being
+        voted Unknown: covering part of a face drags its similarity down
+        from ~0.8 to somewhere in between, below the match bar but well
+        above a stranger's. Measured on this system's enrolled photos,
+        different people were at most 0.18 alike - so a true stranger stays
+        under 0.30, never gets this prompt for a slight sign of covering,
+        and is still recorded as Unknown."""
+        best_similarity = self._best_similarity(embedding, known_matrix)
+        if best_similarity >= system_settings.get("match_strictness"):
+            return False
+        if self._occlusion_reason(mouth_ratio, texture_ratio, det_score):
+            return True
+        return bool(
+            system_settings.get("slight_cover_enabled")
+            and best_similarity >= system_settings.get("slight_cover_similarity")
+            and occlusion_utils.is_slightly_covered(mouth_ratio, texture_ratio, det_score)
+        )
 
     def _match_one_face(
         self, embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image, liveness_score,

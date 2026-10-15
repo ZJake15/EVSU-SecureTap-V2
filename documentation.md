@@ -737,6 +737,19 @@ that actually tells the two people apart, so the system reaches a *person* inste
   already matches an enrolled person is never flagged as covered
   (`_already_recognizable`, §2.1 step 5) — this is what keeps the classifier's
   false alarms away from enrolled people.
+- **Slightly covered faces:** at its normal 0.50 the model catches 82% of the
+  covered training photos (only 41–72% of a hand over one eye), so a slightly
+  covered student could slip past it, match nobody and be voted Unknown. With
+  *Ask slightly covered faces to uncover* on (`slight_cover_enabled`, default
+  on), a face that matches nobody but still looks partly like a registered
+  person (best similarity ≥ `slight_cover_similarity`, 0.30) gets the uncover
+  prompt on a much weaker sign of covering (`slight_cover_cutoff`, 0.20 — 95%
+  of the covered training photos; with simple rules, each rule 15% looser) —
+  see `IdentifyView._covered_and_unrecognized`. A stranger is unaffected: on
+  this system's enrolled photos different people were at most 0.18 alike
+  (the same person ~0.82), so a face that looks like nobody stays under 0.30
+  and is still recorded as Unknown. Lowering the cutoff for every face instead
+  would have flagged about half the clean training photos, strangers included.
 - **Reloading:** switching modes on the Settings page takes effect within a few
   seconds. The model file is loaded once, so after retraining, restart the
   backend (the launcher runs it without the auto-restart helper, §14).

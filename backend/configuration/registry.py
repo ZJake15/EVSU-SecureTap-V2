@@ -147,13 +147,6 @@ DEFINITIONS = [
         note='Used with the "Trained model" detection method (see Advanced).',
         depends_on="covered_face_enabled",
     ),
-    SettingDef(
-        "slight_cover_enabled", "quality", "Ask slightly covered faces to uncover",
-        "A face that doesn't match anyone but still looks partly like a registered person, with even a slight "
-        "sign of covering (a hand near the nose, a scarf's edge), is asked to uncover instead of being recorded "
-        "as Unknown. Someone who looks like nobody registered is still recorded as Unknown.",
-        BOOL, True, depends_on="covered_face_enabled",
-    ),
     # ---- 4. NFC Card ----------------------------------------------------------
     SettingDef(
         "card_wait_seconds", "nfc", "Card tap time limit",
@@ -342,22 +335,6 @@ DEFINITIONS = [
         CHOICE, _from_settings("OCCLUSION_DETECTION_MODE"),
         choices=(("classifier", "Trained model"), ("rules", "Simple rules")),
         depends_on="covered_face_enabled",
-    ),
-    SettingDef(
-        "slight_cover_similarity", "advanced", "Slight covering: looks partly like someone",
-        "How much a face that doesn't match must still look like a registered person to be asked to uncover "
-        "instead of being recorded as Unknown. Higher sends more slightly covered faces to Unknown; lower "
-        "risks asking a stranger to uncover. Must stay below Match strictness.",
-        FLOAT, 0.30, 0.15, 0.85, 0.01, depends_on="slight_cover_enabled",
-        note="Measured on this system's photos: different people were at most 0.18 alike, the same person "
-             "about 0.82.",
-    ),
-    SettingDef(
-        "slight_cover_cutoff", "advanced", "Slight covering: sign of covering",
-        "With the trained model: how sure it must be that such a face is at least slightly covered. Lower asks "
-        "more of them to uncover. (With simple rules, each rule is 15% looser instead.)",
-        FLOAT, 0.20, 0.05, 0.95, 0.01, depends_on="slight_cover_enabled",
-        note="0.20 caught 95% of the covered training photos; the normal 0.50 catches 82%.",
     ),
     SettingDef(
         "covered_rule_mouth", "advanced", "Simple rules: mouth visibility",

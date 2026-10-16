@@ -212,6 +212,9 @@ def _build_recognition(direction, result, api_client, photo_cache):
         "direction": direction,
         # Only sent with "Show distance on face boxes" on (Settings, Advanced).
         "distance_m": result.get("distance_m"),
+        # TEMPORARY - for the speed test's CSV (see speed_test.py).
+        "speed_test_distance_m": result.get("speed_test_distance_m"),
+        "similarity": similarity,
         "photo_bytes": _fetch_photo_cached(api_client, photo_cache, photo_url),
     }
 

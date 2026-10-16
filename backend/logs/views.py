@@ -658,14 +658,19 @@ class IdentifyView(APIView):
             )
         # Settings page (Advanced): "Show distance on face boxes" - for
         # checking the distance estimate against a measured spot.
-        if system_settings.get("show_face_distance"):
+        show_distance = system_settings.get("show_face_distance")
+        speed_test = system_settings.get("speed_test_enabled")  # TEMPORARY - the speed test's CSV
+        if show_distance or speed_test:
             for result in results:
                 face_box = result.get("box")
                 distance = face_box and distances.get(
                     (face_box["left"], face_box["top"], face_box["right"], face_box["bottom"])
                 )
                 if distance is not None:
-                    result["distance_m"] = round(distance, 1)
+                    if show_distance:
+                        result["distance_m"] = round(distance, 1)
+                    if speed_test:  # TEMPORARY - recorded, not shown on the box
+                        result["speed_test_distance_m"] = round(distance, 2)
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},

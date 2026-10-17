@@ -21,7 +21,7 @@ from django.utils import timezone
 
 from audit.utils import log_action
 
-from .registry import BOOL, BY_KEY, CHOICE, DAYS, DEFINITIONS, FIXED, INT, SECTIONS, TIME, WEEKDAYS
+from .registry import BOOL, BY_KEY, CHOICE, DAYS, DEFINITIONS, FIXED, INT, MORE_OPTIONS, SECTIONS, TIME, WEEKDAYS
 
 TEXT_KINDS = (CHOICE, TIME, DAYS)  # kept in SystemSetting.text_value
 _TIME_PATTERN = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
@@ -301,6 +301,8 @@ def describe(status=None):
             "note": definition.note,
             "off_warning": definition.off_warning,
             "depends_on": definition.depends_on,
+            # Shown under the group's collapsed "More options".
+            "more": definition.key in MORE_OPTIONS,
             "requires_restart": definition.requires_restart,
             "status": status.get(definition.key),
             "changed_by": changed_by,

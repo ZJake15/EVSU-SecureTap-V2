@@ -81,9 +81,9 @@ currently in frame.
 
    **Calibrating it for a camera:** a camera that sees a narrower view than a
    typical webcam makes every face read too near. Turn on *Show distance on
-   face boxes* (`show_face_distance`, Advanced) — each box then ends in its
+   face boxes* (`show_face_distance`, Photo Quality Checks → More options) — each box then ends in its
    estimate, e.g. "UNKNOWN · 4.8 m" — stand at a measured distance, and set
-   *Distance correction* (`distance_correction`, Advanced) to real ÷ shown.
+   *Distance correction* (`distance_correction`, same place) to real ÷ shown.
    One measurement is enough: the estimate scales in proportion to distance.
    The default, **3.33**, is measured for the EMEET SmartCam C60E 4K used at
    the gates — it showed 1.5 m at a measured 5 m, most likely because a 4K
@@ -1042,9 +1042,10 @@ the page's main action beside it. See §8.1 for the visual design system.
   deletion is off, the paper says records are kept until the university
   deletes them, and the page says so.
 - **Settings** *(Admin only — SASO and Security Officer get a 403 from the
-  server)* — every setting that controls the system, in nine sections plus
-  Advanced, each with a plain-English description, changeable from the page
-  and in effect at every gate within a few seconds. See §8.2.
+  server)* — every setting that controls the system, in nine groups picked from
+  a side menu (one group shown at a time), each setting with a plain-English
+  description, changeable from the page and in effect at every gate within a
+  few seconds. See §8.2.
 
 There is currently no notification center in the dashboard.
 
@@ -1062,6 +1063,26 @@ on/off switch or a choice), the lowest and highest value allowed, the
 recommended range for the risky ones, its label and its plain-English
 description. The page draws itself from that list, so the wording on screen and
 the rules on the server can never disagree.
+
+**How the page is laid out.** A side menu lists the nine groups with an icon
+each — Face Recognition, Anti-Spoofing, Photo Quality Checks, NFC Card,
+Enrollment, Privacy & Data Retention, Scheduling, Security & Accounts, Alerts —
+and clicking one shows only that group (on a narrow window the menu is a
+drop-down). Fine-tuning most schools never change sits at the bottom of its own
+group under a collapsed **More options** (`registry.MORE_OPTIONS`: the repeat
+cooldowns and the temporary speed-test switch under Face Recognition, the
+fake-face cooldown under Anti-Spoofing, and how far a face may be turned, the
+edge margin, the distance correction and readout, and the covered-face method
+and rules under Photo Quality Checks); it opens by itself when one of them is
+edited or wrong, so a change is never hidden. There's no separate Advanced
+group any more. Long groups have small sub-headings (Scheduling: Automatic
+deletion, Face re-enrollment, Gate opening hours). A **search box** finds
+settings in every group by their label, description or note; while searching,
+the menu shows how many matches each group has and the results can be changed
+right there. Unsaved changes stay when you switch groups: each group in the
+menu shows how many it has, and the save bar at the bottom says how many in how
+many groups. **Reset this group** fills in that group's defaults (like Reset
+all, nothing is saved until Save changes).
 
 **Day one changes nothing.** The first time the backend needs a setting, it
 fills its row with the value the system already used (from `backend/.env` or

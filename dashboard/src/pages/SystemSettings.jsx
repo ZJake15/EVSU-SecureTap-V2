@@ -226,6 +226,32 @@ function SettingRow({ setting, raw, parsed, dirty, dependencyOff, dependencyLabe
   );
 }
 
+// Each group's icon in the side menu and its header.
+const SECTION_ICONS = {
+  face: "user-focus",
+  spoof: "shield-warning",
+  quality: "image",
+  nfc: "identification-card",
+  enrollment: "user-plus",
+  privacy: "lock-key",
+  scheduling: "calendar-blank",
+  security: "shield-check",
+  alerts: "bell-ringing",
+};
+
+// Small headings inside a long group, shown above the setting they start with.
+const SUBHEADINGS = {
+  auto_delete_enabled: "Automatic deletion",
+  reenroll_months: "Face re-enrollment",
+  gate_hours_enabled: "Gate opening hours",
+  idle_logout_enabled: "Dashboard sign-in",
+  gate_sign_in_enabled: "Gate monitor sign-in",
+};
+
+function matchesQuery(setting, query) {
+  return [setting.label, setting.description, setting.note].some((text) => text && text.toLowerCase().includes(query));
+}
+
 // The page body - pure, so it can be drawn from any data (the page itself,
 // and the screenshot used in documentation.md).
 export function SettingsContent({
@@ -235,11 +261,15 @@ export function SettingsContent({
   onChange = () => {},
   onReset = () => {},
   onResetAll = () => {},
+  onResetGroup = () => {},
   onSave = () => {},
   onDiscard = () => {},
   saving = false,
   notice = null,
 }) {
+  const [activeKey, setActiveKey] = useState(data.sections[0]?.key);
+  const [search, setSearch] = useState("");
+  const [moreOpen, setMoreOpen] = useState({});
   const byKey = useMemo(() => Object.fromEntries(data.settings.map((setting) => [setting.key, setting])), [data]);
   const rows = data.settings.map((setting) => {
     const raw = draft[setting.key];
@@ -250,6 +280,46 @@ export function SettingsContent({
   const dirtyCount = rows.filter((row) => row.dirty).length;
   const hasErrors = rows.some((row) => row.dirty && row.parsed.error);
   const allAtDefault = rows.every(({ setting, raw }) => raw === toDraft(setting, setting.default));
+  const dirtyIn = (sectionKey) => rows.filter((row) => row.dirty && row.setting.section === sectionKey).length;
+  const dirtyGroups = data.sections.filter((section) => dirtyIn(section.key) > 0).length;
+
+  const query = search.trim().toLowerCase();
+  const matches = query ? rows.filter(({ setting }) => matchesQuery(setting, query)) : [];
+  const active = data.sections.find((section) => section.key === activeKey) || data.sections[0];
+  const activeRows = rows.filter((row) => row.setting.section === active.key);
+  const mainRows = activeRows.filter((row) => !row.setting.more);
+  const moreRows = activeRows.filter((row) => row.setting.more);
+  // Open by itself when something in it is edited or wrong - never hide a change.
+  const moreShown =
+    moreOpen[active.key] || moreRows.some((row) => row.dirty || serverErrors[row.setting.key]);
+  const groupAtDefault = activeRows.every(({ setting, raw }) => raw === toDraft(setting, setting.default));
+
+  const renderRow = ({ setting, raw, parsed, dirty }, withSubheading = true) => {
+    const dependency = setting.depends_on ? byKey[setting.depends_on] : null;
+    return (
+      <div key={setting.key}>
+        {withSubheading && SUBHEADINGS[setting.key] && (
+          <h3 className="t-eyebrow border-t border-line pb-s1 pt-s5 text-ink">{SUBHEADINGS[setting.key]}</h3>
+        )}
+        <SettingRow
+          setting={setting}
+          raw={raw}
+          parsed={parsed}
+          dirty={dirty}
+          dependencyOff={dependency ? draft[dependency.key] === false : false}
+          dependencyLabel={dependency?.label}
+          serverError={serverErrors[setting.key]}
+          onChange={(value) => onChange(setting.key, value)}
+          onReset={() => onReset(setting.key)}
+        />
+      </div>
+    );
+  };
+
+  const openGroup = (key) => {
+    setActiveKey(key);
+    setSearch("");
+  };
 
   return (
     <div className="flex flex-col">
@@ -275,49 +345,147 @@ export function SettingsContent({
         </Notice>
       )}
 
-      <div className="mt-s5 grid grid-cols-1 items-start gap-s5 xl:grid-cols-[220px_minmax(0,1fr)]">
-        <nav className="sticky top-s5 hidden flex-col gap-s1 xl:flex" aria-label="Settings sections">
-          {data.sections.map((section) => (
-            <a
-              key={section.key}
-              href={`#settings-${section.key}`}
-              className="rounded-sm px-s3 py-s2 text-sm font-bold text-ink-600 hover:bg-surface hover:text-ink"
-            >
-              {section.title}
-            </a>
-          ))}
-        </nav>
+      <div className="mt-s5 grid grid-cols-1 items-start gap-s5 lg:grid-cols-[248px_minmax(0,1fr)]">
+        <aside className="flex min-w-0 flex-col gap-s3 lg:sticky lg:top-s5">
+          <span className="relative block">
+            <Icon name="magnifying-glass" size={16} className="pointer-events-none absolute left-[10px] top-3 text-ink-600" />
+            <input
+              type="search"
+              placeholder="Search settings"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              aria-label="Search settings"
+              className="input pl-9"
+            />
+          </span>
 
-        <div className="flex min-w-0 flex-col gap-s5">
-          {data.sections.map((section, index) => (
-            <section key={section.key} id={`settings-${section.key}`} className="card scroll-mt-s5 px-s5 pb-s2 pt-s5">
-              <div className="flex flex-col gap-s1 pb-s4">
-                <span className="t-eyebrow">{section.key === "advanced" ? "Optional" : `Section ${index + 1}`}</span>
-                <h2 className="t-section">{section.title}</h2>
-                <p className="text-sm text-ink-600">{section.intro}</p>
+          {/* A drop-down on narrow screens, the side menu on wide ones. */}
+          <select
+            value={active.key}
+            onChange={(event) => openGroup(event.target.value)}
+            aria-label="Settings group"
+            className="input lg:hidden"
+          >
+            {data.sections.map((section) => {
+              const edited = dirtyIn(section.key);
+              return (
+                <option key={section.key} value={section.key}>
+                  {section.title}
+                  {edited ? ` (${edited} unsaved)` : ""}
+                </option>
+              );
+            })}
+          </select>
+          <nav className="hidden flex-col gap-[2px] lg:flex" aria-label="Settings groups">
+            {data.sections.map((section) => {
+              const isActive = !query && section.key === active.key;
+              const edited = dirtyIn(section.key);
+              const found = query ? matches.filter((row) => row.setting.section === section.key).length : 0;
+              return (
+                <button
+                  key={section.key}
+                  type="button"
+                  onClick={() => openGroup(section.key)}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`flex items-center gap-s3 rounded-sm px-s3 py-s2 text-left text-sm font-bold transition-colors ${
+                    isActive ? "bg-maroon text-white" : "text-ink-600 hover:bg-surface hover:text-ink"
+                  } ${query && !found ? "opacity-40" : ""}`}
+                >
+                  <Icon name={SECTION_ICONS[section.key] || "gear"} bold size={18} className="flex-none" />
+                  <span className="min-w-0 flex-1 leading-snug">{section.title}</span>
+                  {query && found > 0 && (
+                    <span className="rounded-full bg-canvas px-[7px] font-mono text-xs text-ink">{found}</span>
+                  )}
+                  {!query && edited > 0 && (
+                    <span
+                      className={`flex h-5 min-w-5 items-center justify-center rounded-full px-[6px] font-mono text-xs ${
+                        isActive ? "bg-white text-maroon" : "bg-prompt text-white"
+                      }`}
+                      title={`${edited} unsaved change${edited === 1 ? "" : "s"}`}
+                    >
+                      {edited}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
+
+        {query ? (
+          <section className="card min-w-0 px-s5 pb-s2 pt-s5" aria-label="Search results">
+            <div className="flex flex-col gap-s1 pb-s4">
+              <h2 className="t-section">
+                {matches.length} setting{matches.length === 1 ? "" : "s"} match “{search.trim()}”
+              </h2>
+              <p className="text-sm text-ink-600">Change them here, or open a group from the menu.</p>
+            </div>
+            {data.sections.map((section) => {
+              const found = matches.filter((row) => row.setting.section === section.key);
+              if (!found.length) return null;
+              return (
+                <div key={section.key}>
+                  <button
+                    type="button"
+                    onClick={() => openGroup(section.key)}
+                    className="flex w-full items-center gap-s2 border-t border-line pb-s1 pt-s5 text-left text-sm font-bold text-maroon hover:underline"
+                  >
+                    <Icon name={SECTION_ICONS[section.key] || "gear"} bold size={16} />
+                    {section.title}
+                  </button>
+                  {found.map((row) => renderRow(row, false))}
+                </div>
+              );
+            })}
+            {matches.length === 0 && (
+              <p className="border-t border-line py-s5 text-sm text-ink-600">
+                No setting mentions that. Try a shorter word, like “delete”, “card” or “camera”.
+              </p>
+            )}
+          </section>
+        ) : (
+          <section className="card min-w-0 px-s5 pb-s2 pt-s5" aria-labelledby={`settings-${active.key}`}>
+            <div className="flex flex-wrap items-start gap-s4 pb-s4">
+              <span className="flex h-11 w-11 flex-none items-center justify-center rounded-md bg-maroon text-white">
+                <Icon name={SECTION_ICONS[active.key] || "gear"} bold size={22} />
+              </span>
+              <div className="flex min-w-0 flex-1 flex-col gap-s1">
+                <h2 id={`settings-${active.key}`} className="t-section">
+                  {active.title}
+                </h2>
+                <p className="text-sm text-ink-600">{active.intro}</p>
               </div>
-              {rows
-                .filter((row) => row.setting.section === section.key)
-                .map(({ setting, raw, parsed, dirty }) => {
-                  const dependency = setting.depends_on ? byKey[setting.depends_on] : null;
-                  return (
-                    <SettingRow
-                      key={setting.key}
-                      setting={setting}
-                      raw={raw}
-                      parsed={parsed}
-                      dirty={dirty}
-                      dependencyOff={dependency ? draft[dependency.key] === false : false}
-                      dependencyLabel={dependency?.label}
-                      serverError={serverErrors[setting.key]}
-                      onChange={(value) => onChange(setting.key, value)}
-                      onReset={() => onReset(setting.key)}
-                    />
-                  );
-                })}
-            </section>
-          ))}
-        </div>
+              <button
+                type="button"
+                onClick={() => onResetGroup(active.key)}
+                disabled={saving || groupAtDefault}
+                title={groupAtDefault ? "Everything here is already at its default." : undefined}
+                className="btn-secondary"
+              >
+                <Icon name="arrow-counter-clockwise" bold size={16} />
+                Reset this group
+              </button>
+            </div>
+            {mainRows.map((row) => renderRow(row))}
+            {moreRows.length > 0 && (
+              <div className="border-t border-line">
+                <button
+                  type="button"
+                  onClick={() => setMoreOpen((prev) => ({ ...prev, [active.key]: !moreShown }))}
+                  aria-expanded={Boolean(moreShown)}
+                  className="flex w-full items-center gap-s2 py-s4 text-left text-sm font-bold text-ink-600 hover:text-ink"
+                >
+                  <Icon name={moreShown ? "caret-down" : "caret-right"} bold size={14} />
+                  More options
+                  <span className="font-normal">
+                    · {moreRows.length} fine-tuning setting{moreRows.length === 1 ? "" : "s"} most schools never change
+                  </span>
+                </button>
+                {moreShown && <div className="-mt-s4">{moreRows.map((row) => renderRow(row, false))}</div>}
+              </div>
+            )}
+          </section>
+        )}
       </div>
 
       {dirtyCount > 0 && (
@@ -325,6 +493,7 @@ export function SettingsContent({
           <Icon name="pencil-simple" bold size={18} className="text-prompt" />
           <span className="text-sm font-bold">
             {dirtyCount} unsaved change{dirtyCount === 1 ? "" : "s"}
+            {dirtyGroups > 1 ? ` in ${dirtyGroups} groups` : ""}
           </span>
           {hasErrors && <span className="text-sm text-danger">Fix the highlighted values first.</span>}
           <span className="flex-1" />
@@ -477,6 +646,21 @@ export default function SystemSettings() {
           setDraft((prev) => ({ ...prev, [key]: toDraft(byKey[key], byKey[key].recommended_value) }))
         }
         onResetAll={() => setConfirmResetAll(true)}
+        onResetGroup={(sectionKey) => {
+          // Like Reset all, only fills in the defaults - nothing is saved
+          // until the admin reviews them and clicks "Save changes".
+          const section = data.sections.find((s) => s.key === sectionKey);
+          setDraft((prev) => ({
+            ...prev,
+            ...Object.fromEntries(
+              data.settings.filter((s) => s.section === sectionKey).map((s) => [s.key, toDraft(s, s.default)])
+            ),
+          }));
+          setNotice({
+            tone: "prompt",
+            text: `${section?.title || "This group"} is back to its defaults. Review them, then click Save changes - or Discard to keep the current values.`,
+          });
+        }}
         onDiscard={() => applyData(data)}
         onSave={() => save(false)}
       />

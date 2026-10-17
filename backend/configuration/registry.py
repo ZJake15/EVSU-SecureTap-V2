@@ -68,8 +68,17 @@ SECTIONS = [
      "What happens on a timetable: deleting old records, asking for new face photos, and the gate's opening hours."),
     ("security", "Security & Accounts", "Signing in to the dashboard and at the gate monitor."),
     ("alerts", "Alerts", "Warnings shown to the guard on the gate monitor."),
-    ("advanced", "Advanced", "Fine-tuning that most schools never need to change."),
 ]
+
+# Fine-tuning most schools never need to change - shown at the bottom of
+# their own group, under a collapsed "More options" (there's no separate
+# Advanced group any more).
+MORE_OPTIONS = {
+    "recognition_cooldown_seconds", "unknown_cooldown_seconds", "speed_test_enabled",  # Face Recognition
+    "spoof_cooldown_seconds",  # Anti-Spoofing
+    "max_turn", "edge_margin", "distance_correction", "show_face_distance",  # Photo Quality Checks
+    "covered_face_mode", "covered_rule_mouth", "covered_rule_texture", "covered_rule_det_score",
+}
 
 DEFINITIONS = [
     # ---- 1. Face Recognition -------------------------------------------------
@@ -139,7 +148,7 @@ DEFINITIONS = [
         "or as a fake. A face that far away is too small to check reliably. 0 checks every face it can see.",
         FLOAT, 5.0, 0.0, 15.0, 0.5, unit="metres",
         note="Estimated from the size of each face in the picture and the gate's camera zoom. Check it once "
-             "with Show distance on face boxes (Advanced), and if it's off, set Distance correction there.",
+             "with Show distance on face boxes (More options, below), and if it's off, set Distance correction there.",
     ),
     SettingDef(
         "covered_face_enabled", "quality", "Covered face detection",
@@ -152,7 +161,7 @@ DEFINITIONS = [
         "How sure the system must be that a face is covered before asking the person to uncover it. "
         "Lower catches more coverings, but asks more people by mistake.",
         FLOAT, _from_settings("OCCLUSION_CLASSIFIER_THRESHOLD"), 0.05, 0.95, 0.01,
-        note='Used with the "Trained model" detection method (see Advanced).',
+        note='Used with the "Trained model" detection method (see More options, below).',
         depends_on="covered_face_enabled",
     ),
     # ---- 4. NFC Card ----------------------------------------------------------
@@ -372,18 +381,18 @@ DEFINITIONS = [
     ),
     # ---- Advanced (existing settings not in the brief) -------------------------
     SettingDef(
-        "max_turn", "advanced", "How far a face can be turned",
+        "max_turn", "quality", "How far a face can be turned",
         "How far someone can turn their head away from the camera before the frame is skipped. "
         "Higher accepts more turned faces.",
         FLOAT, _from_settings("FACE_MAX_YAW_RATIO"), 0.10, 1.00, 0.01,
     ),
     SettingDef(
-        "edge_margin", "advanced", "Edge margin",
+        "edge_margin", "quality", "Edge margin",
         "How close to the edge of the picture a face can be before it counts as cut off.",
         FLOAT, _from_settings("FACE_EDGE_MARGIN_RATIO"), 0.0, 0.20, 0.01, depends_on="whole_face_required",
     ),
     SettingDef(
-        "distance_correction", "advanced", "Distance correction",
+        "distance_correction", "quality", "Distance correction",
         "Corrects the estimated distance for your camera. Turn on Show distance on face boxes, stand at a "
         "measured distance facing the camera, and set this to the real distance divided by the one shown - "
         "for example, really 5 m but shown as 1.5 m: 5 / 1.5 = 3.33.",
@@ -392,7 +401,7 @@ DEFINITIONS = [
              "typical webcam needs about 1.00 - check yours once if you use a different camera.",
     ),
     SettingDef(
-        "show_face_distance", "advanced", "Show distance on face boxes",
+        "show_face_distance", "quality", "Show distance on face boxes",
         "Adds each face's estimated distance to its box on the gate monitor (for example \"UNKNOWN · 4.8 m\"), "
         "for checking the distance limit: stand at a measured spot and compare. Turn it off again afterwards.",
         BOOL, False,
@@ -400,7 +409,7 @@ DEFINITIONS = [
     # TEMPORARY - for timing the camera scanner during testing (see the
     # entry-agent's speed_test.py); remove after the test.
     SettingDef(
-        "speed_test_enabled", "advanced", "Speed test recording (temporary)",
+        "speed_test_enabled", "face", "Speed test recording (temporary)",
         "Times the camera scanner: each face's box shows how long it took to be decided (for example "
         "\"Maria Santos · 92% · 843 ms\"), the gate monitor's caption shows the time per frame, and each "
         "decided face is saved as one row of a CSV file in the data folder (speed-tests): its result, time to "
@@ -409,7 +418,7 @@ DEFINITIONS = [
         note="For testing only. Turn it off when the test is done; each time it's turned on starts a new file.",
     ),
     SettingDef(
-        "covered_face_mode", "advanced", "Covered face detection method",
+        "covered_face_mode", "quality", "Covered face detection method",
         "How the system decides a face is covered: a model trained on example photos, or three simple "
         "rules. If the trained model's file is missing, simple rules are used automatically.",
         CHOICE, _from_settings("OCCLUSION_DETECTION_MODE"),
@@ -417,36 +426,36 @@ DEFINITIONS = [
         depends_on="covered_face_enabled",
     ),
     SettingDef(
-        "covered_rule_mouth", "advanced", "Simple rules: mouth visibility",
+        "covered_rule_mouth", "quality", "Simple rules: mouth visibility",
         "With simple rules, a face counts as covered if the mouth looks narrower than this.",
         FLOAT, _from_settings("FACE_MIN_MOUTH_VISIBILITY_RATIO"), 0.30, 1.20, 0.01,
         depends_on="covered_face_enabled",
     ),
     SettingDef(
-        "covered_rule_texture", "advanced", "Simple rules: lower-face detail",
+        "covered_rule_texture", "quality", "Simple rules: lower-face detail",
         "With simple rules, a face counts as covered if the lower face looks smoother than this.",
         FLOAT, _from_settings("FACE_MAX_MOUTH_TEXTURE_RATIO"), 0.05, 1.50, 0.01,
         depends_on="covered_face_enabled",
     ),
     SettingDef(
-        "covered_rule_det_score", "advanced", "Simple rules: face clarity",
+        "covered_rule_det_score", "quality", "Simple rules: face clarity",
         "With simple rules, a face counts as covered if the camera is less sure than this that it's "
         "seeing a whole face.",
         FLOAT, _from_settings("FACE_MIN_DET_SCORE_UNOCCLUDED"), 0.10, 0.99, 0.01,
         depends_on="covered_face_enabled",
     ),
     SettingDef(
-        "recognition_cooldown_seconds", "advanced", "Repeat entry cooldown",
+        "recognition_cooldown_seconds", "face", "Repeat entry cooldown",
         "A recognized person seen again within this many seconds isn't recorded twice.",
         INT, _from_settings("RECOGNITION_COOLDOWN_SECONDS"), 5, 3600, 1, unit="seconds",
     ),
     SettingDef(
-        "unknown_cooldown_seconds", "advanced", "Repeat unknown-face cooldown",
+        "unknown_cooldown_seconds", "face", "Repeat unknown-face cooldown",
         "The same unrecognized face seen again within this many seconds isn't recorded twice.",
         INT, _from_settings("UNENROLLED_CAPTURE_COOLDOWN_SECONDS"), 5, 3600, 1, unit="seconds",
     ),
     SettingDef(
-        "spoof_cooldown_seconds", "advanced", "Repeat fake-face cooldown",
+        "spoof_cooldown_seconds", "spoof", "Repeat fake-face cooldown",
         "The same suspected fake seen again within this many seconds isn't recorded twice.",
         INT, _from_settings("SPOOF_CAPTURE_COOLDOWN_SECONDS"), 5, 3600, 1, unit="seconds",
     ),

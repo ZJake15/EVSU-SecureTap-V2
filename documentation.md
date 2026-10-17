@@ -1110,18 +1110,58 @@ setting is applied there. The gate monitor only applies the two alert switches
 camera number differs per machine, and only that PC can tell its camera works —
 so it's set in the launcher and the gate monitor's camera picker, not here.
 
-**Automatic deletion (Privacy & Data Retention).** `manage.py purge_old_data`
-deletes, each by its own period: gate photos (the record stays), the face data
-kept with Unknown/fake records plus the scan's short-lived working tables, whole
-entry records, and — only if a period is set — old audit entries. It never
-touches registered people, their face data or their registration photos (those
-tables aren't even used by the command). `--dry-run` reports what it would
-delete without deleting. It does nothing while "Automatic deletion" is off.
-There's no job scheduler in this project, so the **launcher runs it** when the
-backend comes up and once a day while it stays open. On a server that runs
-without the launcher, use Windows Task Scheduler instead, e.g.:
+**Scheduling.** Everything that happens on a timetable, in the backend's local
+time (`TIME_ZONE`). The settings use two extra kinds besides numbers, switches
+and choices: a **time of day** (`"HH:MM"`, 24-hour) and **days of the week**
+(`"mon,tue,…"`), both stored as text and checked by `store.validate`.
 
-    schtasks /Create /TN "SecureTap data clean-up" /SC DAILY /ST 02:00 /TR "cmd /c cd /d C:\path\to\EVSU-SecureTap-V2\backend && ..\.venv\Scripts\python.exe manage.py purge_old_data"
+- **Automatic deletion.** `manage.py purge_old_data` deletes, each by its own
+  period: gate photos (the record stays), the face data kept with Unknown/fake
+  records plus the scan's short-lived working tables, whole entry records, and —
+  only if a period is set — old audit entries. It never touches registered
+  people, their face data or their registration photos (those tables aren't
+  even used by the command). `--dry-run` reports what it would delete without
+  deleting. The record deletions happen only with "Automatic deletion" on, on
+  its timetable: **Run the clean-up** every day / week (on a weekday) / month
+  (on day 1–28), **at** a time (default every day at 02:00). The periods moved
+  here from Privacy & Data Retention and Security; their keys and saved values
+  didn't change. There's no job scheduler in this project, so the **Admin
+  launcher and the Gate icon run `purge_old_data --if-due`** when the backend
+  comes up and then every 5 minutes. With `--if-due` the "always" part
+  (unknown-face data after 1 day, leftover photo files) runs at most hourly, and
+  the record deletions only once a due moment has passed since they last ran —
+  so a computer that was off at 02:00 catches up the next time it's on.
+  `configuration/schedule.py` works out the moments; the `ScheduledJob` table
+  remembers when each part last ran and what it deleted, which the Settings page
+  shows under **At** ("Last clean-up: … – deleted … Next: …"). Run without
+  `--if-due`, the command does everything now. On a server that runs without
+  the launcher, use Windows Task Scheduler instead, e.g. every 15 minutes:
+
+      schtasks /Create /TN "SecureTap data clean-up" /SC MINUTE /MO 15 /TR "cmd /c cd /d C:\path\to\EVSU-SecureTap-V2\backend && ..\.venv\Scripts\python.exe manage.py purge_old_data --if-due"
+
+- **Face re-enrollment** (`users/reenrollment.py`). **Ask for new face photos
+  every** N months (0 = off, the default) marks a person **Photos due** once
+  their newest face photo is that old, and **Due soon** within **Remind before
+  it's due** (30 days). **Suggest new photos when matches get weak** (on) marks
+  them Photos due when the median of their last 10 face entries since the
+  newest photos is under Match strictness + 0.10, over at least 5 entries — on
+  this system successful matches score a median of 0.67 and 95% above 0.52, so
+  a typical match under 0.55 is drifting toward Unknown. Nothing new is stored:
+  it uses `FaceEmbedding.created_at` and `EntryLog.match_confidence`, and the
+  API returns it as each person's `photos_status`. User Management shows the
+  badge, a **Face photos** filter with counts, and **Retake face photos** clears
+  it (the newest photo is then today's). **Show at the gate** (off) adds
+  "photos due for update" to the guard's live-log row and card. It never blocks
+  entry.
+- **Gate opening hours** (off by default): **Opens at**, **Closes at** (earlier
+  than opening = open overnight; equal = all day) and **Open on** (days).
+  `EntryLog.save()` sets `after_hours` on a new row written outside them
+  (decided at that moment, so changing the hours never re-labels old entries).
+  Logs and Live Monitoring show an **After hours** tag and the CSV export has an
+  "After hours" column. Every `/api/identify` answer carries `after_hours`, so
+  the gate monitor's header pill turns from ENTRY into a caution **AFTER HOURS**
+  and its recognized entries and card taps land in the live log as AFTER HOURS
+  rows. Scanning never stops.
 
 **Security & Accounts.** Failed login lockout is checked by the server at
 sign-in (a locked account gets "Too many wrong passwords… try again in N
@@ -1713,7 +1753,7 @@ knowing before extending the system:
     the database change is saved (a rolled-back delete keeps its files), only
     once no record refers to the file, and never while loading data. Past
     entry records of a deleted person stay, with no name.
-  - **The daily clean-up always** removes photo files that no record uses
+  - **The clean-up always** (at least hourly) removes photo files that no record uses
     (left behind before the above), and clears the face fingerprints of
     unrecognized people after 1 day, plus the scan's working tables — even
     with Automatic deletion off. Those people never agreed to have their face
@@ -2003,7 +2043,7 @@ single icon older versions made):
   monitor is up. It refuses (with a "open the Admin icon first" message) until
   the first-time setup is done, and on an older SecureTap's backend; uses the
   backend the Admin launcher already runs, or migrates and starts its own
-  (plus the daily clean-up); opens the gate monitor with the remembered gate
+  (plus the scheduled clean-up, asked every 5 minutes); opens the gate monitor with the remembered gate
   name, guard name and speed mode; and stops the backend it started when the
   gate monitor closes. If its borrowed backend goes away, it starts its own;
   the Admin launcher does the same the other way round. Its icon,

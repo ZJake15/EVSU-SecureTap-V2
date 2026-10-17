@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from accounts.permissions import IsAdmin
 from users import occlusion_utils
 
-from . import store
+from . import schedule, store
 
 
 class SettingsView(APIView):
@@ -24,7 +24,10 @@ class SettingsView(APIView):
 
     @staticmethod
     def _payload():
-        return store.describe(status={"covered_face_mode": occlusion_utils.active_mode_description()})
+        return store.describe(status={
+            "covered_face_mode": occlusion_utils.active_mode_description(),
+            "cleanup_time": schedule.describe_cleanup(),  # last run and what it deleted, next run
+        })
 
     def get(self, request):
         return Response(self._payload())

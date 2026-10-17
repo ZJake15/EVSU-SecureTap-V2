@@ -111,6 +111,10 @@ class EntryLog(models.Model):
         related_name="entry_logs_on_duty",
     )
     unattended = models.BooleanField(default=False)
+    # Written outside the gate's opening hours (Settings > Scheduling > Gate
+    # opening hours) - decided when the row is written, so changing the hours
+    # later never re-labels old entries. Always False with opening hours off.
+    after_hours = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-timestamp"]
@@ -120,10 +124,15 @@ class EntryLog(models.Model):
         return f"{who} - {self.direction} - {self.status} @ {self.timestamp}"
 
     def save(self, *args, **kwargs):
-        if self._state.adding and self.on_duty_id is None and not self.unattended:
-            from .gate_shifts import stamp_on_duty
+        if self._state.adding:
+            if self.on_duty_id is None and not self.unattended:
+                from .gate_shifts import stamp_on_duty
 
-            stamp_on_duty(self)
+                stamp_on_duty(self)
+            if not self.after_hours:
+                from configuration.schedule import is_after_hours
+
+                self.after_hours = is_after_hours()
         super().save(*args, **kwargs)
 
 

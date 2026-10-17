@@ -90,8 +90,11 @@ BACKEND_API_VERSION = 2
 DASHBOARD_URL = "http://localhost:8000/"
 
 HEALTH_POLL_MS = 2000
-# How often the launcher re-runs the data clean-up while it stays open.
-CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+# How often the launcher (and the Gate icon) asks the data clean-up whether
+# anything is due - `purge_old_data --if-due` itself follows the Settings >
+# Scheduling timetable and answers "Nothing due." in between.
+CLEANUP_INTERVAL_SECONDS = 5 * 60
+CLEANUP_COMMAND = ["manage.py", "purge_old_data", "--if-due"]
 # "Back up data" (backend/manage.py backup_data): the row's hint turns to a
 # caution colour once the last backup is older than this. The password's
 # minimum length is configuration/backup_file.py's MIN_PASSWORD_LENGTH.
@@ -528,7 +531,7 @@ class LauncherWindow:
         # True while the Entry Agent's pre-flight checks run in the background,
         # so a second click can't start a second round of them.
         self._preflight_running = False
-        # The daily data clean-up (backend/manage.py purge_old_data) - see
+        # The scheduled data clean-up (backend/manage.py purge_old_data) - see
         # _maybe_run_cleanup.
         self._cleanup_running = False
         self._last_cleanup_at = None
@@ -1893,11 +1896,12 @@ class LauncherWindow:
         self._run_in_background(probe, apply)
 
     def _maybe_run_cleanup(self):
-        """Runs the data clean-up once the backend is up, then once a day
-        while the launcher stays open - this project has no job scheduler,
-        and the launcher is how the system is started. The command itself
-        does nothing unless "Automatic deletion" is on in the dashboard's
-        Settings page, so this is harmless while that's off."""
+        """Asks the data clean-up to run whatever is due, once the backend is
+        up and then every CLEANUP_INTERVAL_SECONDS while the launcher stays
+        open - this project has no job scheduler, and the launcher is how the
+        system is started. The command follows the Settings > Scheduling
+        timetable itself (and deletes no records at all unless "Automatic
+        deletion" is on), so asking often is harmless."""
         now = time.monotonic()
         if self._cleanup_running or (
             self._last_cleanup_at is not None and now - self._last_cleanup_at < CLEANUP_INTERVAL_SECONDS
@@ -1908,14 +1912,15 @@ class LauncherWindow:
 
         def work():
             result = subprocess.run(
-                [venv_python(), "manage.py", "purge_old_data"], cwd=BACKEND_DIR, capture_output=True,
+                [venv_python(), *CLEANUP_COMMAND], cwd=BACKEND_DIR, capture_output=True,
                 text=True, timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             return (result.stdout + result.stderr).strip()
 
         def done(output):
             self._cleanup_running = False
-            self._append_log(f"[launcher] daily data clean-up: {output or 'could not run - see above'}")
+            if output != "Nothing due.":  # asked every few minutes - only log when it did something
+                self._append_log(f"[launcher] data clean-up: {output or 'could not run - see above'}")
 
         self._run_in_background(work, done)
 
@@ -2236,11 +2241,7 @@ class GateStarter:
     def _wait_for_backend(self, started_at):
         def done(identity):
             if identity == "ours":
-                # The daily clean-up, as the Admin launcher runs it when its
-                # backend comes up - unknown faces' data and leftover photos.
-                threading.Thread(target=lambda: subprocess.run(
-                    [venv_python(), "manage.py", "purge_old_data"], cwd=BACKEND_DIR, capture_output=True,
-                    timeout=600, creationflags=_NO_WINDOW), daemon=True).start()
+                self._run_cleanup_if_due()
                 self._open_gate_monitor()
             elif not self.backend.is_running():
                 self._fail("The backend couldn't start. Open EVSU SecureTap Admin and check its log.")
@@ -2277,7 +2278,19 @@ class GateStarter:
             self._checking_backend = True
             self._last_backend_check = time.monotonic()
             self._background(lambda: backend_identity(timeout=1.5), self._after_backend_check)
+        if time.monotonic() - getattr(self, "_last_cleanup_at", 0) > CLEANUP_INTERVAL_SECONDS:
+            self._run_cleanup_if_due()
         self.root.after(self.WATCH_MS, self._watch_gate)
+
+    def _run_cleanup_if_due(self):
+        """The data clean-up, as the Admin launcher runs it: whatever is due
+        on the Settings > Scheduling timetable (unknown faces' data and
+        leftover photos at least hourly). Asked again every few minutes
+        while the gate monitor is open."""
+        self._last_cleanup_at = time.monotonic()
+        threading.Thread(target=lambda: subprocess.run(
+            [venv_python(), *CLEANUP_COMMAND], cwd=BACKEND_DIR, capture_output=True,
+            timeout=600, creationflags=_NO_WINDOW), daemon=True).start()
 
     def _after_backend_check(self, identity):
         self._checking_backend = False

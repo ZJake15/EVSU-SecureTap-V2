@@ -202,6 +202,7 @@ def _build_recognition(direction, result, api_client, photo_cache):
         "student_id": result.get("student_or_employee_id"),
         "department": result.get("department_or_course"),
         "distinguishing_note": result.get("distinguishing_note"),
+        "photos_due": bool(result.get("photos_due")),
         "confidence": confidence,
         "log_id": result.get("log_id"),
         "deduped": bool(result.get("deduped")),
@@ -243,6 +244,7 @@ def _build_profile(api_client, result, card_id, direction):
         # confirmed someone flagged that way, whether or not it happened to
         # be resolving a forced tiebreak (see person_payload on the backend).
         "distinguishing_note": result.get("distinguishing_note"),
+        "photos_due": bool(result.get("photos_due")),
     }
 
 
@@ -287,6 +289,8 @@ def scan_loop(config, api_client, camera, ui, stop_event):
             if sign_in is not None and sign_in != last_sign_in:
                 ui.set_gate_sign_in(sign_in)
                 last_sign_in = sign_in
+            # Settings > Scheduling > Gate opening hours.
+            ui.set_after_hours(response.get("after_hours", False))
             recognitions = [
                 r
                 for r in (

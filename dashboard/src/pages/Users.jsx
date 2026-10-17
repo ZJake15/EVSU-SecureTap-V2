@@ -75,6 +75,32 @@ function personFlag(person) {
   return null;
 }
 
+// Settings > Scheduling > face re-enrollment (see backend users/reenrollment.py).
+const PHOTOS_FLAGS = {
+  due: { label: "Photos due", className: "text-caution", title: "Face photos are older than the re-enrollment period" },
+  weak_matches: {
+    label: "Photos due · matches getting weak",
+    className: "text-caution",
+    title: "Recent face matches keep scoring low - their face may have changed since the photos were taken",
+  },
+  due_soon: { label: "Photos due soon", className: "text-ink-600", title: "Face photos will be due for re-enrollment soon" },
+};
+
+function photosFlag(person) {
+  const flag = PHOTOS_FLAGS[person.photos_status?.status];
+  if (!flag) return null;
+  const due = person.photos_status.due_at ? ` (due ${formatDate(person.photos_status.due_at)})` : "";
+  return { ...flag, title: `${flag.title}${due}. Use Edit > Retake face photos.` };
+}
+
+// "Photos due" covers both reasons to retake now (age, weak matches).
+function photosNeeded(person, filter) {
+  const status = person.photos_status?.status;
+  if (filter === "due") return status === "due" || status === "weak_matches";
+  if (filter === "due_soon") return status === "due_soon";
+  return true;
+}
+
 function Tabs({ tabs, active, onChange }) {
   return (
     <div className="mt-s5 flex flex-none gap-s5 border-b border-line">
@@ -107,6 +133,7 @@ export default function Users() {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [photosFilter, setPhotosFilter] = useState("");
   const [people, setPeople] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [requestNotes, setRequestNotes] = useState({});
@@ -515,6 +542,7 @@ export default function Users() {
     if (roleFilter && person.role !== roleFilter) return false;
     if (statusFilter === "active" && !person.is_active) return false;
     if (statusFilter === "inactive" && person.is_active) return false;
+    if (!photosNeeded(person, photosFilter)) return false;
     if (!query) return true;
     return [person.full_name, person.student_or_employee_id, person.nfc_id]
       .filter(Boolean)
@@ -609,6 +637,16 @@ export default function Users() {
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
+            <select
+              value={photosFilter}
+              onChange={(e) => setPhotosFilter(e.target.value)}
+              className="input w-[190px]"
+              aria-label="Face photos"
+            >
+              <option value="">All face photos</option>
+              <option value="due">Photos due ({people.filter((p) => photosNeeded(p, "due")).length})</option>
+              <option value="due_soon">Due soon ({people.filter((p) => photosNeeded(p, "due_soon")).length})</option>
+            </select>
           </div>
 
           <div className="card mt-s4 overflow-hidden">
@@ -628,6 +666,7 @@ export default function Users() {
                 </div>
                 {visiblePeople.map((person) => {
                   const flag = personFlag(person);
+                  const photos = photosFlag(person);
                   return (
                     <div
                       key={person.id}
@@ -642,6 +681,12 @@ export default function Users() {
                             <span title={flag.title} className={`flex items-center gap-s1 truncate text-xs font-bold ${flag.className}`}>
                               <Icon name={flag.icon} bold size={12} />
                               {flag.label}
+                            </span>
+                          )}
+                          {photos && (
+                            <span title={photos.title} className={`flex items-center gap-s1 truncate text-xs font-bold ${photos.className}`}>
+                              <Icon name="camera" bold size={12} />
+                              {photos.label}
                             </span>
                           )}
                         </span>

@@ -22,6 +22,9 @@ function toDraft(setting, value = setting.value) {
 
 // { value } when the typed text is allowed, { error } when it isn't.
 export function parseDraft(setting, raw) {
+  if (setting.kind === "time" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(raw))) {
+    return { error: "Enter a time, like 06:30." };
+  }
   if (!NUMBER_KINDS.has(setting.kind)) return { value: raw };
   if (String(raw).trim() === "") return { error: "Enter a number." };
   const number = Number(raw);
@@ -86,8 +89,52 @@ function Toggle({ checked, onChange, label }) {
   );
 }
 
+// "mon,tue,..." <-> the buttons that are pressed, always in Mon..Sun order.
+function DayPicker({ setting, raw, onChange }) {
+  const picked = new Set(String(raw || "").split(",").filter(Boolean));
+  const toggle = (day) => {
+    const next = new Set(picked);
+    if (next.has(day)) next.delete(day);
+    else next.add(day);
+    onChange(setting.choices.map((choice) => choice.value).filter((value) => next.has(value)).join(","));
+  };
+  return (
+    <span className="flex flex-wrap gap-s1" role="group" aria-label={setting.label}>
+      {setting.choices.map((choice) => {
+        const on = picked.has(choice.value);
+        return (
+          <button
+            key={choice.value}
+            type="button"
+            aria-pressed={on}
+            onClick={() => toggle(choice.value)}
+            className={`h-10 w-12 rounded-sm border text-sm font-bold transition-colors ${
+              on ? "border-maroon bg-maroon text-white" : "border-line bg-surface text-ink-600 hover:border-ink-400"
+            }`}
+          >
+            {choice.label}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
 function Control({ setting, raw, onChange, invalid }) {
   if (setting.kind === "bool") return <Toggle checked={raw} onChange={onChange} label={setting.label} />;
+  if (setting.kind === "days") return <DayPicker setting={setting} raw={raw} onChange={onChange} />;
+  if (setting.kind === "time") {
+    return (
+      <input
+        type="time"
+        value={raw}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label={setting.label}
+        aria-invalid={invalid}
+        className={`input w-[168px] font-mono ${invalid ? "border-danger focus:border-danger focus:ring-danger" : ""}`}
+      />
+    );
+  }
   if (setting.kind === "choice") {
     return <Segmented options={setting.choices} value={raw} onChange={onChange} className="min-w-[260px]" />;
   }

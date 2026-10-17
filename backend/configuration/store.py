@@ -12,6 +12,7 @@ CACHE_SECONDS. Either way no restart is needed.
 """
 
 import math
+import re
 import threading
 import time
 
@@ -20,7 +21,10 @@ from django.utils import timezone
 
 from audit.utils import log_action
 
-from .registry import BOOL, BY_KEY, CHOICE, DEFINITIONS, FIXED, INT, SECTIONS
+from .registry import BOOL, BY_KEY, CHOICE, DAYS, DEFINITIONS, FIXED, INT, SECTIONS, TIME, WEEKDAYS
+
+TEXT_KINDS = (CHOICE, TIME, DAYS)  # kept in SystemSetting.text_value
+_TIME_PATTERN = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 
 CACHE_SECONDS = 5.0
 
@@ -58,9 +62,11 @@ def _decode(definition, row):
         return bool(row.bool_value)
     if kind == INT and row.number_value is not None:
         return int(round(row.number_value))
-    if kind not in (BOOL, INT, CHOICE) and row.number_value is not None:
+    if kind not in (BOOL, INT, *TEXT_KINDS) and row.number_value is not None:
         return float(row.number_value)
-    if kind == CHOICE and row.text_value:
+    if kind in (CHOICE, TIME) and row.text_value:
+        return row.text_value
+    if kind == DAYS and row.bool_value is not None:  # bool_value marks "saved" - no days is a valid value
         return row.text_value
     return definition.default_value()
 
@@ -71,7 +77,10 @@ def _encode(definition, value, row):
     row.text_value = ""
     if definition.kind == BOOL:
         row.bool_value = bool(value)
-    elif definition.kind == CHOICE:
+    elif definition.kind == DAYS:
+        row.text_value = str(value)
+        row.bool_value = True  # see _decode: an empty set of days is still a saved value
+    elif definition.kind in TEXT_KINDS:
         row.text_value = str(value)
     else:
         row.number_value = float(value)
@@ -146,6 +155,18 @@ def validate(definition, raw):
         if raw not in allowed:
             return None, "Must be one of: " + ", ".join(allowed.values()) + "."
         return raw, None
+    if kind == TIME:
+        if not isinstance(raw, str) or not _TIME_PATTERN.fullmatch(raw.strip()):
+            return None, "Must be a time of day, like 06:30 or 21:00."
+        return raw.strip(), None
+    if kind == DAYS:
+        if not isinstance(raw, str):
+            return None, "Must be a list of days."
+        picked = {part.strip().lower() for part in raw.split(",") if part.strip()}
+        known = [key for key, _label in WEEKDAYS]
+        if picked - set(known):
+            return None, "Must be days of the week: " + ", ".join(known) + "."
+        return ",".join(key for key in known if key in picked), None  # always in Mon..Sun order
 
     if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
         return None, "Must be a number."
@@ -273,7 +294,10 @@ def describe(status=None):
             "recommended": list(recommended) if isinstance(recommended, tuple) else recommended,
             "recommended_value": definition.recommended_value,
             "risky": definition.risky,
-            "choices": [{"value": value, "label": label} for value, label in definition.choices],
+            "choices": [
+                {"value": value, "label": label}
+                for value, label in (WEEKDAYS if definition.kind == DAYS else definition.choices)
+            ],
             "note": definition.note,
             "off_warning": definition.off_warning,
             "depends_on": definition.depends_on,

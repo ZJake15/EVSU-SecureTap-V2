@@ -3,6 +3,7 @@ from rest_framework import serializers
 from securetap_project.media_auth import build_signed_media_url
 from configuration import store as system_settings
 
+from . import reenrollment
 from .confusable_utils import (
     MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON,
     find_confusable_candidates,
@@ -87,6 +88,9 @@ class PersonSerializer(serializers.ModelSerializer):
     # explicit call site. Declared explicitly as a method field so it goes
     # through the same signed-URL helper as everything else.
     photo_reference = serializers.SerializerMethodField()
+    # Settings > Scheduling > face re-enrollment: whether this person's face
+    # photos are due to be retaken (see users/reenrollment.py).
+    photos_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Person
@@ -108,6 +112,7 @@ class PersonSerializer(serializers.ModelSerializer):
             "distinguishing_note",
             "confusable_partners",
             "max_embeddings",
+            "photos_status",
         ]
         # photo_reference isn't listed here anymore - it's a SerializerMethodField
         # now (see above), which is inherently read-only on its own.
@@ -134,6 +139,14 @@ class PersonSerializer(serializers.ModelSerializer):
 
     def get_max_embeddings(self, obj):
         return max_embeddings_for(obj)
+
+    def get_photos_status(self, obj):
+        result = reenrollment.status(obj)
+        return {
+            "status": result["status"],
+            "photos_taken_at": result["photos_taken_at"].isoformat() if result["photos_taken_at"] else None,
+            "due_at": result["due_at"].isoformat() if result["due_at"] else None,
+        }
 
     # Format is checked per-field rather than inside create()/update() so DRF
     # returns it as a normal {"photo": [...]} field error the dashboard already

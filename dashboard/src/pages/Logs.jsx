@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import apiClient from "../api/client";
-import StatusBadge, { STATUS_BAR } from "../components/StatusBadge";
+import StatusBadge, { AfterHoursTag, STATUS_BAR } from "../components/StatusBadge";
 import { Checkbox, Field, Icon, Notice, PageHeader } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
 
@@ -174,7 +174,7 @@ export default function Logs() {
   };
 
   const exportCsv = () => {
-    const header = ["Name", "Timestamp", "Method", "Status", "Confidence", "Reason", "Gate", "On duty"];
+    const header = ["Name", "Timestamp", "Method", "Status", "Confidence", "Reason", "Gate", "On duty", "After hours"];
     const rows = visibleLogs.map((log) => [
       log.person_name,
       log.timestamp,
@@ -184,6 +184,7 @@ export default function Logs() {
       log.failure_reason,
       log.gate_location,
       log.on_duty_name || (log.unattended ? "Unattended" : ""),
+      log.after_hours ? "Yes" : "",
     ]);
     const csv = [header, ...rows]
       .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
@@ -289,7 +290,11 @@ export default function Logs() {
                       {formatTimestamp(log.timestamp)}
                     </span>
                     <MethodCell log={log} />
-                    <StatusBadge status={log.status} />
+                    <span className="flex min-w-0 flex-col items-start gap-[2px]">
+                      <StatusBadge status={log.status} />
+                      {/* Settings > Scheduling > Gate opening hours */}
+                      {log.after_hours && <AfterHoursTag />}
+                    </span>
                     <span className="text-right font-mono font-medium">
                       {log.match_confidence != null ? `${Math.round(log.match_confidence * 100)}%` : "—"}
                     </span>

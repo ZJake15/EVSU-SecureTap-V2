@@ -1,6 +1,6 @@
 EVSU SECURETAP - PRIVACY POLICY
 Campus entry monitoring system, Eastern Visayas State University
-Version 2.2
+Version 2.3
 
 Please read this before installing. By installing and using EVSU SecureTap,
 you agree to handle the personal information it collects as described here,
@@ -136,6 +136,8 @@ whom to contact (see section 18).
     real-face (spoof check) score, and whether the face looked covered
   - Which guard was on duty for that entry, or that the gate was
     unattended, and which guard recorded a manual entry
+  - Whether the entry was outside the gate's opening hours, if the Admin
+    has set them (Settings > Scheduling)
   - A PHOTO of a face that was NOT recognized, or that looked like a
     printed photo or a phone screen, so a guard or SASO can see who was
     turned away
@@ -307,9 +309,12 @@ installed copy and cannot see it.
 
 11. HOW LONG IT IS KEPT
 
-The Admin decides how long records are kept, on the dashboard's Settings
-page (Privacy & Data Retention). "Automatic deletion" is OFF until the
-Admin turns it on. Once it is on, the System deletes, every day:
+The Admin decides how long records are kept, and when old ones are
+deleted, on the dashboard's Settings page (Scheduling). "Automatic
+deletion" is OFF until the Admin turns it on. Once it is on, the System
+deletes old records on the schedule the Admin sets - every day by
+default, or every week or every month, at a set time (if the computer is
+off then, it is done the next time the System starts):
 
   What                                 Default        Can be set to
   -----------------------------------  -------------  ------------------
@@ -319,7 +324,7 @@ Admin turns it on. Once it is on, the System deletes, every day:
   Audit Log entries                    kept forever   0 (forever) to
                                                       36500 days
 
-ALWAYS, even with "Automatic deletion" off:
+ALWAYS, even with "Automatic deletion" off (checked at least every hour):
   - face fingerprints of people who were not recognized are deleted after
     1 day (these people never agreed to have their face stored)
   - the short-lived working data from checking faces (section 4.2) is
@@ -329,6 +334,14 @@ ALWAYS, even with "Automatic deletion" off:
 A registered person's photos and face fingerprints are kept for as long as
 they are registered (see section 12). Replacing a photo deletes the old
 one.
+
+If the Admin sets a re-enrollment period (Settings > Scheduling), the
+System marks a registered person's face photos as due for retaking once
+they are older than that period, or when the person's recent face matches
+keep scoring low. Nothing new is stored for this: it uses the dates of the
+saved photos and the match scores already kept with each entry. Retaking
+the photos replaces - and deletes - the old ones. It is a reminder only;
+nobody is refused entry because their photos are due.
 
 The University should choose retention periods no longer than it really
 needs, write them in its records retention schedule, and turn on

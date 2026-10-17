@@ -21,8 +21,9 @@ from accounts.permissions import (
 )
 from audit.utils import log_action
 from securetap_project.media_auth import build_signed_media_url
+from configuration import schedule
 from configuration import store as system_settings
-from users import insightface_utils, liveness_utils, occlusion_utils
+from users import insightface_utils, liveness_utils, occlusion_utils, reenrollment
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
@@ -68,6 +69,7 @@ def person_payload(person, request):
             "student_or_employee_id": None,
             "department_or_course": None,
             "distinguishing_note": None,
+            "photos_due": False,
         }
     photo_url = None
     if person.photo_reference:
@@ -84,6 +86,9 @@ def person_payload(person, request):
         # agent kiosk) so a guard can visually double-check it. Blank for
         # everyone else.
         "distinguishing_note": person.distinguishing_note or None,
+        # Settings > Scheduling > "Show at the gate": the guard sees "Photos
+        # due for update" for someone whose face photos should be retaken.
+        "photos_due": bool(system_settings.get("reenroll_show_at_gate") and reenrollment.photos_due(person)),
     }
 
 
@@ -690,6 +695,9 @@ class IdentifyView(APIView):
             "liveness_threshold": system_settings.get("spoof_strictness"),
             "alerts": {"spoof": system_settings.get("alert_spoof")},
             "gate_sign_in": gate_shifts.status(gate_location),
+            # Settings > Scheduling > Gate opening hours: the gate monitor
+            # alerts the guard and tags its live log while this is true.
+            "after_hours": schedule.is_after_hours(),
             "speed_test": system_settings.get("speed_test_enabled"),  # TEMPORARY - see registry.py
         }
 

@@ -21,6 +21,19 @@ export const STATUS_BAR = {
   occlusion_detected: "#1D5FA8",
 };
 
+// An entry written outside the gate's opening hours (Settings > Scheduling).
+export function AfterHoursTag() {
+  return (
+    <span
+      className="inline-flex items-center gap-s1 whitespace-nowrap rounded-sm bg-caution-tint px-s1 text-xs font-bold text-caution"
+      title="Outside the gate's opening hours (Settings > Scheduling)"
+    >
+      <Icon name="moon" bold size={12} />
+      After hours
+    </span>
+  );
+}
+
 export default function StatusBadge({ status }) {
   const { label, icon, className } = STATUS_STYLES[status] || STATUS_STYLES.failed;
   return (

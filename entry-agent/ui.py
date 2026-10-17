@@ -165,6 +165,8 @@ ICONS = {
     "check": "\ue182",
     "arrow-right": "\ue06c",
     "lock-simple": "\ue308",
+    # Settings > Scheduling > Gate opening hours
+    "moon": "\ue330",
 }
 
 
@@ -432,6 +434,8 @@ LOG_KINDS = {
     "covered": {"color": PROMPT, "tint": PROMPT_TINT, "icon": "hand-palm", "word": "COVERED", "sec": True},
     "card_rejected": {"color": DANGER, "tint": DANGER_TINT, "icon": "identification-card", "word": "CARD REJECTED", "sec": True},
     "card_offline": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "cloud-slash", "word": "QUEUED", "sec": True},
+    # A recognized entry or card tap outside the gate's opening hours.
+    "after_hours": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "moon", "word": "AFTER HOURS", "sec": True},
 }
 
 # The alarm banner docked at the top of the video panel - only for the two
@@ -584,6 +588,9 @@ class GateMonitorWindow:
         # arrive already zoomed; this is only for the video caption.
         self._camera_zoom = camera_zoom or 1.0
         self._speed_caption = None  # TEMPORARY - see speed_test.py
+        # Outside the gate's opening hours (Settings > Scheduling), as the
+        # backend says with every scan answer - see set_after_hours().
+        self._after_hours = False
         # Guard sign-in (Settings -> "Guards sign in at the gate monitor"):
         # on_sign_in(username, password) and on_sign_out(shift_id) are main.py's,
         # run off the Tk thread; the answers come back through
@@ -803,13 +810,15 @@ class GateMonitorWindow:
 
         # Right side packs right-to-left: the ENTRY pill (every gate checks
         # people coming in - exits aren't recorded), then the clock.
+        # Turns into a caution "AFTER HOURS" pill outside the gate's opening
+        # hours - see _render_after_hours.
         badge = ctk.CTkFrame(header, fg_color=SURFACE, corner_radius=round(s["badge"] * 1.1))
         badge.pack(side="right", padx=(26, s["pad"]))
-        self._icon_label(badge, "sign-in", round(s["badge"] * 1.0),
-                         MAROON_DEEP).pack(side="left", padx=(18, 8), pady=8)
-        self._label(badge, "ENTRY", (WIDE_HEAVY, s["badge"]), MAROON_DEEP).pack(
-            side="left", padx=(0, 22), pady=8
-        )
+        self._mode_icon = self._icon_label(badge, "sign-in", round(s["badge"] * 1.0), MAROON_DEEP)
+        self._mode_icon.pack(side="left", padx=(18, 8), pady=8)
+        self._mode_word = self._label(badge, "ENTRY", (WIDE_HEAVY, s["badge"]), MAROON_DEEP)
+        self._mode_word.pack(side="left", padx=(0, 22), pady=8)
+        self._mode_badge = badge
 
         clock = ctk.CTkFrame(header, fg_color="transparent")
         clock.pack(side="right")
@@ -1321,6 +1330,11 @@ class GateMonitorWindow:
     def set_threshold(self, threshold):
         self._queue.put(("threshold", threshold))
 
+    def set_after_hours(self, after_hours):
+        """Settings > Scheduling > Gate opening hours: whether it's outside
+        them right now (the backend sends it with every scan answer)."""
+        self._queue.put(("after_hours", bool(after_hours)))
+
     def set_alert_settings(self, alerts):
         """alerts: {"spoof": bool} from the backend (Settings page) - whether
         a suspected fake gets the alarm banner and sound."""
@@ -1410,6 +1424,8 @@ class GateMonitorWindow:
             self._refresh_stat_labels()
         elif kind == "threshold":
             self.threshold_label.configure(text=f"{payload:.2f}")
+        elif kind == "after_hours":
+            self._render_after_hours(payload)
         elif kind == "alert_settings":
             self._alert_spoof = bool(payload.get("spoof", True))
         elif kind == "card_match":
@@ -1721,14 +1737,22 @@ class GateMonitorWindow:
         self.card_ids.configure(
             text=f"{profile.get('student_id') or '—'} · Card {profile.get('card_id') or '—'}", text_color=INK_600
         )
-        note = profile.get("distinguishing_note")
-        if note:
-            self.card_note.configure(text=f"Note: {note}", text_color=CAUTION)
+        notes = []
+        if profile.get("distinguishing_note"):
+            notes.append(f"Note: {profile['distinguishing_note']}")
+        if profile.get("photos_due"):  # Settings > Scheduling > "Show at the gate"
+            notes.append("Photos due for update")
+        if notes:
+            self.card_note.configure(text=" · ".join(notes), text_color=CAUTION)
             self._pack_card_lines(self.card_title, self.card_sub, self.card_ids, self.card_note)
         else:
             self._pack_card_lines(self.card_title, self.card_sub, self.card_ids)
-        self.card_word_icon.configure(text=_icon("identification-card"), text_color=VERIFIED)
-        self.card_word.configure(text=f"CARD · {direction}", text_color=VERIFIED)
+        word = "CARD · AFTER HOURS" if self._after_hours else f"CARD · {direction}"
+        word_color = CAUTION if self._after_hours else VERIFIED
+        self.card_word_icon.configure(
+            text=_icon("moon" if self._after_hours else "identification-card"), text_color=word_color
+        )
+        self.card_word.configure(text=word, text_color=word_color)
         self.card_time.configure(text=timestamp)
         self.card_time.pack(anchor="e")
         self.card_right.grid()
@@ -1737,8 +1761,9 @@ class GateMonitorWindow:
             self._student.show_card_result("accepted")
 
         self._push_log_row(
-            kind="card", name=name, id_text=profile.get("student_id") or "—", time=timestamp,
-            word=f"CARD · {direction}", photo_bytes=profile.get("photo_bytes"), initials_seed=name,
+            kind="after_hours" if self._after_hours else "card", name=name,
+            id_text=profile.get("student_id") or "—", time=timestamp,
+            word=word, photo_bytes=profile.get("photo_bytes"), initials_seed=name,
         )
 
     def _render_card_failure(self, reason, reason_code):
@@ -1905,6 +1930,20 @@ class GateMonitorWindow:
         self._log_entries = self._log_entries[: self.MAX_LOG_ROWS]
         self._rebuild_log_list()
 
+    def _render_after_hours(self, after_hours):
+        """The header pill: ENTRY during opening hours, a caution AFTER HOURS
+        outside them - and while it's after hours, every recognized entry
+        and card tap lands in the live log as an AFTER HOURS row."""
+        if after_hours == self._after_hours:
+            return
+        self._after_hours = after_hours
+        background, color, icon, word = (
+            (CAUTION, "white", "moon", "AFTER HOURS") if after_hours else (SURFACE, MAROON_DEEP, "sign-in", "ENTRY")
+        )
+        self._mode_badge.configure(fg_color=background)
+        self._mode_icon.configure(text=_icon(icon), text_color=color, fg_color=background)
+        self._mode_word.configure(text=word, text_color=color, fg_color=background)
+
     def _push_log_entry(self, item):
         timestamp = datetime.now().strftime("%I:%M:%S %p")
         # A moment of occlusion seen earlier in this same encounter, even
@@ -1922,8 +1961,14 @@ class GateMonitorWindow:
                 feature_word="PLEASE UNCOVER YOUR FACE", photo_bytes=item.get("photo_bytes"),
             )
         elif item["matched"]:
+            # Settings > Scheduling: "Show at the gate" for someone whose face
+            # photos should be retaken.
+            if item.get("photos_due"):
+                extra += " · photos due for update"
             self._push_log_row(
-                kind="entry", name=item["name"], id_text=item.get("student_id") or "—", time=timestamp,
+                kind="after_hours" if self._after_hours else "entry", name=item["name"],
+                id_text=item.get("student_id") or "—", time=timestamp,
+                feature_word="ENTRY · AFTER HOURS" if self._after_hours else None,
                 conf=item.get("confidence"), photo_bytes=item.get("photo_bytes"),
                 initials_seed=item["name"], extra=extra,
             )

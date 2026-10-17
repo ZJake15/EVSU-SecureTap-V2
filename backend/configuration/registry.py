@@ -14,6 +14,11 @@ from dataclasses import dataclass
 from django.conf import settings
 
 INT, FLOAT, BOOL, CHOICE, FIXED = "int", "float", "bool", "choice", "fixed"
+# A time of day, "HH:MM" (24-hour), and a set of weekdays, "mon,tue,..." -
+# both kept as text, in WEEKDAYS order (see store.validate).
+TIME, DAYS = "time", "days"
+WEEKDAYS = (("mon", "Mon"), ("tue", "Tue"), ("wed", "Wed"), ("thu", "Thu"), ("fri", "Fri"), ("sat", "Sat"),
+            ("sun", "Sun"))
 
 
 def _from_settings(name):
@@ -57,7 +62,10 @@ SECTIONS = [
     ("quality", "Photo Quality Checks", "Which camera frames are good enough to use."),
     ("nfc", "NFC Card", "When the system asks for a card tap instead of deciding from the face alone."),
     ("enrollment", "Enrollment", "Registering a new student or staff member."),
-    ("privacy", "Privacy & Data Retention", "How long records and photos are kept before they are deleted."),
+    ("privacy", "Privacy & Data Retention",
+     "What's always deleted. How long other records are kept, and when they're deleted, is under Scheduling."),
+    ("scheduling", "Scheduling",
+     "What happens on a timetable: deleting old records, asking for new face photos, and the gate's opening hours."),
     ("security", "Security & Accounts", "Signing in to the dashboard and at the gate monitor."),
     ("alerts", "Alerts", "Warnings shown to the guard on the gate monitor."),
     ("advanced", "Advanced", "Fine-tuning that most schools never need to change."),
@@ -195,33 +203,112 @@ DEFINITIONS = [
     ),
     # ---- 7. Privacy & Data Retention -----------------------------------------
     SettingDef(
-        "auto_delete_enabled", "privacy", "Automatic deletion",
-        "Deletes old entry records, gate photos and audit log entries once a day, using the periods below. "
-        "Registered students' own photos and face data are never deleted.",
-        BOOL, False,
-        note="Off by default, so no records are deleted until you turn it on. Unknown face data (below) and "
-             "photo files left without a record are always deleted.",
-    ),
-    SettingDef(
-        "keep_entry_records_days", "privacy", "How long to keep entry records",
-        "Entry and exit records older than this are deleted.",
-        INT, 365, 7, 3650, 1, unit="days", depends_on="auto_delete_enabled",
-    ),
-    SettingDef(
         "keep_unknown_face_days", "privacy", "How long unknown face data is kept",
         "Face data from people who aren't registered is deleted after 1 day, even with Automatic deletion "
         "off - nothing needs it longer.",
         FIXED, 1, unit="day",
         note="These are people who never agreed to have their face stored. Their gate photo follows the "
-             "gate photo period below.",
+             "gate photo period under Scheduling. Photo files left without a record are always deleted too.",
+    ),
+    # ---- 8. Scheduling ---------------------------------------------------------
+    # Automatic deletion - the periods moved here from Privacy and Security
+    # (same keys, so saved values carry over); the timetable is new.
+    SettingDef(
+        "auto_delete_enabled", "scheduling", "Automatic deletion",
+        "Deletes old entry records, gate photos and audit log entries on the schedule below, using these "
+        "periods. Registered students' own photos and face data are never deleted.",
+        BOOL, False,
+        note="Off by default, so no records are deleted until you turn it on.",
     ),
     SettingDef(
-        "keep_gate_photos_days", "privacy", "How long to keep gate photos",
+        "keep_entry_records_days", "scheduling", "How long to keep entry records",
+        "Entry records older than this are deleted.",
+        INT, 365, 7, 3650, 1, unit="days", depends_on="auto_delete_enabled",
+    ),
+    SettingDef(
+        "keep_gate_photos_days", "scheduling", "How long to keep gate photos",
         "Photos captured at the gate (of unknown faces and suspected fakes) older than this are deleted. "
         "The entry record itself stays.",
         INT, 90, 1, 3650, 1, unit="days", depends_on="auto_delete_enabled",
     ),
-    # ---- 8. Security & Accounts ----------------------------------------------
+    SettingDef(
+        "keep_audit_log_days", "scheduling", "How long to keep the audit log",
+        "The audit log is the record of who changed what. Entries older than this are deleted. "
+        "0 keeps it forever.",
+        INT, 0, 0, 36500, 1, unit="days", depends_on="auto_delete_enabled",
+    ),
+    SettingDef(
+        "cleanup_frequency", "scheduling", "Run the clean-up",
+        "How often the old records above are deleted.",
+        CHOICE, "daily", choices=(("daily", "Every day"), ("weekly", "Every week"), ("monthly", "Every month")),
+        depends_on="auto_delete_enabled",
+    ),
+    SettingDef(
+        "cleanup_weekday", "scheduling", "On (every week)",
+        "The day it runs, when it runs every week.",
+        CHOICE, "sun", choices=WEEKDAYS, depends_on="auto_delete_enabled",
+    ),
+    SettingDef(
+        "cleanup_month_day", "scheduling", "On day (every month)",
+        "The day of the month it runs, when it runs every month - up to 28, so it happens in every month.",
+        INT, 1, 1, 28, 1, depends_on="auto_delete_enabled",
+    ),
+    SettingDef(
+        "cleanup_time", "scheduling", "At",
+        "The time of day it runs. If the computer is off or SecureTap isn't running then, it runs the next "
+        "time SecureTap starts.",
+        TIME, "02:00", depends_on="auto_delete_enabled",
+    ),
+    # Face re-enrollment - see users/reenrollment.py.
+    SettingDef(
+        "reenroll_months", "scheduling", "Ask for new face photos every",
+        "People whose newest face photos are older than this are marked Photos due in User Management, so "
+        "their photos can be retaken. It's a reminder only - they can still enter. 0 turns this off.",
+        INT, 0, 0, 60, 1, unit="months",
+        note="12 suits most schools: faces change with age, hairstyles and glasses.",
+    ),
+    SettingDef(
+        "reenroll_remind_days", "scheduling", "Remind before it's due",
+        "Marks them Due soon this many days before their photos are due.",
+        INT, 30, 0, 180, 1, unit="days",
+    ),
+    SettingDef(
+        "reenroll_weak_matches", "scheduling", "Suggest new photos when matches get weak",
+        "Marks someone Photos due when their recent face matches keep scoring low - a sign their face has "
+        "changed since the photos were taken - before they start being read as Unknown.",
+        BOOL, True,
+        note="Weak means the middle score of their last 10 face entries is under Match strictness + 0.10.",
+    ),
+    SettingDef(
+        "reenroll_show_at_gate", "scheduling", "Show at the gate",
+        "When someone whose photos are due is recognized, the gate monitor tells the guard \"Photos due for "
+        "update\", so they can be sent to have them retaken.",
+        BOOL, False,
+    ),
+    # Gate opening hours - see configuration/schedule.py.
+    SettingDef(
+        "gate_hours_enabled", "scheduling", "Gate opening hours",
+        "Entries outside the gate's opening hours are tagged After hours - in Logs, Live Monitoring and the "
+        "CSV export - and the gate monitor alerts the guard. Scanning never stops.",
+        BOOL, False,
+    ),
+    SettingDef(
+        "gate_open_time", "scheduling", "Opens at",
+        "When the gate opens each day it's open.",
+        TIME, "06:00", depends_on="gate_hours_enabled",
+    ),
+    SettingDef(
+        "gate_close_time", "scheduling", "Closes at",
+        "When it closes. A closing time earlier than the opening time means open overnight (for example "
+        "18:00 to 02:00).",
+        TIME, "21:00", depends_on="gate_hours_enabled",
+    ),
+    SettingDef(
+        "gate_open_days", "scheduling", "Open on",
+        "The days the gate is open. On any other day, every entry is After hours.",
+        DAYS, "mon,tue,wed,thu,fri,sat", depends_on="gate_hours_enabled",
+    ),
+    # ---- 9. Security & Accounts ----------------------------------------------
     SettingDef(
         "idle_logout_enabled", "security", "Automatic logout",
         "Logs a dashboard user out after a period with no activity.",
@@ -260,13 +347,6 @@ DEFINITIONS = [
         "gate_shift_hours", "security", "End a shift after",
         "Signs the guard out by itself after this long, in case they forget - the next guard then signs in.",
         INT, 12, 1, 24, 1, unit="hours", depends_on="gate_sign_in_enabled",
-    ),
-    SettingDef(
-        "keep_audit_log_days", "security", "How long to keep the audit log",
-        "The audit log is the record of who changed what. Entries older than this are deleted. "
-        "0 keeps it forever.",
-        INT, 0, 0, 36500, 1, unit="days",
-        note="Only applies when Automatic deletion (Privacy) is on.",
     ),
     # ---- 9. Alerts -------------------------------------------------------------
     SettingDef(

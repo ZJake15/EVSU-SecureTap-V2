@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import apiClient from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { AfterHoursTag } from "../components/StatusBadge";
 import { Avatar, Icon, Notice, PageHeader } from "../components/ui";
 
 const POLL_INTERVAL_MS = 1000;
@@ -100,6 +101,7 @@ function LatestPass({ event }) {
             <Icon name={method.icon} bold size={16} />
             {method.label}
           </span>
+          {event.after_hours && <AfterHoursTag />}
         </div>
       </div>
       {event.match_confidence != null && (
@@ -127,8 +129,9 @@ function PassRow({ event }) {
       style={{ gridTemplateColumns: TABLE_COLS }}
     >
       <Avatar src={event.person_photo} name={event.person_name} size={28} />
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate font-bold">{event.person_name}</span>
+      <span className="flex min-w-0 flex-col items-start">
+        <span className="max-w-full truncate font-bold">{event.person_name}</span>
+        {event.after_hours && <AfterHoursTag />}
         {note && (
           <span className="flex items-center gap-s1 truncate text-xs text-ink-600" title={note}>
             <Icon name="note" size={12} />

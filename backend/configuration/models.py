@@ -37,3 +37,16 @@ class SystemSetting(models.Model):
 
     def __str__(self):
         return self.key
+
+
+class ScheduledJob(models.Model):
+    """When a timetabled job last ran, and what it did - so "is it due?"
+    survives the launcher being closed and reopened (see schedule.py and
+    purge_old_data). One row per job name."""
+
+    name = models.CharField(max_length=64, unique=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_result = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return self.name

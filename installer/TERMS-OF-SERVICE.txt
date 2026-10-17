@@ -212,7 +212,7 @@ must:
   - decide how people who do not consent, or who cannot be recognized,
     are let in (for example, by a guard checking their ID by hand)
   - choose retention periods and turn on "Automatic deletion" on the
-    Settings page (see the Privacy Policy, section 11)
+    Settings page, under Scheduling (see the Privacy Policy, section 11)
   - register the System with the National Privacy Commission if required
   - train the Users who will run it
 

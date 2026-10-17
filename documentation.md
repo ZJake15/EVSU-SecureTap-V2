@@ -289,13 +289,23 @@ currently in frame.
    testing: `occlusion_detected` and `failed` alternating every few seconds for
    what was clearly one uninterrupted attempt to cover a face.
 
-   The fix: `_confirm_or_vote_unmatched` holds back the Unknown vote while
-   covered frames **outnumber** unrecognized ones at this gate within the last
-   `VOTE_WINDOW_SECONDS` (`_occlusion_dominates`) - it's treated as one
-   covering gesture rather than a newly-arrived stranger, and the entry-agent
-   shows the same "please uncover your face" box it would for a directly-detected
-   covered frame, so the display stays one stable signal instead of flickering
-   between the two. It takes a majority, not just any covered frame: covered
+   The fix: `_confirm_or_vote_unmatched` holds back the Unknown vote while at
+   least **a quarter of this face's own frames** in the last
+   `VOTE_WINDOW_SECONDS` read as covered (`_being_covered`, per face track - see
+   `logs/motion.py`) - it's treated as one covering gesture rather than a
+   newly-arrived stranger, and the entry-agent shows the same "please uncover
+   your face" box it would for a directly-detected covered frame, so the display
+   stays one stable signal instead of flickering between the two. It used to
+   take a **majority of covered frames across the whole gate**
+   (`_occlusion_dominates`, now only the fallback for a face with no track) —
+   but the covered-face model catches only some frames of a covered mouth
+   (measured at this gate: 25–100% of the frames around such Unknowns, median
+   55%), so a mouth covered by a hand was often voted Unknown; and someone else
+   covering their face at the same gate could hold back a stranger's Unknown.
+   Per face, a quarter keeps a covered face on "please uncover" even when the
+   model catches only 30% of its frames, while a clean stranger with no covered
+   read yet is still recorded on their second frame (one whose very first frame
+   is misread waits about a second longer). It takes a share, not just any covered frame: covered
    faces aren't logged, and the covered-face check sometimes misreads an
    uncovered face (§10), so if one stray covered read were enough, an uncovered
    stranger could keep their own Unknown vote held off and never reach the log.
@@ -1717,8 +1727,8 @@ knowing before extending the system:
   The `_already_recognizable` skip (§2.1 step 5) removes those false alarms for
   anyone enrolled; they can still reach an **unenrolled** person with an
   uncovered face, who may briefly be shown "please uncover your face". Since
-  covered faces aren't logged, the Unknown vote is only held back while covered
-  reads are the majority (§2.1 step 5), so a stranger misread only now and then
+  covered faces aren't logged, the Unknown vote is only held back while at least
+  a quarter of that face's own reads are covered (§2.1 step 5), so a stranger misread only now and then
   is still logged as Unknown, with the alarm. The fix for that is more and
   better training data — more clean photos taken at the real gate camera and
   distance, until clean and covered are roughly balanced — then retraining.

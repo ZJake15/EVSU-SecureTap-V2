@@ -7,6 +7,9 @@ and which earlier face it is - for two parts of the gate scan:
   used to be voted Unknown before the person slowed down. So IdentifyView
   skips such a frame ("Checking..."), the same way it skips a turned or
   blurry one.
+- Telling a covered face from an Unknown one: each face's recent frames
+  read as covered vs unrecognized (note_covered / covered_share), so the
+  Unknown vote holds back for a face that keeps being read as covered.
 - Undoing a wrong Unknown. Each face gets a track number that carries over
   while it stays in view; an Unknown recorded on a track that is then
   recognized moments later was that person all along, however smeared the
@@ -42,6 +45,7 @@ UNKNOWN_MEMORY_SECONDS = 30
 _lock = threading.Lock()
 _last_frame = {}  # gate_location -> (time, [(centre_x, centre_y, width, track_id), ...])
 _unknowns = {}  # gate_location -> {track_id: [(time, log_id), ...]}
+_covered = {}  # gate_location -> {track_id: [(time, read_as_covered), ...]}
 _track_ids = itertools.count(1)
 
 
@@ -93,6 +97,32 @@ def remember_unknown(gate_location, track_id, log_id, now=None):
         for key in [k for k, items in tracks.items() if all(now - t > UNKNOWN_MEMORY_SECONDS for t, _ in items)]:
             del tracks[key]
         tracks.setdefault(track_id, []).append((now, log_id))
+
+
+def note_covered(gate_location, track_id, covered, now=None):
+    """One frame of this face read as covered (True) or as an unrecognized
+    face (False) - see covered_share."""
+    if track_id is None:
+        return
+    now = time.monotonic() if now is None else now
+    with _lock:
+        tracks = _covered.setdefault(gate_location, {})
+        for key in [k for k, items in tracks.items() if now - items[-1][0] > UNKNOWN_MEMORY_SECONDS]:
+            del tracks[key]
+        tracks.setdefault(track_id, []).append((now, covered))
+
+
+def covered_share(gate_location, track_id, within_seconds, now=None):
+    """Of this face's frames in the last within_seconds that were read as
+    covered or as unrecognized, the share read as covered - None if none
+    were. Lets the Unknown vote ask "is this face being covered?" about the
+    face itself, not the whole gate."""
+    if track_id is None:
+        return None
+    now = time.monotonic() if now is None else now
+    with _lock:
+        items = [covered for t, covered in _covered.get(gate_location, {}).get(track_id, []) if now - t <= within_seconds]
+    return sum(items) / len(items) if items else None
 
 
 def unknowns_on_track(gate_location, track_id, within_seconds, now=None):

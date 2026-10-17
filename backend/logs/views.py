@@ -666,12 +666,13 @@ class IdentifyView(APIView):
                 and not self._already_recognizable(embedding, known_matrix)
                 and self._occlusion_reason(mouth_ratio, texture_ratio, det_score)
             ):
+                motion.note_covered(gate_location, tracked[index][1], True)
                 results.append(self._occlusion_prompt(box, gate_location))
                 continue
             results.append(
                 self._match_one_face(
                     embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image,
-                    liveness_score, liveness_unsure=liveness_unsure,
+                    liveness_score, liveness_unsure=liveness_unsure, track_id=tracked[index][1],
                 )
             )
         self._follow_unknowns_by_track(results, tracks, gate_location)
@@ -870,7 +871,7 @@ class IdentifyView(APIView):
 
     def _match_one_face(
         self, embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image, liveness_score,
-        liveness_unsure=False,
+        liveness_unsure=False, track_id=None,
     ):
         query = np.array(embedding, dtype=np.float32)
         similarities = known_matrix @ query  # both sides are unit-normalized -> cosine similarity
@@ -880,7 +881,8 @@ class IdentifyView(APIView):
 
         if best_similarity < system_settings.get("match_strictness"):
             return self._confirm_or_vote_unmatched(
-                embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score
+                embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score,
+                track_id=track_id,
             )
 
         # Checked before the normal ambiguity-gap logic below, and overrides
@@ -1187,6 +1189,7 @@ class IdentifyView(APIView):
 
     def _confirm_or_vote_unmatched(
         self, embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score,
+        track_id=None,
     ):
         """Symmetric with _confirm_or_vote: an unrecognized face is never
         logged as "Unknown" from a single frame either. There's no Person to
@@ -1213,20 +1216,23 @@ class IdentifyView(APIView):
         every few seconds for what was clearly one uninterrupted attempt to
         cover a face.
 
-        So: while covered frames outnumber unrecognized ones at this gate
-        in the last few seconds (_occlusion_dominates), the Unknown vote
-        is held back and the person stays on the "please uncover your
-        face" prompt - it's far more likely one covering gesture than a
-        newly-arrived stranger. A majority, not "any covered frame at
-        all": covered faces aren't logged, so if one stray covered read
-        were enough, an uncovered stranger whose face the covered-face
-        check sometimes misreads (it does, for small/soft faces - see
-        documentation §10) could keep the Unknown vote held off and never
-        reach the log. Every non-match is still recorded below, so once
+        So: while at least a quarter of THIS face's recent frames (its
+        track - see _being_covered and logs/motion.py) read as covered,
+        the Unknown vote is held back and the person stays on the "please
+        uncover your face" prompt - it's far more likely one covering
+        gesture than a newly-arrived stranger. (It used to be a majority of
+        covered frames across the whole gate, which let a covered mouth
+        whose frames the model only half caught be voted Unknown.) A
+        share, not "any covered frame at all": covered faces aren't
+        logged, so if one stray covered read were enough, an uncovered
+        stranger whose face the covered-face check sometimes misreads (it
+        does, for small/soft faces - see documentation §10) could keep the
+        Unknown vote held off and never reach the log. Every non-match is still recorded below, so once
         the covered frames stop dominating, the vote already has them."""
         UnmatchedAttempt.objects.create(gate_location=gate_location, embedding=embedding)
+        motion.note_covered(gate_location, track_id, False)
 
-        if self._occlusion_dominates(gate_location):
+        if self._being_covered(gate_location, track_id):
             # occlusion_suspected (not just retry+hint) so the entry-agent's
             # box stays a consistent teal "please uncover your face" for the
             # whole gesture, rather than flickering between this and the
@@ -1397,6 +1403,30 @@ class IdentifyView(APIView):
         return OcclusionAttempt.objects.filter(
             gate_location=gate_location, timestamp__gte=window_cutoff
         ).exists()
+
+    # A face counts as "being covered" once at least this share of its own
+    # frames in the decision window were read as covered (the rest read as
+    # unrecognized). The covered-face model doesn't catch every frame of a
+    # covered mouth - measured at this gate, 25-100% of the frames around a
+    # covered face's Unknowns (median 55%) - so a majority was too much to
+    # ask, and even 1 in 3 let Unknown slip in after a couple of missed
+    # frames. It wrongly reads about 15% of clean faces' frames as covered,
+    # but a stranger with no covered read yet is still decided on their
+    # second frame, as before; only one whose very first frames are misread
+    # waits a moment longer.
+    COVERED_SHARE_TO_HOLD = 0.25
+
+    def _being_covered(self, gate_location, track_id):
+        """Whether to hold back the Unknown vote for this face and keep
+        showing "Please uncover your face": per face (its track - see
+        logs/motion.py), at least COVERED_SHARE_TO_HOLD of its frames in the
+        decision window read as covered. Someone else covering their face at
+        the same gate no longer affects it. Falls back to the old gate-wide
+        majority (_occlusion_dominates) for a face with no track."""
+        share = motion.covered_share(gate_location, track_id, system_settings.get("decision_window_seconds"))
+        if share is None:
+            return self._occlusion_dominates(gate_location)
+        return share >= self.COVERED_SHARE_TO_HOLD
 
     @staticmethod
     def _occlusion_dominates(gate_location):

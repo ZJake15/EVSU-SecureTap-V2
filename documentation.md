@@ -91,13 +91,51 @@ currently in frame.
    webcam needs about 1.00, so check once with any other camera.
 4. **Per-face quality gate.** Each face is checked for (a) sitting too close to the
    frame's edge (`FACE_EDGE_MARGIN_RATIO` — likely partially cut off), (b) being
-   turned too far away from the camera (`FACE_MAX_YAW_RATIO`), and (c) motion blur
-   below `GATE_SCAN_MIN_BLUR_VARIANCE`. Any one of them skips this face for this
-   frame entirely — not counted toward a match *or* a non-match, just "still
-   checking," so one bad frame mid-stride can't cost someone a vote either way.
-   The entry-agent labels the box with a short hint for whichever check fired
-   ("Move into view" / "Face the camera" / "Hold steady") instead of the generic
-   "Checking…".
+   turned too far away from the camera (`FACE_MAX_YAW_RATIO`), (c) moving fast
+   between frames (*Fast movement limit*, `max_face_speed`, default 4 face widths
+   per second, 0 = off), and (d) blur below *Blur sensitivity* (`blur_min`,
+   default 60). Any one of them skips this face for this frame entirely — not
+   counted toward a match *or* a non-match, just "still checking," so one bad
+   frame mid-stride can't cost someone a vote either way. The entry-agent labels
+   the box with a short hint for whichever check fired ("Move into view" / "Face
+   the camera" / "Hold steady"); a fast-moving face just shows "Checking…".
+
+   **Why fast movement needed its own check:** a moving face is smeared in the
+   photo, and a smeared face doesn't look enough like its saved photos to match —
+   so two smeared frames of a registered student "agreed" with each other and
+   were voted Unknown before they slowed down. `logs/motion.py` pairs each face
+   with the nearest face in that gate's previous frame (under 1 s ago, within 3
+   face widths) and measures how far its centre moved in face widths per second,
+   so it means the same near and far; walking toward the camera barely moves the
+   centre. At a typical webcam's shutter speed a face smears by about a tenth of
+   its width at 3 widths/s (still matches) and a fifth at 6 (stops matching).
+
+   **The blur score is size-independent now**
+   (`insightface_utils.face_sharpness`): the face is resized to 112×112 before
+   the Laplacian variance is taken. The old raw score mostly measured face
+   *size* — on the same faces a sharp 104 px face scored 203 and a sharp 26 px
+   one 2091, and a 26 px face smeared by a fifth of its width (enough to drop its
+   match to 0.49) still scored 555, so the old bar of 25 only ever caught blur on
+   faces close to the camera. Resized, the same faces score 145–235 sharp and
+   25–95 smeared that much, and this system's own camera photos score 191 or more
+   sharp (1st percentile of 124) — so 60 skips most smeared faces without ever
+   skipping a sharp one. Small faces can still score above 60 when smeared; the
+   fast-movement check covers those. Migration `configuration/0004` moved a
+   never-changed `blur_min` from 25 to 60.
+
+   **A wrong Unknown is undone.** If an Unknown still gets recorded and the
+   same person is recognized at that gate within 15 s, the Unknown entry and its
+   photo are deleted, the Audit Log notes "Unknown corrected", and the gate
+   monitor takes the row out of its live log and its Unknown count
+   (`IdentifyView._correct_recent_unknowns` / `_follow_unknowns_by_track`). Two
+   ways to tell it was them: the Unknown was on the same **track** — the same
+   face followed frame to frame without leaving the view — or its face is at
+   least 0.30 alike to theirs and they're the registered person it looks most
+   like. The track is what catches a badly smeared Unknown (a face smeared by a
+   fifth can score as low as 0.20 against its own sharp self, too low for any
+   safe similarity bar). A different stranger elsewhere in the picture is on a
+   different track and is left alone. Two people crossing paths could in rare
+   cases swap tracks.
 
    **Why the frontality check matters:** a turned face is the one input that can
    fail in *both* directions at once. ArcFace embeddings are trained on roughly
@@ -512,7 +550,6 @@ database, so nothing changes on day one. After that the database wins — editin
 |---|---|---|
 | `FACE_MATCH_SIMILARITY_THRESHOLD` | `0.45` | Minimum cosine similarity to count as a match at all. Explicitly documented as "a starting point, not a validated value" — see §5.7. |
 | `TIEBREAK_MARGIN` | `0.05` | If the top match's score is within this margin of the threshold ("barely passed"), or the top-2 candidates are within this margin of each other (two people who look alike), the match is sent to NFC tiebreak instead of being auto-accepted/rejected. |
-| `GATE_SCAN_MIN_BLUR_VARIANCE` | `25.0` | Below this Laplacian-variance blur score, a frame is skipped entirely (not counted as a match attempt in either direction) rather than trusted. |
 | `FACE_EDGE_MARGIN_RATIO` | `0.02` | A face within 2% of the frame's edge is treated as likely partially cut off and skipped. |
 | `FACE_MAX_YAW_RATIO` | `0.35` | How far a face may be turned away from the camera before it's skipped rather than matched — nose-tip offset from the eye midpoint, over the inter-eye distance (≈30° turn). Set where ArcFace embeddings start degrading, so a turned enrolled person is never voted through as Unknown or as a spoof. See §2.1 step 4. |
 | `FACE_MIN_MOUTH_VISIBILITY_RATIO` | `0.73` | First of two occlusion signals (either firing routes to `occlusion_detected` instead of Unknown/spoof) — mouth width over inter-eye distance, from the same 5 keypoints yaw uses. Alone, badly under-detects partial coverage (a hand over just the mouth/chin) — see the next row. See §2.1 step 5. |

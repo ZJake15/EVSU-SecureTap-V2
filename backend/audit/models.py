@@ -58,6 +58,9 @@ class AuditLogEntry(models.Model):
         # logs.models.GateShift).
         GATE_SIGN_IN = "gate_sign_in", "Signed in at a gate"
         GATE_SIGN_OUT = "gate_sign_out", "Signed out of a gate"
+        # A wrong Unknown undone: the same face was recognized at that gate
+        # seconds later (logs.views.IdentifyView._correct_recent_unknowns).
+        UNKNOWN_CORRECTED = "unknown_corrected", "Unknown corrected"
 
     # Nullable only in case a user account is later deleted out from under an
     # old entry (SET_NULL, not CASCADE) - the row (and its description of what

@@ -203,6 +203,10 @@ def _build_recognition(direction, result, api_client, photo_cache):
         "department": result.get("department_or_course"),
         "distinguishing_note": result.get("distinguishing_note"),
         "photos_due": bool(result.get("photos_due")),
+        # Unknown entries this recognition undid (the same face, moments
+        # ago - see IdentifyView._correct_recent_unknowns): the live log
+        # takes those rows out again.
+        "corrected_log_ids": result.get("corrected_log_ids") or [],
         "confidence": confidence,
         "log_id": result.get("log_id"),
         "deduped": bool(result.get("deduped")),

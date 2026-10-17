@@ -27,7 +27,7 @@ from users import insightface_utils, liveness_utils, occlusion_utils, reenrollme
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
-from . import gate_shifts
+from . import gate_shifts, motion
 from .filters import EntryLogFilter
 from .models import (
     EntryLog,
@@ -524,11 +524,15 @@ class IdentifyView(APIView):
     recent attempts agree (see _confirm_or_vote_unmatched). Before either
     voting path even runs - and before the liveness check - a face too close
     to the frame edge (likely partially cut off), turned too far away from
-    the camera (above FACE_MAX_YAW_RATIO), or too motion-blurred (below
-    GATE_SCAN_MIN_BLUR_VARIANCE) is skipped outright - not counted as an
-    attempt in either direction, just a "still checking" retry signal back to
-    the entry-agent - so a single bad frame while someone's mid-stride can't
-    flag them as Unknown or as a spoof attempt.
+    the camera (above FACE_MAX_YAW_RATIO), moving fast between frames
+    ("Fast movement limit" - see logs/motion.py), or too blurry ("Blur
+    sensitivity" - see insightface_utils.face_sharpness) is skipped
+    outright - not counted as an attempt in either direction, just a "still
+    checking" retry signal back to the entry-agent - so a single bad frame
+    while someone's mid-stride can't flag them as Unknown or as a spoof
+    attempt. And if an Unknown does slip through and the same face is
+    recognized at that gate seconds later, the Unknown is undone (see
+    _correct_recent_unknowns).
 
     A face whose mouth/nose read as covered (three independent signals - see
     _occlusion_reason) is intercepted the same place, right after the
@@ -593,7 +597,14 @@ class IdentifyView(APIView):
         camera_zoom = min(2.0, max(1.0, data["camera_zoom"]))
         results = []
         distances = {}  # (left, top, right, bottom) -> metres, for "Show distance on face boxes"
-        for embedding, box, det_score, blur_variance, yaw_ratio, mouth_ratio, texture_ratio, kps in detections:
+        # How fast each face moved since this gate's last frame, and which
+        # earlier face it is (see logs/motion.py).
+        tracked = motion.track_faces(gate_location, [detection[1] for detection in detections])
+        speeds = [speed for speed, _track in tracked]
+        tracks = {detection[1]: track for detection, (_speed, track) in zip(detections, tracked)}
+        for index, (embedding, box, det_score, blur_variance, yaw_ratio, mouth_ratio, texture_ratio, kps) in (
+            enumerate(detections)
+        ):
             # Before everything else, and silently - no box, no hint, never
             # an attempt: a face this far away is too small for a fair
             # spoof check or match, so it's treated as not being there
@@ -607,7 +618,9 @@ class IdentifyView(APIView):
                 continue
             if distance is not None:
                 distances[box] = distance
-            skip_result = self._skip_reason(box, blur_variance, yaw_ratio, image_width, image_height)
+            skip_result = self._skip_reason(
+                box, blur_variance, yaw_ratio, image_width, image_height, speed=speeds[index]
+            )
             if skip_result is not None:
                 results.append(skip_result)
                 continue
@@ -661,6 +674,7 @@ class IdentifyView(APIView):
                     liveness_score, liveness_unsure=liveness_unsure,
                 )
             )
+        self._follow_unknowns_by_track(results, tracks, gate_location)
         # Settings page (Advanced): "Show distance on face boxes" - for
         # checking the distance estimate against a measured spot.
         show_distance = system_settings.get("show_face_distance")
@@ -725,7 +739,7 @@ class IdentifyView(APIView):
         return np.array(rows, dtype=np.float32), owners
 
     @staticmethod
-    def _skip_reason(box, blur_variance, yaw_ratio, image_width, image_height):
+    def _skip_reason(box, blur_variance, yaw_ratio, image_width, image_height, speed=None):
         """None of these counts as a real attempt at all - a face partially
         out of frame, turned away from the camera, or too blurry produces an
         unreliable embedding, so it's skipped rather than matched (and
@@ -763,6 +777,20 @@ class IdentifyView(APIView):
                 "retry": True,
                 "reason": "Face turned away - look toward the camera.",
                 "hint": "Face the camera",
+                "log_id": None,
+                "box": _box_to_dict(box),
+            }
+        # Settings: "Fast movement limit" (0 = off). A face moving this fast
+        # is smeared and wouldn't match - skipped so it can't be voted
+        # Unknown before the person slows down. No hint: the box just says
+        # "Checking...". speed is None for a face with no recent previous
+        # frame (see logs/motion.py).
+        speed_limit = system_settings.get("max_face_speed")
+        if speed_limit > 0 and speed is not None and speed > speed_limit:
+            return {
+                "success": False,
+                "retry": True,
+                "reason": "Moving fast - checking again when the face is clearer.",
                 "log_id": None,
                 "box": _box_to_dict(box),
             }
@@ -899,9 +927,103 @@ class IdentifyView(APIView):
             candidate_ids = [best_person.id] + ([other_owner.id] if close_second else [])
             return self._start_tiebreak(gate_location, direction, candidate_ids, box, best_similarity)
 
-        return self._confirm_or_vote(
+        result = self._confirm_or_vote(
             best_person, best_similarity, direction, gate_location, request, box, liveness_score
         )
+        if result.get("log_id") is not None:
+            corrected = self._correct_recent_unknowns(embedding, best_person, owners, known_matrix, gate_location)
+            if corrected:
+                result["corrected_log_ids"] = corrected
+        return result
+
+    # A wrong Unknown is undone if the same face is recognized at the same
+    # gate within this long (see _correct_recent_unknowns).
+    UNKNOWN_CORRECTION_SECONDS = 15
+    # How alike the Unknown's face must be to the recognized face (or to the
+    # person's saved photos) to count as the same person. Below the match bar
+    # on purpose: an Unknown caused by a smeared frame is exactly a face that
+    # scored under it - measured, a face smeared by a fifth of its width
+    # scores 0.32-0.49 against its own sharp self.
+    UNKNOWN_CORRECTION_SIMILARITY = 0.30
+
+    def _correct_recent_unknowns(self, embedding, person, owners, known_matrix, gate_location):
+        """Someone just recognized here who was recorded as Unknown moments
+        ago - typically because they moved fast and the first frames were
+        smeared - was never really Unknown. Deletes those Unknown entries
+        (and, through users/photo_files.py, their captured photos) and notes
+        it in the Audit Log; returns their ids so the gate monitor can take
+        the rows out of its live log.
+
+        An Unknown counts as this person only if all of: same gate, within
+        UNKNOWN_CORRECTION_SECONDS before now, its face is at least
+        UNKNOWN_CORRECTION_SIMILARITY alike to this face or this person's
+        saved photos, AND this person is the registered person its face
+        looks most like - so a different stranger's Unknown at the same gate
+        is left alone."""
+        cutoff = timezone.now() - timezone.timedelta(seconds=self.UNKNOWN_CORRECTION_SECONDS)
+        recent = EntryLog.objects.filter(
+            gate_location=gate_location,
+            verification_method=EntryLog.VerificationMethod.FACE_ONLY,
+            status=EntryLog.Status.FAILED,
+            timestamp__gte=cutoff,
+        ).exclude(unmatched_encoding__isnull=True)
+        live = np.array(embedding, dtype=np.float32)
+        person_rows = np.array([owner.id == person.id for owner in owners])
+        matched = []
+        for log in recent:
+            unknown = np.array(log.unmatched_encoding, dtype=np.float32)
+            similarities = known_matrix @ unknown
+            if owners[int(np.argmax(similarities))].id != person.id:
+                continue
+            alike = max(float(np.dot(unknown, live)), float(similarities[person_rows].max()))
+            if alike >= self.UNKNOWN_CORRECTION_SIMILARITY:
+                matched.append(log)
+        return self._undo_unknowns(matched, f"{person.full_name} ({person.student_or_employee_id})", gate_location)
+
+    @staticmethod
+    def _undo_unknowns(logs, who, gate_location):
+        """Deletes these wrong Unknown entries (their captured photos go with
+        them - users/photo_files.py), notes it in the Audit Log, and returns
+        their ids for the gate monitor."""
+        logs = list(logs)
+        if not logs:
+            return []
+        ids = [log.id for log in logs]
+        seconds = round((timezone.now() - min(log.timestamp for log in logs)).total_seconds())
+        for log in logs:
+            log.delete()
+        log_action(
+            None, "unknown_corrected", target_description=who[:255],
+            detail={"deleted_entry_ids": ids, "gate": gate_location, "recognized_seconds_later": seconds},
+        )
+        return ids
+
+    def _follow_unknowns_by_track(self, results, tracks, gate_location):
+        """The other half of undoing a wrong Unknown: by where the face is,
+        not how it looks. An Unknown is remembered on its face's track (see
+        logs/motion.py); when that same track is recognized within
+        UNKNOWN_CORRECTION_SECONDS, the person never left the camera's view,
+        so the Unknown was them - even when its smeared face looked nothing
+        like their photos (measured: a face smeared by a fifth of its width
+        can score as low as 0.20 against its own sharp self, below anything
+        a similarity check could safely use)."""
+        for result in results:
+            box = result.get("box")
+            track = box and tracks.get((box["left"], box["top"], box["right"], box["bottom"]))
+            if track is None or result.get("log_id") is None or result.get("retry"):
+                continue
+            if result.get("success"):
+                ids = motion.unknowns_on_track(gate_location, track, self.UNKNOWN_CORRECTION_SECONDS)
+                cutoff = timezone.now() - timezone.timedelta(seconds=self.UNKNOWN_CORRECTION_SECONDS)
+                still_there = EntryLog.objects.filter(
+                    id__in=ids, gate_location=gate_location, status=EntryLog.Status.FAILED, timestamp__gte=cutoff,
+                )
+                who = f"{result.get('person_name')} ({result.get('student_or_employee_id')})"
+                undone = self._undo_unknowns(still_there, who, gate_location)
+                if undone:
+                    result["corrected_log_ids"] = sorted(set(result.get("corrected_log_ids", [])) | set(undone))
+            elif not result.get("spoof_suspected") and not result.get("tiebreak_required"):
+                motion.remember_unknown(gate_location, track, result["log_id"])
 
     def _confirm_or_vote(self, person, similarity, direction, gate_location, request, box, liveness_score):
         """A face match is never confirmed from a single frame - it has to

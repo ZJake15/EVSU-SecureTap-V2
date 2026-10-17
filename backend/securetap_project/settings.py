@@ -265,13 +265,11 @@ GATE_SCAN_DET_SIZE = env.int("GATE_SCAN_DET_SIZE", default=480)
 # every frame and the rest of the system stutters. Needs a backend restart.
 AI_THREADS = env.int("AI_THREADS", default=0)
 
-# Below this Laplacian variance, a gate-scan frame is treated as too
-# motion-blurred to trust - skipped entirely (not counted as "no match"),
-# waiting for a sharper frame instead. Deliberately more lenient than
-# enrollment's MIN_BLUR_VARIANCE (80.0, in insightface_utils.py) since a
-# walk-by frame is never going to be as sharp as a posed enrollment photo -
-# a starting point to tune, same as FACE_MATCH_SIMILARITY_THRESHOLD.
-GATE_SCAN_MIN_BLUR_VARIANCE = env.float("GATE_SCAN_MIN_BLUR_VARIANCE", default=25.0)
+# The gate scan's blur check ("Blur sensitivity") lives only on the Settings
+# page now - measured on the face resized to a fixed size
+# (insightface_utils.face_sharpness), default 60. The old
+# GATE_SCAN_MIN_BLUR_VARIANCE (a raw score that mostly measured face size)
+# is no longer read; an existing .env line for it is harmless.
 
 # A face this close to the edge of the frame (as a fraction of frame
 # width/height) is likely partially cut off - skipped rather than matched,

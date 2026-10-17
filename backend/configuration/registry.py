@@ -133,9 +133,21 @@ DEFINITIONS = [
     # ---- 3. Photo Quality Checks ----------------------------------------------
     SettingDef(
         "blur_min", "quality", "Blur sensitivity",
-        "How sharp a camera frame must be to be used. Higher skips more blurry frames and waits for a "
-        "clearer one; lower accepts blurrier frames.",
-        FLOAT, _from_settings("GATE_SCAN_MIN_BLUR_VARIANCE"), 0, 200, 1,
+        "How sharp a face must look to be used - measured the same way however near or far the face is. "
+        "Higher skips more smeared or blurry frames and waits for a clearer one; lower accepts blurrier "
+        "frames.",
+        FLOAT, 60.0, 0, 300, 1,
+        note="Sharp faces from this system's camera score 190 or more; a face smeared enough to stop matching "
+             "scores about 15-95. 60 skips most of those without ever skipping a sharp face.",
+    ),
+    SettingDef(
+        "max_face_speed", "quality", "Fast movement limit",
+        "A face moving faster than this between camera frames is smeared in the photo, so that frame isn't "
+        "used - the box shows Checking... until the person slows down, instead of a wrong Unknown. Measured in "
+        "face widths per second, so it means the same near and far. 0 turns this off.",
+        FLOAT, 4.0, 0, 20, 0.5, unit="widths/s",
+        note="At a typical webcam's shutter speed, a face smears by about a tenth of its width at 3 widths/s "
+             "(still matches) and a fifth at 6 (stops matching). Walking toward the camera barely counts.",
     ),
     SettingDef(
         "whole_face_required", "quality", "Require the whole face in view",

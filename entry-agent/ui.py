@@ -1847,6 +1847,9 @@ class GateMonitorWindow:
         self._latest_recognitions = recognitions
         self._latest_image_size = image_size
         self.stat_tiles["in_frame"].configure(text=str(len(recognitions)))
+        corrected = {log_id for item in recognitions for log_id in item.get("corrected_log_ids") or []}
+        if corrected:
+            self._undo_unknowns(corrected)
 
         for item in recognitions:
             log_id = item.get("log_id")
@@ -1883,6 +1886,24 @@ class GateMonitorWindow:
         if self._student is not None:
             self._student.update_recognitions(recognitions, image_size)
 
+    def _undo_unknowns(self, log_ids):
+        """The backend undid these Unknown entries - the same face was just
+        recognized (see IdentifyView._correct_recent_unknowns). Takes their
+        rows out of the live log, counts them out of Unknown today, and
+        drops an Unknown alarm banner that was about them."""
+        removed = [entry for entry in self._log_entries if entry.get("log_id") in log_ids]
+        if not removed:
+            return
+        self._log_entries = [entry for entry in self._log_entries if entry.get("log_id") not in log_ids]
+        unknowns = sum(1 for entry in removed if entry["kind"] == "unknown")
+        self.stats["unknown"] = max(0, self.stats["unknown"] - unknowns)
+        if unknowns and self._alert and self._alert.get("kind") in ("unknown", "repeated"):
+            if self._alert_hide_job:
+                self.window.after_cancel(self._alert_hide_job)
+            self._hide_alert_banner()
+        self._rebuild_log_list()
+        self._refresh_stat_labels()
+
     def _show_alert_banner(self, kind, sub=None):
         """Docks the alarm banner across the top of the video panel - fires
         once per genuinely new unknown-face or spoof event (the same log_id
@@ -1909,7 +1930,7 @@ class GateMonitorWindow:
     # ---- live log ---------------------------------------------------------
 
     def _push_log_row(self, *, kind, name, id_text, time, word=None, feature_word=None,
-                      conf=None, photo_bytes=None, initials_seed=None, extra=""):
+                      conf=None, photo_bytes=None, initials_seed=None, extra="", log_id=None):
         """The one way anything reaches the live log. Both credentials go
         through here - a face event from the scan loop and an NFC tap render
         as the same kind of row, differing only in their kind - so the log
@@ -1926,6 +1947,7 @@ class GateMonitorWindow:
             "photo_bytes": photo_bytes,
             "initials_seed": initials_seed,
             "extra": extra,
+            "log_id": log_id,  # so an undone Unknown can be taken out again (_undo_unknowns)
         })
         self._log_entries = self._log_entries[: self.MAX_LOG_ROWS]
         self._rebuild_log_list()
@@ -1975,7 +1997,7 @@ class GateMonitorWindow:
         else:
             self._push_log_row(
                 kind="unknown", name="Unknown", id_text="No ID on file", time=timestamp,
-                photo_bytes=item.get("photo_bytes"), extra=extra,
+                photo_bytes=item.get("photo_bytes"), extra=extra, log_id=item.get("log_id"),
             )
 
     def _meta(self, entry):

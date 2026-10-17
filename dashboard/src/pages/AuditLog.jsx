@@ -17,6 +17,7 @@ const ACTIONS = {
   setting_changed: { label: "Setting changed", icon: "sliders-horizontal" },
   data_purged: { label: "Old data deleted", icon: "broom" },
   data_backed_up: { label: "Data backed up", icon: "floppy-disk" },
+  unknown_corrected: { label: "Unknown corrected", icon: "user-check" },
   account_locked: { label: "Account locked", icon: "lock-simple", danger: true },
 };
 

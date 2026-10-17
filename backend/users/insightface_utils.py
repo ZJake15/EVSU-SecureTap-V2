@@ -14,7 +14,8 @@ from PIL import Image, ImageOps
 # Quality-check defaults for enrollment photos specifically - the gate scan
 # (compute_face_embeddings_and_boxes) doesn't reject on these outright, since
 # a walk-by frame is never going to be studio-quality; it reports blur
-# variance instead and lets IdentifyView decide (see GATE_SCAN_MIN_BLUR_VARIANCE).
+# a sharpness score instead (face_sharpness) and lets IdentifyView decide
+# (Settings: "Blur sensitivity").
 MIN_BLUR_VARIANCE = 80.0  # Laplacian variance below this reads as visibly blurry
 MIN_FACE_AREA_RATIO = 0.02  # face bounding box vs. whole-frame area
 
@@ -131,6 +132,32 @@ def _blur_variance(bgr_image, box):
         return 0.0
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
+# The face is resized to this before its sharpness is measured - the size
+# ArcFace itself looks at - so the same smear scores the same however big
+# the face is in the frame.
+SHARPNESS_SIZE = 112
+
+
+def face_sharpness(bgr_image, box):
+    """How sharp a face looks, the same whatever its size in the frame - the
+    gate scan's blur check (Settings: "Blur sensitivity").
+
+    _blur_variance's raw score mostly measures face SIZE: measured on the
+    same faces, a sharp 104 px face scored 203 and a sharp 26 px one 2091,
+    and a 26 px face smeared by a fifth of its width (enough to drop its
+    match to 0.49) still scored 555 - so a fixed bar of 25 only ever caught
+    blur on faces close to the camera. Resized to SHARPNESS_SIZE first, the
+    same faces score 145-235 sharp and 25-95 smeared that much, at every
+    size; this system's own camera photos score 191 or more sharp (1st
+    percentile, 124 photos)."""
+    x1, y1, x2, y2 = (int(v) for v in box)
+    crop = bgr_image[max(0, y1):y2, max(0, x1):x2]
+    if crop.size == 0:
+        return 0.0
+    resized = cv2.resize(crop, (SHARPNESS_SIZE, SHARPNESS_SIZE), interpolation=cv2.INTER_AREA)
+    return float(cv2.Laplacian(cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
 
 
 def compute_face_embedding(image_file):
@@ -387,7 +414,7 @@ def compute_face_embeddings_and_boxes(bgr_image):
     for face in faces:
         x1, y1, x2, y2 = (int(round(v)) for v in face.bbox)
         box = (x1, y1, x2, y2)
-        blur_variance = _blur_variance(bgr_image, box)
+        blur_variance = face_sharpness(bgr_image, box)
         kps = getattr(face, "kps", None)
         yaw_ratio = head_yaw_ratio(kps)
         mouth_ratio = mouth_visibility_ratio(kps)

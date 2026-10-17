@@ -41,7 +41,16 @@ DEGRADED_KEYS = {
     ord("3"): "hand_left_eye",
     ord("4"): "hand_right_eye",
     ord("5"): "hand_mouth_nose",
+    ord("6"): "face_mask",  # a surgical/cloth mask over mouth and nose
+    ord("7"): "mask_mouth_only",  # a mask pulled down under the nose
 }
+
+# Live capture records frames the way the gate monitor sends them
+# (entry-agent/camera.py): asked for at 1280x720, then shrunk to 960 px wide
+# - so the training photos have the face sizes and softness the gate really
+# sees, not webcam-default close-ups.
+GATE_CAPTURE_SIZE = (1280, 720)
+GATE_UPLOAD_WIDTH = 960
 
 # The three features this classifier trains on - mouth_visibility_ratio,
 # lower_face_texture_ratio, det_score - are ALL specifically about the
@@ -203,6 +212,8 @@ class Command(BaseCommand):
         cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
         if not cap.isOpened():
             raise CommandError(f"Could not open webcam at index {camera_index}.")
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, GATE_CAPTURE_SIZE[0])
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, GATE_CAPTURE_SIZE[1])
 
         counts = self._empty_counts()
         self.stdout.write(self._instructions())
@@ -212,6 +223,10 @@ class Command(BaseCommand):
                 success, frame = cap.read()
                 if not success:
                     continue
+                if frame.shape[1] > GATE_UPLOAD_WIDTH:
+                    scale = GATE_UPLOAD_WIDTH / frame.shape[1]
+                    frame = cv2.resize(frame, (GATE_UPLOAD_WIDTH, round(frame.shape[0] * scale)),
+                                       interpolation=cv2.INTER_AREA)
 
                 preview = self._fit_for_preview(frame)
                 self._draw_overlay(preview, counts)
@@ -281,8 +296,8 @@ class Command(BaseCommand):
     def _draw_overlay(frame, counts):
         lines = [
             "CLEAN:  f=straight-on  l=slight-left  r=slight-right  n=neutral  m=slight-smile",
-            "DEGRADED:  1=hand/mouth  2=hand/nose  3=hand/L-eye*  4=hand/R-eye*  5=hand/mouth+nose"
-            "   (*collected, not used for training)",
+            "DEGRADED:  1=hand/mouth  2=hand/nose  3=hand/L-eye*  4=hand/R-eye*  5=hand/mouth+nose",
+            "           6=face mask  7=mask under the nose   (*collected, not used for training)",
             "s=skip  q=quit",
             "  ".join(f"{name}:{count}" for name, count in counts.items()),
         ]
@@ -300,6 +315,7 @@ class Command(BaseCommand):
             "  DEGRADED:  1 = hand over mouth        2 = hand over nose\n"
             "             3 = hand over left eye     4 = hand over right eye\n"
             "             5 = hand covering mouth and nose\n"
+            "             6 = face mask (mouth and nose)   7 = mask pulled under the nose\n"
             "  q = quit\n"
             "Note: eye-occlusion photos (3/4) are saved and labeled, but excluded from this "
             "classifier's training set - the mouth/nose features it uses can't discriminate "

@@ -2,6 +2,10 @@
 
     .venv\\Scripts\\python.exe installer\\build.py           # full build
     .venv\\Scripts\\python.exe installer\\build.py --quick   # reuse the last build's Python + libraries
+    .venv\\Scripts\\python.exe installer\\build.py --quick --ref some-branch
+        # the program files as committed on a branch/commit instead of the
+        # working copy - e.g. a branch with test-only changes reverted - so
+        # the running copy here is never switched
 
 Puts together, in installer/build/SecureTap/:
   python/      a private copy of Python 3.14 (python-build-standalone, the
@@ -140,7 +144,20 @@ def python_runtime():
     return python
 
 
-def program_files():
+def program_files(ref=None):
+    if ref:
+        # Straight from git, as committed on `ref` - the working copy isn't read.
+        step(f"Program files (as committed on {ref})")
+        listed = subprocess.run(["git", "ls-tree", "-r", "--name-only", ref, "--", *CODE], cwd=REPO,
+                                capture_output=True, text=True, check=True).stdout.splitlines()
+        for relative in listed:
+            content = subprocess.run(["git", "show", f"{ref}:{relative}"], cwd=REPO, capture_output=True,
+                                     check=True).stdout
+            target = APP / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)  # exactly as stored - images and fonts must stay byte-for-byte
+        print(f"   {len(listed)} files")
+        return
     step("Program files (git-tracked only)")
     listed = subprocess.run(["git", "ls-files", "--", *CODE], cwd=REPO, capture_output=True, text=True,
                             check=True).stdout.splitlines()
@@ -241,9 +258,14 @@ def main():
     # --quick: reuse the last build's Python and libraries (minutes saved
     # when only SecureTap's own code changed).
     quick = "--quick" in sys.argv[1:] and (APP / "python" / "python.exe").exists()
+    args = sys.argv[1:]
+    ref = args[args.index("--ref") + 1] if "--ref" in args and args.index("--ref") + 1 < len(args) else None
+    if ref:
+        subprocess.run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=REPO, check=True,
+                       capture_output=True)
     fresh_app_folder(keep_python=quick)
     python = APP / "python" / "python.exe" if quick else python_runtime()
-    program_files()
+    program_files(ref)
     dashboard()
     face_models()
     marker(version)

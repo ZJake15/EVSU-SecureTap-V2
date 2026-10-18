@@ -31,7 +31,10 @@ dashboard/.vite/
 
 # Entry agent local state
 entry-agent/offline_queue.db
+# Speed/accuracy test results (the old speed test's CSVs, and test mode's
+# plan/results/settings) - research data, kept on this computer only.
 entry-agent/speed-tests/
+entry-agent/test-results/
 entry-agent/*.log
 entry-agent/last_session.json
 entry-agent/camera_choice.json

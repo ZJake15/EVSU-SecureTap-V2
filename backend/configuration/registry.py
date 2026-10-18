@@ -74,7 +74,7 @@ SECTIONS = [
 # their own group, under a collapsed "More options" (there's no separate
 # Advanced group any more).
 MORE_OPTIONS = {
-    "recognition_cooldown_seconds", "unknown_cooldown_seconds", "speed_test_enabled",  # Face Recognition
+    "recognition_cooldown_seconds", "unknown_cooldown_seconds",  # Face Recognition
     "spoof_cooldown_seconds",  # Anti-Spoofing
     "max_turn", "edge_margin", "distance_correction", "show_face_distance",  # Photo Quality Checks
     "covered_face_mode", "covered_rule_mouth", "covered_rule_texture", "covered_rule_det_score",
@@ -417,17 +417,6 @@ DEFINITIONS = [
         "Adds each face's estimated distance to its box on the gate monitor (for example \"UNKNOWN · 4.8 m\"), "
         "for checking the distance limit: stand at a measured spot and compare. Turn it off again afterwards.",
         BOOL, False,
-    ),
-    # TEMPORARY - for timing the camera scanner during testing (see the
-    # entry-agent's speed_test.py); remove after the test.
-    SettingDef(
-        "speed_test_enabled", "face", "Speed test recording (temporary)",
-        "Times the camera scanner: each face's box shows how long it took to be decided (for example "
-        "\"Maria Santos · 92% · 843 ms\"), the gate monitor's caption shows the time per frame, and each "
-        "decided face is saved as one row of a CSV file in the data folder (speed-tests): its result, time to "
-        "decide, frames and average frame time, in milliseconds. No names or photos are saved.",
-        BOOL, False,
-        note="For testing only. Turn it off when the test is done; each time it's turned on starts a new file.",
     ),
     SettingDef(
         "covered_face_mode", "quality", "Covered face detection method",

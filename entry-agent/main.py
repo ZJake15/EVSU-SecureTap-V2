@@ -2,7 +2,6 @@ import json
 import os
 import sys
 import threading
-import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,7 +13,6 @@ from api_client import ApiClient
 from camera import Camera, list_available_cameras
 from config import data_file, load_config
 from offline_queue import OfflineQueue
-from speed_test import SpeedTest
 from ui import GateMonitorWindow, set_app_user_model_id
 
 # The pause between face checks is config.scan_pause_seconds (0.2 s unless
@@ -217,9 +215,6 @@ def _build_recognition(direction, result, api_client, photo_cache):
         "direction": direction,
         # Only sent with "Show distance on face boxes" on (Settings, Advanced).
         "distance_m": result.get("distance_m"),
-        # TEMPORARY - for the speed test's CSV (see speed_test.py).
-        "speed_test_distance_m": result.get("speed_test_distance_m"),
-        "similarity": similarity,
         "photo_bytes": _fetch_photo_cached(api_client, photo_cache, photo_url),
     }
 
@@ -265,9 +260,7 @@ def scan_loop(config, api_client, camera, ui, stop_event):
     last_alerts = None
     last_sign_in = None
     photo_cache = {}  # URL -> bytes, lives for this scan session
-    speed = SpeedTest(data_file("speed-tests"))  # TEMPORARY - see speed_test.py
     while not stop_event.is_set():
-        captured_at = time.perf_counter()
         try:
             image_bytes, image_size = camera.capture_jpeg()
         except RuntimeError:
@@ -303,8 +296,6 @@ def scan_loop(config, api_client, camera, ui, stop_event):
                 )
                 if r is not None
             ]
-            speed.set_enabled(bool(response.get("speed_test")))
-            ui.set_speed_caption(speed.record(captured_at, time.perf_counter(), recognitions))
             ui.show_recognitions(recognitions, _extract_image_size(response, image_size))
         except requests.RequestException:
             # No offline queueing here - a stale queued frame from a live scan
@@ -318,7 +309,6 @@ def scan_loop(config, api_client, camera, ui, stop_event):
             traceback.print_exc()
 
         stop_event.wait(config.scan_pause_seconds)
-    speed.set_enabled(False)
 
 
 def handle_tap(config, api_client, offline_queue, ui, nfc_id):

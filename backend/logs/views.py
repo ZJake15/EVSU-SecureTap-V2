@@ -678,19 +678,14 @@ class IdentifyView(APIView):
         self._follow_unknowns_by_track(results, tracks, gate_location)
         # Settings page (Advanced): "Show distance on face boxes" - for
         # checking the distance estimate against a measured spot.
-        show_distance = system_settings.get("show_face_distance")
-        speed_test = system_settings.get("speed_test_enabled")  # TEMPORARY - the speed test's CSV
-        if show_distance or speed_test:
+        if system_settings.get("show_face_distance"):
             for result in results:
                 face_box = result.get("box")
                 distance = face_box and distances.get(
                     (face_box["left"], face_box["top"], face_box["right"], face_box["bottom"])
                 )
                 if distance is not None:
-                    if show_distance:
-                        result["distance_m"] = round(distance, 1)
-                    if speed_test:  # TEMPORARY - recorded, not shown on the box
-                        result["speed_test_distance_m"] = round(distance, 2)
+                    result["distance_m"] = round(distance, 1)
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},
@@ -713,7 +708,6 @@ class IdentifyView(APIView):
             # Settings > Scheduling > Gate opening hours: the gate monitor
             # alerts the guard and tags its live log while this is true.
             "after_hours": schedule.is_after_hours(),
-            "speed_test": system_settings.get("speed_test_enabled"),  # TEMPORARY - see registry.py
         }
 
     @staticmethod

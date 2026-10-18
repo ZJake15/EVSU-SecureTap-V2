@@ -18,6 +18,9 @@ How it counts (say this in the paper's method section):
   "redone" and left out). Skipped trials are left out and counted apart.
 - Success rate = correct trials / all trials, so "Not detected", "No
   decision", "Occluded" and a card-tap request all count as NOT successful.
+- Kept-out rate (spoof and unknown only) = trials that did NOT end in a
+  Match / all trials - the face didn't let them in, even when it wasn't
+  labelled exactly right (e.g. a spoof read as Unknown).
 - Decision times are over the trials that reached a decision (Match, Spoof,
   Unknown or a card-tap request) - a timed-out trial has no decision time.
 - Confidence = the face's similarity to the closest enrolled person, in %
@@ -79,12 +82,23 @@ def _summarize(group):
     correct = int(group["is_correct"].sum())
     low, high = wilson_interval(correct, trials)
     times = group["decision_time_ms"].dropna()
+    # Spoof / unknown only: how often the face did NOT let them in - any
+    # result but a Match (a spoof read as Unknown still kept the attacker out).
+    kept_out = kept_low = kept_high = kept_rate = None
+    if trials and set(group["category"]) <= {"spoof", "unknown"}:
+        kept_out = int((group["result"] != "Match").sum())
+        kept_rate = round(kept_out / trials * 100, 1)
+        kept_low, kept_high = (round(v, 1) for v in wilson_interval(kept_out, trials))
     return {
         "trials": trials,
         "correct": correct,
         "success_rate_pct": round(correct / trials * 100, 1) if trials else None,
         "success_ci95_low_pct": None if low is None else round(low, 1),
         "success_ci95_high_pct": None if high is None else round(high, 1),
+        "kept_out": kept_out,
+        "kept_out_rate_pct": kept_rate,
+        "kept_out_ci95_low_pct": kept_low,
+        "kept_out_ci95_high_pct": kept_high,
         "timed_trials": len(times),
         "decision_time_mean_ms": round(times.mean(), 1) if len(times) else None,
         "decision_time_median_ms": round(times.median(), 1) if len(times) else None,
@@ -182,7 +196,8 @@ def main(argv=None):
     chart_decision_time(table, out / "decision_time_vs_distance.png")
     chart_success_rate(table, out / "success_rate_vs_distance.png")
 
-    shown = table[["category", "distance_m", "trials", "correct", "success_rate_pct", "decision_time_mean_ms",
+    shown = table[["category", "distance_m", "trials", "correct", "success_rate_pct", "kept_out_rate_pct",
+                   "decision_time_mean_ms",
                    "decision_time_median_ms", "decision_time_sd_ms", "confidence_mean_pct", "liveness_mean"]]
     with pd.option_context("display.width", 200, "display.max_columns", 20):
         print(shown.to_string(index=False))

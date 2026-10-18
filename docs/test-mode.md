@@ -26,14 +26,19 @@ What test mode adds:
    their ID number.
 2. **Unknown subject** — a volunteer who is **not** registered. Ask their
    permission first; their face data is deleted at the end (see Clean-up).
-3. **Spoof** — a printed photo (or phone/tablet screen) of the enrolled
-   subject.
-4. **Floor marks** at 2, 3, 4 and 5 m from the camera lens, measured with a
+3. **Spoof** — a **life-size** printed photo (or tablet screen) of the
+   enrolled subject: the face as big as the real face. The system estimates
+   distance from face size, so a smaller printed face looks farther away —
+   in the pilot, a small print held at 4–5 m was estimated beyond 5 m and
+   ignored ("No decision").
+4. **Keep every setting the same for the whole test** — including the
+   camera zoom (the pilot changed it from 1.0 to 2.0 between sessions).
+5. **Floor marks** at 2, 3, 4 and 5 m from the camera lens, measured with a
    tape.
-5. **Two people on site**: the subject on the mark, and someone at the laptop
+6. **Two people on site**: the subject on the mark, and someone at the laptop
    pressing Start — out of the camera's view (a face the camera can see keeps
    Start from becoming READY, and would get into the trials).
-6. Open **EVSU SecureTap Admin** → Entry Agent settings → tick
+7. Open **EVSU SecureTap Admin** → Entry Agent settings → tick
    **"Open the gate monitor in TEST MODE"** → open the Entry Agent. (The box
    is never saved; it's off again next time.)
 
@@ -65,8 +70,9 @@ Each trial:
 5. The trial ends by itself when the gate decides, or after the timeout. The
    result shows in the window and is already saved. The next trial comes up.
 
-- **Redo (F9)** — something went wrong (someone walked in front, the subject
-  wasn't ready). During a trial, it's abandoned; just after one, that result
+- **Redo (F9)** — something went wrong *with the procedure* (someone walked
+  in front, the subject wasn't ready or stood off the mark). Never because
+  the result looks wrong — that would bias the data. During a trial, it's abandoned; just after one, that result
   is marked "redone" (kept in the file, but not counted) and the trial comes
   back.
 - **Skip (F10)** — a trial can't be done; type the reason in the **Skip
@@ -157,7 +163,10 @@ Writes next to `results.csv`:
 - `decision_time_vs_distance.png`, `success_rate_vs_distance.png`.
 
 Success rate counts every trial, so Not detected / No decision / Occluded
-lower it. Decision-time figures use only the trials that reached a decision.
+lower it. For spoof and unknown, the table also gives a **kept-out rate**:
+trials that did not end in a Match, i.e. the face didn't let them in, even
+if it wasn't labelled exactly right (a spoof read as Unknown). Report the
+strict success rate as the main result, and the kept-out rate next to it. Decision-time figures use only the trials that reached a decision.
 
 ## Clean-up
 

@@ -426,6 +426,10 @@ class TestRun:
             elif self.state == "waiting":
                 info["quiet_left"] = max(0.0, self.quiet_seconds - (now - self.last_face_at),
                                          self.blocked_until - now)
+                # Frames come every ~0.3-0.5 s, so a face within the last
+                # second means one is in view right now.
+                info["face_in_view"] = now - self.last_face_at < 1.0
+                info["card_wait"] = self.blocked_until > now
             return info
 
 
@@ -664,8 +668,14 @@ class TestWindow:
                                             "then they turn to the camera.", text_color=VERIFIED)
             self.start_button.configure(state="normal")
         else:
-            self.state_label.configure(text=f"Wait… no face for {info.get('quiet_left', 0):.1f} s more "
-                                            "(so the last trial can't carry over)", text_color=CAUTION)
+            if info.get("face_in_view"):
+                text = ("NOT READY - the camera can see a face. The subject turns AWAY from the camera "
+                        "(everyone else out of view); READY comes 4 s later.")
+            elif info.get("card_wait"):
+                text = f"Waiting for the card-tap request to expire… READY in {info.get('quiet_left', 0):.1f} s"
+            else:
+                text = f"No face in view - READY in {info.get('quiet_left', 0):.1f} s"
+            self.state_label.configure(text=text, text_color=CAUTION)
             self.start_button.configure(state="disabled")
         row = info["last_row"]
         if info["message"]:

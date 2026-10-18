@@ -28,7 +28,8 @@ What test mode adds:
    permission first; their face data is deleted at the end (see Clean-up).
 3. **Spoof** — a printed photo (or phone/tablet screen) of the enrolled
    subject.
-4. **Floor marks** at 2, 3, 4 and 5 m from the camera, measured with a tape.
+4. **Floor marks** at 2, 2.5, 3 and 3.5 m from the camera, measured with a
+   tape.
 5. Open **EVSU SecureTap Admin** → Entry Agent settings → tick
    **"Open the gate monitor in TEST MODE"** → open the Entry Agent. (The box
    is never saved; it's off again next time.)
@@ -42,7 +43,7 @@ in the results, not real names), the spoof medium, and the timeout (10 s).
 
 Each trial:
 
-1. The window shows the trial — e.g. **Trial 7 of 120 · SPOOF · 5 m**.
+1. The window shows the trial — e.g. **Trial 7 of 120 · SPOOF · 3.5 m**.
 2. The subject stands on that mark, **facing away** from the camera.
 3. Wait for **READY** (it appears once no face has been seen for 4 s, so the
    previous trial can't carry over).
@@ -63,7 +64,7 @@ Each trial:
 ## The trial plan
 
 `trial_plan.csv`: 3 categories (enrolled, spoof, unknown) × 4 distances
-(2, 3, 4, 5 m) × 10 = **120 trials**, in 10 rounds. Each round has all 12
+(2, 2.5, 3, 3.5 m) × 10 = **120 trials**, in 10 rounds. Each round has all 12
 combinations once, in a shuffled order (fixed seed 2026, so the order can be
 reproduced). Balanced rounds mean tiredness or a change in lighting during
 the session affects every combination about equally.
@@ -157,8 +158,8 @@ files are kept. It is recorded in the Audit Log.
 > records timing without altering the recognition pipeline or its settings
 > (a snapshot of all settings was saved for each session). Three subject
 > categories were tested — an enrolled user, a presentation attack (a
-> [printed photo] of the enrolled user) and an unregistered person — at 2, 3,
-> 4 and 5 m from the camera, 10 trials per combination (120 trials), in 10
+> [printed photo] of the enrolled user) and an unregistered person — at 2,
+> 2.5, 3 and 3.5 m from the camera, 10 trials per combination (120 trials), in 10
 > balanced, randomized rounds. In each trial the subject faced away from the
 > camera, the trial was started, and the subject turned to face the camera.
 > Decision time was measured with a high-resolution monotonic clock from the

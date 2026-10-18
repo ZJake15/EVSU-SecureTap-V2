@@ -1,7 +1,7 @@
 """The capstone speed/accuracy test mode - the gate monitor's side.
 
 Measures how fast and how accurately the gate decides three kinds of faces
-(an enrolled person, a spoof of them, an unregistered person) at 2-5 m, and
+(an enrolled person, a spoof of them, an unregistered person) at 2-3.5 m, and
 writes every trial to a CSV straight away. The most important rule: it only
 ADDS measurement. Every frame goes through exactly the same scan, checks,
 thresholds and voting as normal operation (the backend marks the entries
@@ -52,7 +52,9 @@ from ui import (
 )
 
 CATEGORIES = ("enrolled", "spoof", "unknown")
-DISTANCES_M = (2, 3, 4, 5)
+# Up to 3.5 m: the team's chosen test range (the gate itself still scans to
+# Settings' "Ignore faces farther than").
+DISTANCES_M = (2, 2.5, 3, 3.5)
 ROUNDS = 10  # 10 trials per category per distance = 120
 PLAN_SEED = 2026  # the trial order can be re-created exactly from this
 EXPECTED = {"enrolled": "Match", "spoof": "Spoof", "unknown": "Unknown"}

@@ -136,9 +136,10 @@ DEFINITIONS = [
         "How sharp a face must look to be used - measured the same way however near or far the face is. "
         "Higher skips more smeared or blurry frames and waits for a clearer one; lower accepts blurrier "
         "frames.",
-        FLOAT, 60.0, 0, 300, 1,
-        note="Sharp faces from this system's camera score 190 or more; a face smeared enough to stop matching "
-             "scores about 15-95. 60 skips most of those without ever skipping a sharp face.",
+        FLOAT, 10.0, 0, 300, 1,
+        note="Close-up photos score 190 or more, but a still face 2-5 m from the gate camera can score as low "
+             "as about 20 (capstone pilot) - 60 skipped nearly every frame there. 10 keeps still faces and skips "
+             "only badly smeared frames; fast movement itself is caught by \"Fast movement limit\".",
     ),
     SettingDef(
         "max_face_speed", "quality", "Fast movement limit",

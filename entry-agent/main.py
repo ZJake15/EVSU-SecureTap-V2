@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -247,12 +248,16 @@ def _build_profile(api_client, result, card_id, direction):
     }
 
 
-def scan_loop(config, api_client, camera, ui, stop_event):
+def scan_loop(config, api_client, camera, ui, stop_event, test_run=None):
     """Runs continuously on its own thread: samples a frame and checks every
     face in it against every enrolled face (1:N search per face) - this is
     the primary gate check, no card tap required, and handles several
     people walking through together in the same frame. Kept off the Tk
-    thread so a burst of faces during class change can't freeze the UI."""
+    thread so a burst of faces during class change can't freeze the UI.
+
+    test_run (the capstone test mode, test_mode.py) only watches: it gets
+    each frame's capture and answer times and the answer, and the frame is
+    marked as a test frame for the backend - nothing else changes."""
     # The backend sends its current Settings-page values with every answer,
     # so a change made on the dashboard reaches this gate monitor within a
     # frame or two - no restart. Only passed on to the UI when they change.
@@ -261,6 +266,7 @@ def scan_loop(config, api_client, camera, ui, stop_event):
     last_sign_in = None
     photo_cache = {}  # URL -> bytes, lives for this scan session
     while not stop_event.is_set():
+        t_frame = time.perf_counter()
         try:
             image_bytes, image_size = camera.capture_jpeg()
         except RuntimeError:
@@ -269,7 +275,8 @@ def scan_loop(config, api_client, camera, ui, stop_event):
 
         try:
             response = api_client.identify(
-                config.gate_location, config.direction, image_bytes, camera_zoom=camera.zoom
+                config.gate_location, config.direction, image_bytes, camera_zoom=camera.zoom,
+                test_mode=test_run is not None,
             )
             ui.show_offline(False)
             threshold = response.get("threshold")
@@ -296,6 +303,10 @@ def scan_loop(config, api_client, camera, ui, stop_event):
                 )
                 if r is not None
             ]
+            if test_run is not None:
+                # The answer is ready to draw - the guard sees it on the next
+                # screen refresh (~66 ms).
+                test_run.on_frame(t_frame, time.perf_counter(), response, image_size, camera.capture_size())
             ui.show_recognitions(recognitions, _extract_image_size(response, image_size))
         except requests.RequestException:
             # No offline queueing here - a stale queued frame from a live scan
@@ -521,8 +532,22 @@ def main():
     except requests.RequestException:
         pass  # the scan loop picks the status up once the backend answers
 
+    # The capstone speed/accuracy test (test_mode.py) - off unless asked for
+    # (the launcher's "Open in TEST MODE" box, or --test-mode).
+    test_run = None
+    if "--test-mode" in sys.argv or os.environ.get("SECURETAP_TEST_MODE") == "1":
+        import test_mode
+
+        results_folder = Path(data_file("test-results"))
+        test_run = test_mode.TestRun(
+            results_folder, api_client, config.gate_location,
+            lambda: test_mode.describe_setup(config, camera, camera_names.get(camera.index, f"#{camera.index}")),
+        )
+        monitor.set_test_mode()
+        test_mode.TestWindow(monitor.window, test_run, api_client, results_folder)
+
     threading.Thread(
-        target=scan_loop, args=(config, api_client, camera, monitor, stop_event), daemon=True
+        target=scan_loop, args=(config, api_client, camera, monitor, stop_event, test_run), daemon=True
     ).start()
 
     status_busy = threading.Event()

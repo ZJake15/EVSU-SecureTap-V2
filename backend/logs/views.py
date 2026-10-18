@@ -27,7 +27,7 @@ from users import insightface_utils, liveness_utils, occlusion_utils, reenrollme
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
-from . import gate_shifts, motion
+from . import gate_shifts, motion, test_mode
 from .filters import EntryLogFilter
 from .models import (
     EntryLog,
@@ -125,7 +125,7 @@ class GateSummaryView(APIView):
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow_start = today_start + timezone.timedelta(days=1)
 
-        logs = EntryLog.objects.filter(timestamp__gte=today_start, timestamp__lt=tomorrow_start)
+        logs = EntryLog.real.filter(timestamp__gte=today_start, timestamp__lt=tomorrow_start)  # no test entries
         if gate_location:
             logs = logs.filter(gate_location=gate_location)
 
@@ -204,6 +204,58 @@ class GateSignOutView(APIView):
         return Response(gate_shifts.status(gate_location))
 
 
+class TestModeSnapshotView(APIView):
+    """The capstone test mode's settings snapshot (entry-agent/test_mode.py
+    saves it next to the results, for the paper): every Settings-page value
+    and the backend's scan settings, as they are right now. With
+    ?subject_id=..., also the enrolled test subject's name and photo count,
+    so the gate monitor can check "Match to the correct person". Gate
+    monitor only (service token)."""
+
+    permission_classes = [HasServiceToken]
+
+    def get(self, request):
+        from django.conf import settings as django_settings
+
+        from configuration.registry import DEFINITIONS
+
+        snapshot = {
+            "settings": {definition.key: system_settings.get(definition.key) for definition in DEFINITIONS},
+            "backend": {
+                "gate_scan_det_size": django_settings.GATE_SCAN_DET_SIZE,
+                "ai_threads": insightface_utils.ai_threads(),
+                "face_model_pack": "buffalo_s",
+                "enrolled_people": Person.objects.filter(is_active=True, face_embeddings__isnull=False)
+                .distinct().count(),
+                "server_time": timezone.localtime().isoformat(timespec="seconds"),
+            },
+            "subject": None,
+        }
+        subject_id = (request.query_params.get("subject_id") or "").strip()
+        if subject_id:
+            person = Person.objects.filter(student_or_employee_id=subject_id).first()
+            if person is not None:
+                snapshot["subject"] = {
+                    "student_or_employee_id": person.student_or_employee_id,
+                    "full_name": person.full_name,
+                    "is_active": person.is_active,
+                    "face_photos": person.face_embeddings.count(),
+                }
+        return Response(snapshot)
+
+
+class TestModeDeleteView(APIView):
+    """The capstone test mode's "delete all test data" - every test entry
+    (and its photo) and the scan's short-lived face data from test sessions,
+    an unregistered volunteer's included. Never a real entry. See
+    logs/test_mode.py."""
+
+    permission_classes = [HasServiceToken]
+
+    def post(self, request):
+        return Response({"deleted": test_mode.delete_test_data()})
+
+
 class GateDutyView(APIView):
     """Who is guarding each gate right now - the dashboard's "On duty"
     section on Live Monitoring. Admin and SASO only: a Security Officer
@@ -240,7 +292,7 @@ class EntryLogViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_class = EntryLogFilter
 
     def get_queryset(self):
-        queryset = EntryLog.objects.select_related("person", "performed_by", "on_duty").all()
+        queryset = EntryLog.real.select_related("person", "performed_by", "on_duty").all()  # no test entries
         if get_role(self.request.user) == AdminProfile.Role.SECURITY_OFFICER:
             gate = get_assigned_gate(self.request.user)
             today_start = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -257,7 +309,7 @@ class LiveLogsView(APIView):
         if since is None:
             since = timezone.now() - timezone.timedelta(minutes=1)
 
-        logs = EntryLog.objects.select_related("person", "performed_by", "on_duty").filter(timestamp__gt=since)
+        logs = EntryLog.real.select_related("person", "performed_by", "on_duty").filter(timestamp__gt=since)
         if get_role(request.user) == AdminProfile.Role.SECURITY_OFFICER:
             # Same server-side gate-scoping as EntryLogViewSet above - a
             # missing assigned gate fails closed (matches nothing) rather
@@ -554,7 +606,12 @@ class IdentifyView(APIView):
         serializer = IdentifyRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        # The capstone test mode only marks and measures (logs/test_mode.py):
+        # the scan below is the same, with the same decisions, either way.
+        with test_mode.marking(data["test_mode"], data["gate_location"]):
+            return self._scan(request, data)
 
+    def _scan(self, request, data):
         direction = data["direction"]
         gate_location = data["gate_location"]
         image_file = data["image"]
@@ -596,6 +653,7 @@ class IdentifyView(APIView):
         max_distance = system_settings.get("max_scan_distance")
         camera_zoom = min(2.0, max(1.0, data["camera_zoom"]))
         results = []
+        beyond_limit = 0  # faces left out by "Ignore faces farther than" - reported in test mode
         distances = {}  # (left, top, right, bottom) -> metres, for "Show distance on face boxes"
         # How fast each face moved since this gate's last frame, and which
         # earlier face it is (see logs/motion.py).
@@ -615,6 +673,7 @@ class IdentifyView(APIView):
                 # real distance / shown, for a camera unlike a typical webcam.
                 distance *= system_settings.get("distance_correction")
             if max_distance > 0 and distance is not None and distance > max_distance:
+                beyond_limit += 1
                 continue
             if distance is not None:
                 distances[box] = distance
@@ -678,18 +737,27 @@ class IdentifyView(APIView):
         self._follow_unknowns_by_track(results, tracks, gate_location)
         # Settings page (Advanced): "Show distance on face boxes" - for
         # checking the distance estimate against a measured spot.
-        if system_settings.get("show_face_distance"):
+        show_distance = system_settings.get("show_face_distance")
+        testing = test_mode.active()
+        if show_distance or testing:
             for result in results:
                 face_box = result.get("box")
                 distance = face_box and distances.get(
                     (face_box["left"], face_box["top"], face_box["right"], face_box["bottom"])
                 )
                 if distance is not None:
-                    result["distance_m"] = round(distance, 1)
+                    if show_distance:
+                        result["distance_m"] = round(distance, 1)
+                    if testing:  # measurement only - recorded by the test mode, not shown on the box
+                        result["test_distance_m"] = round(distance, 2)
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},
             **self._agent_info(gate_location),
+            # Faces this frame found but left out because they were estimated
+            # beyond "Ignore faces farther than" - test mode records them, so
+            # a 5 m "Not detected" can be told apart from "no face at all".
+            **({"test_faces_beyond_limit": beyond_limit} if testing else {}),
         })
 
     @staticmethod
@@ -754,6 +822,7 @@ class IdentifyView(APIView):
                 "retry": True,
                 "reason": "Face partially out of frame - move fully into view.",
                 "hint": "Move into view",
+                "skip": "edge",  # which check skipped it - for the test mode's timing only
                 "log_id": None,
                 "box": _box_to_dict(box),
             }
@@ -772,6 +841,7 @@ class IdentifyView(APIView):
                 "retry": True,
                 "reason": "Face turned away - look toward the camera.",
                 "hint": "Face the camera",
+                "skip": "turned",
                 "log_id": None,
                 "box": _box_to_dict(box),
             }
@@ -786,6 +856,7 @@ class IdentifyView(APIView):
                 "success": False,
                 "retry": True,
                 "reason": "Moving fast - checking again when the face is clearer.",
+                "skip": "moving",
                 "log_id": None,
                 "box": _box_to_dict(box),
             }
@@ -795,6 +866,7 @@ class IdentifyView(APIView):
                 "retry": True,
                 "reason": "Image too blurry - hold steady for a clearer frame.",
                 "hint": "Hold steady",
+                "skip": "blur",
                 "log_id": None,
                 "box": _box_to_dict(box),
             }

@@ -150,3 +150,7 @@ class IdentifyRequestSerializer(serializers.Serializer):
     # the middle 1/zoom of the camera's view, which the distance estimate
     # needs. Optional so an older gate monitor (no zoom) still works.
     camera_zoom = serializers.FloatField(required=False, default=1.0)
+    # The capstone test mode (logs/test_mode.py): marks what this frame
+    # writes as test entries and adds measurement fields - never changes a
+    # decision.
+    test_mode = serializers.BooleanField(required=False, default=False)

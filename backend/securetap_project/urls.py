@@ -8,6 +8,8 @@ from audit.views import AuditLogViewSet
 from logs.views import (
     EntryLogViewSet,
     GateDutyView,
+    TestModeDeleteView,
+    TestModeSnapshotView,
     GateSignInView,
     GateSignOutView,
     GateSummaryView,
@@ -48,6 +50,9 @@ urlpatterns = [
     path("api/gate/sign-in", GateSignInView.as_view(), name="gate-sign-in"),
     path("api/gate/sign-out", GateSignOutView.as_view(), name="gate-sign-out"),
     path("api/gate-duty", GateDutyView.as_view(), name="gate-duty"),
+    # The capstone speed/accuracy test mode (logs/test_mode.py) - gate monitor only.
+    path("api/test-mode/snapshot", TestModeSnapshotView.as_view(), name="test-mode-snapshot"),
+    path("api/test-mode/delete", TestModeDeleteView.as_view(), name="test-mode-delete"),
     path("api/logs/live", LiveLogsView.as_view(), name="logs-live"),
     path("api/logs/manual-override", ManualOverrideView.as_view(), name="logs-manual-override"),
     path("api/users/bulk-import", BulkImportView.as_view(), name="users-bulk-import"),

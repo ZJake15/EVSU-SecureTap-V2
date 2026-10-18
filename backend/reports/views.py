@@ -1,4 +1,4 @@
-﻿from datetime import timedelta
+from datetime import timedelta
 
 from django.utils import timezone
 from rest_framework.response import Response
@@ -41,7 +41,7 @@ class SummaryView(APIView):
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow_start = today_start + timedelta(days=1)
 
-        today_logs = EntryLog.objects.filter(timestamp__gte=today_start, timestamp__lt=tomorrow_start)
+        today_logs = EntryLog.real.filter(timestamp__gte=today_start, timestamp__lt=tomorrow_start)
 
         entries_today = today_logs.filter(
             direction=EntryLog.Direction.ENTRY, status=EntryLog.Status.SUCCESS
@@ -57,7 +57,7 @@ class SummaryView(APIView):
 
         week_start = today_start - timedelta(days=6)
         entries_by_day = self._counts_by_key(
-            EntryLog.objects.filter(
+            EntryLog.real.filter(
                 timestamp__gte=week_start, timestamp__lt=tomorrow_start, status=EntryLog.Status.SUCCESS
             ).values_list("timestamp", flat=True),
             key_fn=lambda local_dt: local_dt.strftime("%Y-%m-%d"),
@@ -66,7 +66,7 @@ class SummaryView(APIView):
 
         days = _parse_days(request)
         range_start = today_start - timedelta(days=days - 1)
-        range_logs = EntryLog.objects.filter(timestamp__gte=range_start, timestamp__lt=tomorrow_start)
+        range_logs = EntryLog.real.filter(timestamp__gte=range_start, timestamp__lt=tomorrow_start)
 
         return Response(
             {

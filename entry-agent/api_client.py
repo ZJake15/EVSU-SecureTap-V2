@@ -80,17 +80,46 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
-    def identify(self, gate_location, direction, image_bytes, camera_zoom=1.0):
+    def identify(self, gate_location, direction, image_bytes, camera_zoom=1.0, test_mode=False):
         """POSTs a sampled camera frame to /identify for 1:N face matching.
         camera_zoom tells the backend the frame is the middle 1/zoom of the
-        camera's view, for its distance cutoff. Raises
-        requests.RequestException on any network failure."""
+        camera's view, for its distance cutoff. test_mode (the capstone test,
+        test_mode.py) marks what the frame writes as test entries - it never
+        changes a decision. Raises requests.RequestException on any network
+        failure."""
+        data = {"gate_location": gate_location, "direction": direction, "camera_zoom": camera_zoom}
+        if test_mode:
+            data["test_mode"] = "1"
         response = self.session.post(
             f"{self.base_url}/identify",
             headers={"X-Service-Token": self.service_token},
-            data={"gate_location": gate_location, "direction": direction, "camera_zoom": camera_zoom},
+            data=data,
             files={"image": ("frame.jpg", image_bytes, "image/jpeg")},
             timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def test_snapshot(self, subject_id):
+        """The test mode's settings snapshot: every Settings-page value, the
+        backend's model setup, and the enrolled test subject (None if no one
+        has that ID number)."""
+        response = self.session.get(
+            f"{self.base_url}/test-mode/snapshot",
+            headers={"X-Service-Token": self.service_token},
+            params={"subject_id": subject_id},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_test_data(self):
+        """Deletes every test entry and the scan's face data from the test
+        sessions - see backend/logs/test_mode.py. Returns the counts."""
+        response = self.session.post(
+            f"{self.base_url}/test-mode/delete",
+            headers={"X-Service-Token": self.service_token},
+            timeout=30,
         )
         response.raise_for_status()
         return response.json()

@@ -48,7 +48,7 @@ def _weak_matches(person, since):
     from logs.models import EntryLog
 
     scores = list(
-        EntryLog.objects.filter(
+        EntryLog.real.filter(
             person=person, status=EntryLog.Status.SUCCESS, verification_method=EntryLog.VerificationMethod.FACE_ONLY,
             timestamp__gte=since, match_confidence__isnull=False,
         ).order_by("-timestamp").values_list("match_confidence", flat=True)[:WEAK_RECENT_ENTRIES]

@@ -147,7 +147,7 @@ def duty_board():
     gates = set(officers)
     gates |= set(GateShift.objects.filter(ended_at__isnull=True).values_list("gate_location", flat=True))
     gates |= set(GateShift.objects.filter(ended_at__gte=today).values_list("gate_location", flat=True))
-    gates |= set(EntryLog.objects.filter(timestamp__gte=today).values_list("gate_location", flat=True))
+    gates |= set(EntryLog.real.filter(timestamp__gte=today).values_list("gate_location", flat=True))
 
     sign_in_on = enabled()
     board = []
@@ -164,7 +164,7 @@ def duty_board():
                     "ended_at": timezone.localtime(previous.ended_at).isoformat(timespec="seconds"),
                     "reason": GateShift.EndReason(previous.end_reason).label if previous.end_reason else "",
                 }
-        today_logs = EntryLog.objects.filter(gate_location=gate, timestamp__gte=today)
+        today_logs = EntryLog.real.filter(gate_location=gate, timestamp__gte=today)
         board.append({
             "gate_location": gate,
             "on_duty": on_duty,

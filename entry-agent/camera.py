@@ -200,6 +200,14 @@ class Camera:
             frame = self._latest_frame
         return None if frame is None else self._zoomed(frame).copy()
 
+    def capture_size(self):
+        """(width, height) of the camera's raw frames - what it actually
+        delivers, which can differ from the 1280x720 asked for - or None
+        before the first frame. For the test mode's records."""
+        with self._lock:
+            frame = self._latest_frame
+        return None if frame is None else (frame.shape[1], frame.shape[0])
+
     def _zoomed(self, frame):
         """The middle 1/zoom of the frame - the whole frame at 1x."""
         if self.zoom <= MIN_ZOOM:

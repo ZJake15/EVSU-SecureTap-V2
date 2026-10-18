@@ -590,6 +590,8 @@ class GateMonitorWindow:
         # Outside the gate's opening hours (Settings > Scheduling), as the
         # backend says with every scan answer - see set_after_hours().
         self._after_hours = False
+        # The capstone test mode (test_mode.py) - see set_test_mode().
+        self._test_mode = False
         # Guard sign-in (Settings -> "Guards sign in at the gate monitor"):
         # on_sign_in(username, password) and on_sign_out(shift_id) are main.py's,
         # run off the Tk thread; the answers come back through
@@ -1329,6 +1331,16 @@ class GateMonitorWindow:
         them right now (the backend sends it with every scan answer)."""
         self._queue.put(("after_hours", bool(after_hours)))
 
+    def set_test_mode(self):
+        """The capstone test mode: the header pill says TEST MODE in red for
+        as long as this gate monitor is open, so nobody mistakes it for the
+        real gate. Call on the Tk thread, before run()."""
+        self._test_mode = True
+        self.window.title(f"{self.window.title()} - TEST MODE")
+        self._mode_badge.configure(fg_color=DANGER)
+        self._mode_icon.configure(text=_icon("warning"), text_color="white", fg_color=DANGER)
+        self._mode_word.configure(text="TEST MODE", text_color="white", fg_color=DANGER)
+
     def set_alert_settings(self, alerts):
         """alerts: {"spoof": bool} from the backend (Settings page) - whether
         a suspected fake gets the alarm banner and sound."""
@@ -1953,6 +1965,8 @@ class GateMonitorWindow:
         if after_hours == self._after_hours:
             return
         self._after_hours = after_hours
+        if self._test_mode:
+            return  # the pill keeps saying TEST MODE
         background, color, icon, word = (
             (CAUTION, "white", "moon", "AFTER HOURS") if after_hours else (SURFACE, MAROON_DEEP, "sign-in", "ENTRY")
         )

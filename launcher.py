@@ -986,6 +986,16 @@ class LauncherWindow:
         )
         zoom_note.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         self._wrap_labels.append((zoom_note, 66))
+        # The capstone speed/accuracy test (entry-agent/test_mode.py). Never
+        # saved - it's off every time the launcher opens - and only here, not
+        # on the gate's own icon.
+        self.test_mode_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            grid, text="Open the gate monitor in TEST MODE (capstone speed and accuracy test)",
+            font=(FONT, 14), text_color=INK, variable=self.test_mode_var,
+            fg_color=MAROON, hover_color=MAROON_DEEP, border_color=INK_400, corner_radius=3,
+            checkbox_width=20, checkbox_height=20,
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(16, 0))
         self._render_zoom()
         self._update_settings_summary()
 
@@ -1367,6 +1377,7 @@ class LauncherWindow:
             env_overrides["OFFICER_NAME"] = self.settings["officer_name"]
         # The speed mode's video smoothness, upload size and scan pace.
         env_overrides.update(device_setup.entry_agent_env_overrides(self.profile))
+        env_overrides["SECURETAP_TEST_MODE"] = "1" if self.test_mode_var.get() else "0"
         self.entry_agent.start([venv_python(), "-u", "main.py"], ENTRY_AGENT_DIR, env_overrides=env_overrides)
         self._set_status("entry-agent", "starting")
         # Names what's actually taking the time, so the wait reads as work

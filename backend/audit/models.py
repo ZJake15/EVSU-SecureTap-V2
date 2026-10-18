@@ -61,6 +61,8 @@ class AuditLogEntry(models.Model):
         # A wrong Unknown undone: the same face was recognized at that gate
         # seconds later (logs.views.IdentifyView._correct_recent_unknowns).
         UNKNOWN_CORRECTED = "unknown_corrected", "Unknown corrected"
+        # The capstone test mode's "delete all test data" (logs/test_mode.py).
+        TEST_DATA_DELETED = "test_data_deleted", "Test data deleted"
 
     # Nullable only in case a user account is later deleted out from under an
     # old entry (SET_NULL, not CASCADE) - the row (and its description of what

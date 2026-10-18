@@ -4,6 +4,16 @@ from django.db import models
 from users.models import Person
 
 
+class RealEntryLogManager(models.Manager):
+    """EntryLog.real: every entry except test-mode ones - what the
+    dashboard's Logs, Live Monitoring, Reports, gate counters and duty board
+    read. The gate scan's own decisions (cooldowns, voting, corrections)
+    keep using EntryLog.objects, so test mode decides exactly as normal."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(is_test=False)
+
+
 class EntryLog(models.Model):
     class Direction(models.TextChoices):
         # Entries only: the university doesn't record people leaving, so every
@@ -115,6 +125,13 @@ class EntryLog(models.Model):
     # opening hours) - decided when the row is written, so changing the hours
     # later never re-labels old entries. Always False with opening hours off.
     after_hours = models.BooleanField(default=False)
+    # Written while the gate monitor was in the capstone test mode (see
+    # logs/test_mode.py) - left out of the dashboard, deleted by "delete all
+    # test data". Set by save() itself.
+    is_test = models.BooleanField(default=False, db_index=True)
+
+    objects = models.Manager()
+    real = RealEntryLogManager()
 
     class Meta:
         ordering = ["-timestamp"]
@@ -133,6 +150,10 @@ class EntryLog(models.Model):
                 from configuration.schedule import is_after_hours
 
                 self.after_hours = is_after_hours()
+            from . import test_mode
+
+            if test_mode.active():
+                self.is_test = True
         super().save(*args, **kwargs)
 
 
@@ -264,3 +285,14 @@ class SpoofAttempt(models.Model):
     embedding = models.JSONField()
     liveness_score = models.FloatField()
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+
+class TestSession(models.Model):
+    """When the capstone test mode was running at a gate - the time span the
+    scan's short-lived working rows (UnmatchedAttempt etc., which carry no
+    test mark of their own) are deleted for by "delete all test data". See
+    logs/test_mode.py."""
+
+    gate_location = models.CharField(max_length=100)
+    first_seen = models.DateTimeField()
+    last_seen = models.DateTimeField()

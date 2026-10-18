@@ -450,15 +450,21 @@ class TestWindow:
     the last result. Start / Redo / Skip are buttons and F8 / F9 / F10 - keys
     a card reader never types, so a tap can't press them."""
 
-    def __init__(self, master, run, api_client, results_folder):
+    def __init__(self, monitor, run, api_client, results_folder):
+        master = monitor.window
         self.run = run
         self.api = api_client
         self.results_folder = str(results_folder)
         self.window = ctk.CTkToplevel(master)
         self.window.title("SecureTap - TEST MODE")
-        self.window.geometry("780x640")
+        self.window.geometry("780x700")
         self.window.configure(fg_color=CANVAS)
         self.window.protocol("WM_DELETE_WINDOW", lambda: None)  # closes with the gate monitor
+        # The gate monitor keeps taking the keyboard back for the card reader
+        # (and comes to the front when it does) - so this window stays on top,
+        # and its text boxes are allowed to keep the keyboard while typing.
+        self.window.attributes("-topmost", True)
+        monitor.allow_typing_in(self.window)
         for widget in (master, self.window):
             widget.bind("<F8>", lambda _e: self._start(), add=True)
             widget.bind("<F9>", lambda _e: self._redo(), add=True)
@@ -568,6 +574,12 @@ class TestWindow:
                       command=self._redo).pack(side="left", padx=6)
         ctk.CTkButton(buttons, text="Skip  (F10)", font=(FONT, 16), width=150, height=52, fg_color=INK_600,
                       command=self._skip).pack(side="left", padx=6)
+        note_row = ctk.CTkFrame(f, fg_color="transparent")
+        note_row.pack(fill="x", padx=20)
+        ctk.CTkLabel(note_row, text="Skip note (why)", font=(FONT, 13, "bold"), text_color=INK).pack(side="left")
+        self.skip_note = ctk.CTkEntry(note_row, font=(FONT, 14), height=32,
+                                      placeholder_text="e.g. subject not available - type, then Skip")
+        self.skip_note.pack(side="left", fill="x", expand=True, padx=(10, 0))
         footer = ctk.CTkFrame(f, fg_color="transparent")
         footer.pack(fill="x", side="bottom", pady=(0, 12))
         ctk.CTkButton(footer, text="Open results folder", font=(FONT, 13), width=170, fg_color=LINE,
@@ -588,10 +600,14 @@ class TestWindow:
         info = self.run.status()
         if info["state"] not in ("waiting", "ready", "running") or info["trial"] is None:
             return
-        dialog = ctk.CTkInputDialog(text=f"Skip trial {info['trial']['trial']}? Type a short note (why):",
-                                    title="Skip trial")
-        note = dialog.get_input()
-        if note is not None and self.run.skip(note.strip()):
+        note = self.skip_note.get().strip()
+        if not note:
+            self.result_label.configure(text="To skip: type why in the Skip note box, then press Skip again.")
+            self.skip_note.focus_set()
+            return
+        if self.run.skip(note):
+            self.skip_note.delete(0, "end")
+            self.window.focus_set()  # the keyboard goes back to the card reader
             self._refresh()
 
     def _delete_test_data(self):

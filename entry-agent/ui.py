@@ -592,6 +592,9 @@ class GateMonitorWindow:
         self._after_hours = False
         # The capstone test mode (test_mode.py) - see set_test_mode().
         self._test_mode = False
+        # Other windows whose text boxes may keep the keyboard - see
+        # allow_typing_in().
+        self._typing_windows = []
         # Guard sign-in (Settings -> "Guards sign in at the gate monitor"):
         # on_sign_in(username, password) and on_sign_out(shift_id) are main.py's,
         # run off the Tk thread; the answers come back through
@@ -1687,9 +1690,27 @@ class GateMonitorWindow:
         # itself (see _KeyBurst).
         dialog_has_focus = (self._sign_in_dialog is not None and focused is not None
                             and str(focused).startswith(str(self._sign_in_dialog)))
-        if focused is not self._card_input and not student_has_focus and not dialog_has_focus:
+        if (focused is not self._card_input and not student_has_focus and not dialog_has_focus
+                and not self._typing_elsewhere(focused)):
             self._card_input.focus_force()
         self.window.after(FOCUS_CHECK_MS, self._keep_focus)
+
+    def allow_typing_in(self, toplevel):
+        """Lets someone type into the text boxes of another window of ours
+        (the test mode's window) - otherwise the card-reader field takes the
+        keyboard back within a moment. Only while a visible text box there
+        has the keyboard; anywhere else it still goes back to the reader."""
+        self._typing_windows.append(toplevel)
+
+    def _typing_elsewhere(self, focused):
+        if focused is None or not self._typing_windows:
+            return False
+        try:
+            is_text_box = focused.winfo_class() == "Entry" and focused.winfo_viewable()
+        except tk.TclError:
+            return False
+        name = str(focused)
+        return bool(is_text_box) and any(name.startswith(f"{window}.") for window in self._typing_windows)
 
     def _set_card_body_color(self, color, bar_color):
         self.card_panel.configure(fg_color=bar_color)

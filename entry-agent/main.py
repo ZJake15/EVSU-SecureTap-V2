@@ -544,7 +544,7 @@ def main():
             lambda: test_mode.describe_setup(config, camera, camera_names.get(camera.index, f"#{camera.index}")),
         )
         monitor.set_test_mode()
-        test_mode.TestWindow(monitor.window, test_run, api_client, results_folder)
+        test_mode.TestWindow(monitor, test_run, api_client, results_folder)
 
     threading.Thread(
         target=scan_loop, args=(config, api_client, camera, monitor, stop_event, test_run), daemon=True

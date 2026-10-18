@@ -55,8 +55,8 @@ Each trial:
   wasn't ready). During a trial, it's abandoned; just after one, that result
   is marked "redone" (kept in the file, but not counted) and the trial comes
   back.
-- **Skip (F10)** — a trial can't be done; type a short reason. Skipped trials
-  are not counted.
+- **Skip (F10)** — a trial can't be done; type the reason in the **Skip
+  note** box, then press Skip. Skipped trials are not counted.
 - Stopping and carrying on later is fine: the window always continues at the
   first trial without a result.
 

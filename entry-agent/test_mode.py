@@ -52,10 +52,12 @@ from ui import (
 )
 
 CATEGORIES = ("enrolled", "spoof", "unknown")
-# Up to 3.5 m: the team's chosen test range (the gate itself still scans to
-# Settings' "Ignore faces farther than").
-DISTANCES_M = (2, 2.5, 3, 3.5)
-ROUNDS = 10  # 10 trials per category per distance = 120
+DISTANCES_M = (2, 3, 4, 5)
+# The default number of trials per category per distance (3 x 4 x 20 = 240);
+# the session form can set fewer, for a pilot. One round = every category x
+# distance once, so this is also the number of rounds.
+ROUNDS = 20
+PARTS = ("All", "Part 1", "Part 2")
 PLAN_SEED = 2026  # the trial order can be re-created exactly from this
 EXPECTED = {"enrolled": "Match", "spoof": "Spoof", "unknown": "Unknown"}
 DEFAULT_TIMEOUT_SECONDS = 10.0
@@ -92,16 +94,41 @@ def make_plan(rounds=ROUNDS, seed=PLAN_SEED):
     return trials
 
 
-def load_or_create_plan(folder):
+def load_plan(folder):
+    """The folder's trial_plan.csv, or [] if there's none yet."""
     path = Path(folder) / "trial_plan.csv"
     if not path.exists():
-        with open(path, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=PLAN_FIELDS)
-            writer.writeheader()
-            writer.writerows(make_plan())
+        return []
     with open(path, encoding="utf-8") as fh:
         return [{"trial": int(r["trial"]), "round": int(r["round"]), "category": r["category"],
                  "distance_m": float(r["distance_m"])} for r in csv.DictReader(fh)]
+
+
+def write_plan(folder, plan):
+    with open(Path(folder) / "trial_plan.csv", "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=PLAN_FIELDS)
+        writer.writeheader()
+        writer.writerows(plan)
+
+
+def describe_plan(plan):
+    if not plan:
+        return "no plan yet"
+    distances = ", ".join(f"{d:g}" for d in sorted({t["distance_m"] for t in plan}))
+    return f"{max(t['round'] for t in plan)} trials per condition at {distances} m ({len(plan)} trials)"
+
+
+def part_rounds(part, rounds):
+    """The rounds a session part covers: Part 1 = the first half of the
+    rounds, Part 2 = the second half. Each round has every category x
+    distance exactly once, so each half has an equal share of every
+    condition."""
+    half = rounds // 2
+    if part == "Part 1":
+        return set(range(1, half + 1))
+    if part == "Part 2":
+        return set(range(half + 1, rounds + 1))
+    return set(range(1, rounds + 1))
 
 
 def _fmt(value, digits=1):
@@ -148,7 +175,9 @@ class TestRun:
         self.api = api_client
         self.gate_location = gate_location
         self.describe_setup = describe_setup  # () -> the gate monitor's own settings, for the snapshot
-        self.plan = load_or_create_plan(self.folder)
+        self.plan = load_plan(self.folder)  # made (or checked) when a session begins
+        self.part = "All"
+        self.rounds_in_part = {t["round"] for t in self.plan}
         self._lock = threading.Lock()
         self.state = "setup"  # setup -> waiting <-> ready -> running -> waiting ... -> finished
         self.session = None
@@ -162,9 +191,60 @@ class TestRun:
         self.message = ""
 
     # -- session --------------------------------------------------------------
-    def begin_session(self, enrolled_id, enrolled_label, unknown_label, spoof_medium, timeout_seconds):
-        """Checks the enrolled subject exists and saves the settings snapshot.
-        Network - call off the Tk thread. Raises ValueError with a message."""
+    def _prepare_plan(self, rounds, part):
+        """The plan for `rounds` trials per condition - the existing one if it
+        matches, a new one if there's none or no results yet. A different plan
+        with results already in the folder is refused (archive it first)."""
+        if part != "All" and rounds % 2:
+            raise ValueError("To split the test into Part 1 and Part 2, trials per condition must be an even "
+                             "number (each part gets half of every condition).")
+        plan = load_plan(self.folder)
+        fits = (bool(plan) and max(t["round"] for t in plan) == rounds
+                and sorted({t["distance_m"] for t in plan}) == sorted(float(d) for d in DISTANCES_M)
+                and {t["category"] for t in plan} == set(CATEGORIES))
+        if not fits:
+            if self._rows():
+                raise ValueError(
+                    f"The results folder already has results for another plan ({describe_plan(plan)}). "
+                    "Press 'Start a new test…' to move them into an archive folder first - or set Trials per "
+                    "condition to match that plan to carry on with it."
+                )
+            plan = make_plan(rounds)
+            write_plan(self.folder, plan)
+        return plan, part_rounds(part, rounds)
+
+    def archive(self):
+        """'Start a new test': moves this folder's results, plan and session
+        snapshots into old-run-<date-time> (nothing is deleted). Returns that
+        folder, or None if there was nothing to move. Only before a session."""
+        with self._lock:
+            if self.state != "setup":
+                return None
+            files = [p for p in (self.results_path, self.folder / "trial_plan.csv") if p.exists()]
+            files += sorted(self.folder.glob("session_*_settings.json"))
+            if not files:
+                return None
+            destination = self.folder / f"old-run-{datetime.now():%Y%m%d-%H%M%S}"
+            destination.mkdir()
+            for path in files:
+                path.rename(destination / path.name)
+            self.plan, self.rounds_in_part, self.last_row = [], set(), None
+            return destination
+
+    def folder_summary(self):
+        """One line for the session form: what's in the results folder now."""
+        done = len(self._done_trials())
+        plan = load_plan(self.folder)
+        if not plan:
+            return "The results folder is empty - a new plan is made when the session begins."
+        return f"In the results folder: a plan of {describe_plan(plan)}, {done} trials done."
+
+    def begin_session(self, enrolled_id, enrolled_label, unknown_label, spoof_medium, timeout_seconds,
+                      trials_per_condition=ROUNDS, part="All"):
+        """Checks the plan and the enrolled subject, and saves the settings
+        snapshot. Network - call off the Tk thread. Raises ValueError with a
+        message."""
+        plan, rounds_in_part = self._prepare_plan(int(trials_per_condition), part)
         snapshot = self.api.test_snapshot(enrolled_id)
         subject = snapshot.get("subject")
         if not subject:
@@ -179,8 +259,10 @@ class TestRun:
             "session_id": session_id,
             "started_at": datetime.now().isoformat(timespec="seconds"),
             "gate_location": self.gate_location,
-            "plan": {"file": "trial_plan.csv", "trials": len(self.plan), "rounds": ROUNDS, "seed": PLAN_SEED,
-                     "categories": list(CATEGORIES), "distances_m": list(DISTANCES_M)},
+            "plan": {"file": "trial_plan.csv", "trials": len(plan), "trials_per_condition": int(trials_per_condition),
+                     "seed": PLAN_SEED, "categories": list(CATEGORIES), "distances_m": list(DISTANCES_M),
+                     "part": part, "rounds_in_part": sorted(rounds_in_part),
+                     "trials_in_part": sum(1 for t in plan if t["round"] in rounds_in_part)},
             "enrolled_subject": subject,
             "enrolled_label": enrolled_label, "unknown_label": unknown_label, "spoof_medium": spoof_medium,
             "timeout_seconds": timeout_seconds,
@@ -193,6 +275,7 @@ class TestRun:
         with open(self.folder / f"session_{session_id}_settings.json", "w", encoding="utf-8") as fh:
             json.dump(session, fh, indent=2, ensure_ascii=False, default=str)
         with self._lock:
+            self.plan, self.part, self.rounds_in_part = plan, part, rounds_in_part
             self.session = session
             self.quiet_seconds = float(settings.get("decision_window_seconds") or 4)
             self.card_wait_seconds = float(settings.get("card_wait_seconds") or 10)
@@ -212,10 +295,15 @@ class TestRun:
         return {int(r["trial"]) for r in self._rows() if r.get("status") == "final"}
 
     def current_plan_trial(self):
-        """The first trial in the plan without a result - so a session can
-        stop and carry on later where it left off."""
+        """The first trial in this session's part of the plan without a
+        result - so a session can stop and carry on later where it left off."""
         done = self._done_trials()
-        return next((t for t in self.plan if t["trial"] not in done), None)
+        return next((t for t in self.plan if t["round"] in self.rounds_in_part and t["trial"] not in done), None)
+
+    def _part_progress(self):
+        done = self._done_trials()
+        in_part = [t["trial"] for t in self.plan if t["round"] in self.rounds_in_part]
+        return sum(1 for trial in in_part if trial in done), len(in_part)
 
     # -- frames from the scan loop -------------------------------------------------
     def on_frame(self, t_frame, t_answer, response, frame_size, camera_resolution):
@@ -438,8 +526,9 @@ class TestRun:
         now = time.perf_counter()
         with self._lock:
             plan_trial = self.trial if self.state == "running" else self.current_plan_trial()
-            info = {"state": self.state, "trial": plan_trial, "done": len(self._done_trials()),
-                    "total": len(self.plan), "last_row": self.last_row, "message": self.message}
+            done, total = self._part_progress()
+            info = {"state": self.state, "trial": plan_trial, "done": done, "total": total, "part": self.part,
+                    "plan_total": len(self.plan), "last_row": self.last_row, "message": self.message}
             if self.state == "running":
                 info["elapsed"] = now - self.trial["t_start"]
                 info["timeout"] = self.timeout_seconds
@@ -499,7 +588,8 @@ class TestWindow:
         ctk.CTkLabel(banner, text="TEST MODE  ·  results are saved automatically", font=(WIDE_HEAVY, 22),
                      text_color="white").pack(pady=12)
 
-        self.setup = ctk.CTkFrame(self.window, fg_color=SURFACE, corner_radius=8)
+        # Scrolls, so the whole form fits a 768 px-tall laptop screen.
+        self.setup = ctk.CTkScrollableFrame(self.window, fg_color=SURFACE, corner_radius=8)
         self.trials = ctk.CTkFrame(self.window, fg_color=SURFACE, corner_radius=8)
         self._build_setup()
         self._build_trials()
@@ -511,14 +601,24 @@ class TestWindow:
         f = self.setup
         ctk.CTkLabel(f, text="Start a test session", font=(FONT, 22, "bold"), text_color=INK).pack(
             anchor="w", padx=20, pady=(18, 4))
-        ctk.CTkLabel(f, text=f"Trial plan: {len(self.run.plan)} trials ({ROUNDS} balanced rounds, seed {PLAN_SEED}). "
-                             f"Results are saved in {self.results_folder}", font=(FONT, 13), text_color=INK_600,
-                     wraplength=700, justify="left").pack(anchor="w", padx=20)
+        ctk.CTkLabel(f, text=f"Distances {', '.join(f'{d:g}' for d in DISTANCES_M)} m · 3 categories · mixed, "
+                             f"balanced order (seed {PLAN_SEED}). Results are saved in {self.results_folder}",
+                     font=(FONT, 13), text_color=INK_600, wraplength=680, justify="left").pack(anchor="w", padx=20)
+        folder_row = ctk.CTkFrame(f, fg_color="transparent")
+        folder_row.pack(fill="x", padx=20, pady=(8, 0))
+        self.folder_label = ctk.CTkLabel(folder_row, text="", font=(FONT, 13, "bold"), text_color=INK,
+                                         wraplength=500, justify="left")
+        self.folder_label.pack(side="left")
+        ctk.CTkButton(folder_row, text="Start a new test…", font=(FONT, 13), width=150, fg_color=LINE,
+                      text_color=INK, hover_color=CANVAS, command=self._new_test).pack(side="right")
+        self._show_folder_summary()
         self.fields = {}
         for key, label, default in (
             ("enrolled_id", "Enrolled subject's ID number (must be registered with face photos)", ""),
             ("enrolled_label", "Enrolled subject label (as it should appear in the paper)", "Subject A"),
             ("unknown_label", "Unknown subject label (an unregistered volunteer)", "Volunteer 1"),
+            ("trials_per_condition", f"Trials per category per distance ({ROUNDS} for the full test - fewer for "
+                                     "a pilot; same number every session of one test)", f"{ROUNDS}"),
             ("timeout", "Timeout per trial (seconds)", f"{DEFAULT_TIMEOUT_SECONDS:g}"),
         ):
             ctk.CTkLabel(f, text=label, font=(FONT, 14, "bold"), text_color=INK).pack(anchor="w", padx=20,
@@ -533,6 +633,14 @@ class TestWindow:
                                              font=(FONT, 14))
         self.medium.set("printed photo")
         self.medium.pack(anchor="w", padx=20)
+        ctk.CTkLabel(f, text="This session runs", font=(FONT, 14, "bold"), text_color=INK).pack(
+            anchor="w", padx=20, pady=(12, 2))
+        self.part = ctk.CTkSegmentedButton(f, values=list(PARTS), font=(FONT, 14))
+        self.part.set("All")
+        self.part.pack(anchor="w", padx=20)
+        ctk.CTkLabel(f, text="Part 1 and Part 2 each have half of every category x distance - for testing on two "
+                             "days. Either way it carries on where the last session stopped.",
+                     font=(FONT, 12), text_color=INK_600, wraplength=680, justify="left").pack(anchor="w", padx=20)
         self.setup_error = ctk.CTkLabel(f, text="", font=(FONT, 14), text_color=DANGER, wraplength=700,
                                         justify="left")
         self.setup_error.pack(anchor="w", padx=20, pady=(10, 0))
@@ -552,13 +660,22 @@ class TestWindow:
         if not values["enrolled_id"]:
             self.setup_error.configure(text="Type the enrolled subject's ID number.")
             return
+        try:
+            trials_per_condition = int(values["trials_per_condition"])
+        except ValueError:
+            trials_per_condition = 0
+        if not 1 <= trials_per_condition <= 50:
+            self.setup_error.configure(text="Trials per category per distance must be a whole number from 1 to 50.")
+            return
+        part = self.part.get()
         self.begin.configure(state="disabled", text="Checking…")
         self.setup_error.configure(text="")
 
         def work():
             try:
                 self.run.begin_session(values["enrolled_id"], values["enrolled_label"] or "Subject A",
-                                       values["unknown_label"] or "Volunteer 1", self.medium.get(), timeout)
+                                       values["unknown_label"] or "Volunteer 1", self.medium.get(), timeout,
+                                       trials_per_condition=trials_per_condition, part=part)
                 self.window.after(0, self._show_trials)
             except (ValueError, requests.RequestException) as exc:
                 message = str(exc)
@@ -566,7 +683,26 @@ class TestWindow:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _show_folder_summary(self):
+        self.folder_label.configure(text=self.run.folder_summary())
+
+    def _new_test(self):
+        from tkinter import messagebox
+
+        if not messagebox.askyesno(
+            "Start a new test?",
+            "This moves the current results, trial plan and settings snapshots into an 'old-run-…' folder "
+            "inside the results folder (nothing is deleted), so the next session starts a new test at "
+            "trial 1.\n\nStart a new test?", parent=self.window,
+        ):
+            return
+        moved = self.run.archive()
+        self.setup_error.configure(text=f"Moved to {moved}" if moved else "There was nothing to move.",
+                                   text_color=VERIFIED if moved else INK_600)
+        self._show_folder_summary()
+
     def _setup_failed(self, message):
+        self.setup_error.configure(text_color=DANGER)
         self.begin.configure(state="normal", text="Begin session")
         self.setup_error.configure(text=message)
 
@@ -673,15 +809,18 @@ class TestWindow:
             return
         trial = info["trial"]
         if trial:
-            self.counter.configure(text=f"Trial {trial['trial']} of {info['total']}  ·  round {trial['round']}  ·  "
-                                        f"{info['done']} done")
+            where = "" if info["part"] == "All" else f"{info['part']}  ·  "
+            self.counter.configure(text=f"Trial {trial['trial']} of {info['plan_total']}  ·  {where}round "
+                                        f"{trial['round']}  ·  {info['done']} of {info['total']} done")
             self.category.configure(text=trial["category"].upper(), text_color=CATEGORY_COLOR[trial["category"]])
             self.distance.configure(text=f"{trial['distance_m']:g} m")
         if state == "finished":
             self.counter.configure(text=f"{info['done']} of {info['total']} done")
             self.category.configure(text="ALL DONE", text_color=VERIFIED)
             self.distance.configure(text="")
-            self.state_label.configure(text="Every trial in the plan has a result.", text_color=VERIFIED)
+            self.state_label.configure(
+                text="Every trial in the plan has a result." if info["part"] == "All" else
+                f"Every trial in {info['part']} has a result.", text_color=VERIFIED)
             self.start_button.configure(state="disabled")
         elif state == "running":
             self.state_label.configure(text=f"Running…  {info['elapsed']:.1f} s  (timeout {info['timeout']:g} s)",

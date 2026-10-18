@@ -1,6 +1,6 @@
 # Speed and accuracy test mode
 
-How the team runs the gate's speed/accuracy test (120 trials), what is
+How the team runs the gate's speed/accuracy test (240 trials), what is
 measured, and how it is counted — with a method paragraph for the paper.
 
 ## What it is
@@ -28,9 +28,12 @@ What test mode adds:
    permission first; their face data is deleted at the end (see Clean-up).
 3. **Spoof** — a printed photo (or phone/tablet screen) of the enrolled
    subject.
-4. **Floor marks** at 2, 2.5, 3 and 3.5 m from the camera, measured with a
+4. **Floor marks** at 2, 3, 4 and 5 m from the camera lens, measured with a
    tape.
-5. Open **EVSU SecureTap Admin** → Entry Agent settings → tick
+5. **Two people on site**: the subject on the mark, and someone at the laptop
+   pressing Start — out of the camera's view (a face the camera can see keeps
+   Start from becoming READY, and would get into the trials).
+6. Open **EVSU SecureTap Admin** → Entry Agent settings → tick
    **"Open the gate monitor in TEST MODE"** → open the Entry Agent. (The box
    is never saved; it's off again next time.)
 
@@ -38,12 +41,22 @@ What test mode adds:
 
 In the test window, fill in once per session: the enrolled subject's ID
 number, a label for each subject (e.g. "Subject A", "Volunteer 1" — these go
-in the results, not real names), the spoof medium, and the timeout (10 s).
-**Begin session** checks the ID and saves every setting to a file.
+in the results, not real names), the spoof medium, **trials per category per
+distance** (20 for the full test — fewer for a pilot), **which part** this
+session runs (All, Part 1 or Part 2) and the timeout (10 s). **Begin session**
+checks the ID and saves every setting to a file.
+
+- **Pilot first**: e.g. 2 trials per condition (24 trials). Afterwards press
+  **Start a new test…** — it moves the pilot's files into an `old-run-…`
+  folder (nothing is deleted) — and begin the real test with 20.
+- **Two days**: choose **Part 1** on the first day and **Part 2** on the
+  second. Each part has exactly half of every category × distance (10 each).
+- One test = one number of trials per condition. The window refuses a
+  different number while the folder has results, until you start a new test.
 
 Each trial:
 
-1. The window shows the trial — e.g. **Trial 7 of 120 · SPOOF · 3.5 m**.
+1. The window shows the trial — e.g. **Trial 7 of 240 · SPOOF · 5 m**.
 2. The subject stands on that mark, **facing away** from the camera.
 3. Wait for **READY** (it appears once no face has been seen for 4 s, so the
    previous trial can't carry over).
@@ -64,10 +77,12 @@ Each trial:
 ## The trial plan
 
 `trial_plan.csv`: 3 categories (enrolled, spoof, unknown) × 4 distances
-(2, 2.5, 3, 3.5 m) × 10 = **120 trials**, in 10 rounds. Each round has all 12
+(2, 3, 4, 5 m) × 20 = **240 trials**, in 20 rounds. Each round has all 12
 combinations once, in a shuffled order (fixed seed 2026, so the order can be
 reproduced). Balanced rounds mean tiredness or a change in lighting during
-the session affects every combination about equally.
+the session affects every combination about equally. Part 1 = rounds 1–10,
+Part 2 = rounds 11–20. Expect "Not detected" at 5 m — those are real results
+and count in the success rates.
 
 ## What is measured
 
@@ -159,8 +174,9 @@ files are kept. It is recorded in the Audit Log.
 > (a snapshot of all settings was saved for each session). Three subject
 > categories were tested — an enrolled user, a presentation attack (a
 > [printed photo] of the enrolled user) and an unregistered person — at 2,
-> 2.5, 3 and 3.5 m from the camera, 10 trials per combination (120 trials), in 10
-> balanced, randomized rounds. In each trial the subject faced away from the
+> 3, 4 and 5 m from the camera lens, 20 trials per combination (240 trials),
+> in 20 balanced, randomized rounds [run in two sessions of 10 rounds each,
+> each containing half of every combination]. In each trial the subject faced away from the
 > camera, the trial was started, and the subject turned to face the camera.
 > Decision time was measured with a high-resolution monotonic clock from the
 > capture of the first frame in which the face passed the system's quality

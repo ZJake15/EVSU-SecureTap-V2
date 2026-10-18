@@ -655,6 +655,7 @@ class IdentifyView(APIView):
         results = []
         beyond_limit = 0  # faces left out by "Ignore faces farther than" - reported in test mode
         distances = {}  # (left, top, right, bottom) -> metres, for "Show distance on face boxes"
+        sharpness = {}  # (left, top, right, bottom) -> the blur check's score - recorded by the test mode
         # How fast each face moved since this gate's last frame, and which
         # earlier face it is (see logs/motion.py).
         tracked = motion.track_faces(gate_location, [detection[1] for detection in detections])
@@ -677,6 +678,7 @@ class IdentifyView(APIView):
                 continue
             if distance is not None:
                 distances[box] = distance
+            sharpness[box] = blur_variance
             skip_result = self._skip_reason(
                 box, blur_variance, yaw_ratio, image_width, image_height, speed=speeds[index]
             )
@@ -742,14 +744,15 @@ class IdentifyView(APIView):
         if show_distance or testing:
             for result in results:
                 face_box = result.get("box")
-                distance = face_box and distances.get(
-                    (face_box["left"], face_box["top"], face_box["right"], face_box["bottom"])
-                )
+                key = face_box and (face_box["left"], face_box["top"], face_box["right"], face_box["bottom"])
+                distance = key and distances.get(key)
                 if distance is not None:
                     if show_distance:
                         result["distance_m"] = round(distance, 1)
                     if testing:  # measurement only - recorded by the test mode, not shown on the box
                         result["test_distance_m"] = round(distance, 2)
+                if testing and key in sharpness:  # the score "Blur sensitivity" is compared with
+                    result["test_sharpness"] = round(sharpness[key], 1)
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},

@@ -36,6 +36,7 @@ import csv
 import json
 import os
 import random
+import statistics
 import threading
 import time
 from collections import Counter
@@ -64,6 +65,7 @@ RESULT_FIELDS = [
     "time_to_first_detection_ms", "decision_time_ms", "decision_time_from_first_face_ms",
     "frames_processed", "frames_with_face", "frames_skipped_turned", "frames_skipped_moving",
     "frames_skipped_blur", "frames_skipped_edge", "frames_covered", "frames_face_beyond_limit",
+    "sharpness_min", "sharpness_median", "sharpness_max",
     "result", "expected_result", "correct", "repeat_entry", "matched_name", "matched_id", "match_confidence", "best_similarity",
     "liveness_score", "face_width_px", "face_height_px", "estimated_distance_m", "frame_size_sent",
     "camera_resolution", "note", "status",
@@ -232,6 +234,8 @@ class TestRun:
                 return
             trial["frames_with_face"] += 1
             trial["last_face"] = max(items, key=_width)
+            if trial["last_face"].get("test_sharpness") is not None:
+                trial["sharpness"].append(trial["last_face"]["test_sharpness"])
             if trial["first_face"] is None:
                 trial["first_face"] = (t_frame, t_answer)
             for item in items:
@@ -286,6 +290,7 @@ class TestRun:
                 **plan_trial, "t_start": time.perf_counter(), "frames": 0, "frames_with_face": 0,
                 "frames_covered": 0, "frames_beyond_limit": 0, "skips": Counter(), "first_face": None,
                 "first_usable": None, "last_face": None, "frame_size": None, "camera_resolution": None,
+                "sharpness": [],
             }
             self.state = "running"
             self.message = ""
@@ -363,6 +368,7 @@ class TestRun:
         frame_size = trial.get("frame_size")
         camera_resolution = trial.get("camera_resolution")
         skips = trial.get("skips") or Counter()
+        sharp = trial.get("sharpness") or []
         return {
             "trial": trial["trial"], "round": trial["round"], "session_id": session.get("session_id", ""),
             "date_time": datetime.now().isoformat(sep=" ", timespec="milliseconds"),
@@ -377,6 +383,11 @@ class TestRun:
             "frames_skipped_blur": skips["blur"], "frames_skipped_edge": skips["edge"],
             "frames_covered": trial.get("frames_covered", 0),
             "frames_face_beyond_limit": trial.get("frames_beyond_limit", 0),
+            # The blur check's score of the subject's face in this trial's
+            # frames - frames under "Blur sensitivity" were skipped as blurry.
+            "sharpness_min": _fmt(min(sharp)) if sharp else "",
+            "sharpness_median": _fmt(statistics.median(sharp)) if sharp else "",
+            "sharpness_max": _fmt(max(sharp)) if sharp else "",
             "result": result, "expected_result": expected, "correct": correct,
             # Decided by the same voting, but within the repeat-entry cooldown
             # of an earlier one, so it reused that record instead of a new one.
@@ -395,6 +406,13 @@ class TestRun:
 
     def _append(self, row):
         new = not self.results_path.exists()
+        if not new:
+            with open(self.results_path, encoding="utf-8") as fh:
+                header = next(csv.reader(fh), [])
+            if header != RESULT_FIELDS:
+                # Written by an older version with fewer columns - rewrite
+                # it once with today's header (old rows keep their values).
+                self._rewrite(self._rows())
         with open(self.results_path, "a", newline="", encoding="utf-8") as fh:
             writer = csv.DictWriter(fh, fieldnames=RESULT_FIELDS)
             if new:
@@ -642,6 +660,10 @@ class TestWindow:
         finally:
             self.window.after(100, self._poll)
 
+    def _blur_limit(self):
+        settings = (self.run.session or {}).get("settings") or {}
+        return f"{settings['blur_min']:g}" if isinstance(settings.get("blur_min"), (int, float)) else "?"
+
     def _refresh(self):
         info = self.run.status()
         state = info["state"]
@@ -688,6 +710,8 @@ class TestWindow:
                 text=f"Last: trial {row['trial']} ({row['category']}, {row['distance_m']} m) → {row['result']}"
                      f"{who}  {mark}\n{timing} · first face {row['time_to_first_detection_ms'] or '-'} ms · "
                      f"{row['frames_processed']} frames · face {row['face_width_px']}x{row['face_height_px']} px"
+                     f"\nsharpness {row['sharpness_median'] or '-'} (blur limit {self._blur_limit()}) · "
+                     f"{row['frames_skipped_blur']} of {row['frames_with_face']} face frames skipped as blurry"
             )
         else:
             self.result_label.configure(text="")

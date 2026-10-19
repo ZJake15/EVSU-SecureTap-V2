@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 from django.contrib.auth import authenticate
 from django.core.files.base import ContentFile
@@ -625,7 +627,22 @@ class IdentifyView(APIView):
         # The capstone test mode only marks and measures (logs/test_mode.py):
         # the scan below is the same, with the same decisions, either way.
         with test_mode.marking(data["test_mode"], data["gate_location"]):
-            return self._scan(request, data)
+            started = time.perf_counter()
+            self._timing = {"faces_ms": 0.0, "fake_check_ms": 0.0}
+            response = self._scan(request, data)
+            if data["test_mode"] and isinstance(response.data, dict):
+                # Measurement only: where this frame's time went on the
+                # backend - the test mode records it per trial.
+                response.data["test_timing"] = {
+                    "server_ms": round((time.perf_counter() - started) * 1000, 1),
+                    **{key: round(value, 1) for key, value in self._timing.items()},
+                }
+            return response
+
+    def _add_time(self, key, since):
+        timing = getattr(self, "_timing", None)
+        if timing is not None:
+            timing[key] += (time.perf_counter() - since) * 1000
 
     def _scan(self, request, data):
         direction = data["direction"]
@@ -634,12 +651,14 @@ class IdentifyView(APIView):
 
         self._expire_stale_tiebreak(gate_location)
 
+        faces_started = time.perf_counter()
         try:
             bgr_image = insightface_utils.load_bgr_array(image_file)
             detections = insightface_utils.compute_face_embeddings_and_boxes(bgr_image)
         except Exception:
             bgr_image = None
             detections = []
+        self._add_time("faces_ms", faces_started)
 
         if bgr_image is None or not detections:
             # Nobody's in frame - this is the idle state for the vast majority of
@@ -716,7 +735,9 @@ class IdentifyView(APIView):
             liveness_score = None
             liveness_unsure = False
             if system_settings.get("spoof_check_enabled"):
+                check_started = time.perf_counter()
                 liveness_score = liveness_utils.compute_liveness_score(bgr_image, box)
+                self._add_time("fake_check_ms", check_started)
                 spoof_limit = system_settings.get("spoof_strictness")
                 if liveness_score < spoof_limit:
                     unsure_range = system_settings.get("spoof_unsure_range")

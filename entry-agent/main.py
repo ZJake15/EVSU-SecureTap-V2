@@ -342,6 +342,7 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=No
         except RuntimeError:
             stop_event.wait(live["scan_pause_seconds"])
             continue
+        t_sent = time.perf_counter()
 
         try:
             response = api_client.identify(
@@ -381,7 +382,8 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=No
             if test_run is not None:
                 # The answer is ready to draw - the guard sees it on the next
                 # screen refresh (~66 ms).
-                test_run.on_frame(t_frame, time.perf_counter(), response, image_size, camera.capture_size())
+                test_run.on_frame(t_frame, time.perf_counter(), response, image_size, camera.capture_size(),
+                                  t_sent=t_sent)
             ui.show_recognitions(recognitions, _extract_image_size(response, image_size))
         except requests.RequestException:
             # No offline queueing here - a stale queued frame from a live scan

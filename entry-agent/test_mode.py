@@ -33,6 +33,7 @@ request has expired.
 """
 
 import csv
+import ctypes
 import json
 import os
 import random
@@ -40,6 +41,7 @@ import statistics
 import threading
 import time
 from collections import Counter
+from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 
@@ -70,10 +72,79 @@ RESULT_FIELDS = [
     "frames_processed", "frames_with_face", "frames_skipped_turned", "frames_skipped_moving",
     "frames_skipped_blur", "frames_skipped_edge", "frames_covered", "frames_face_beyond_limit",
     "sharpness_min", "sharpness_median", "sharpness_max",
+    # Where the time went (see "Speed" below): per trial, the middle value of
+    # its frames, and the slowest answer; screen freezes; how busy the
+    # computer was.
+    "capture_ms_median", "answer_ms_median", "answer_ms_max", "server_ms_median", "face_ai_ms_median",
+    "fake_check_ms_median", "screen_freezes", "longest_freeze_ms", "cpu_max_pct", "memory_max_pct",
     "result", "expected_result", "correct", "repeat_entry", "matched_name", "matched_id", "match_confidence", "best_similarity",
     "liveness_score", "face_width_px", "face_height_px", "estimated_distance_m", "frame_size_sent",
     "camera_resolution", "note", "status",
 ]
+
+
+# ---- speed: where each frame's time goes, and screen freezes ------------------------
+#
+# Per frame: capture = taking + encoding the picture on the gate laptop;
+# answer = sending it until the answer is back (network + backend + building
+# the result); server = the backend's own part of that; face AI = finding the
+# faces and their fingerprints; fake check = the liveness model. A "screen
+# freeze" is the gate monitor's window not updating for FREEZE_MS or more -
+# every one, and every answer slower than SLOW_ANSWER_MS, goes into
+# performance_log.csv with how busy the computer was at that moment.
+POLL_MS = 100
+FREEZE_MS = 500
+SLOW_ANSWER_MS = 1500
+PERF_FIELDS = ["date_time", "event", "duration_ms", "trial", "cpu_pct", "memory_pct"]
+
+
+class _MemoryStatus(ctypes.Structure):
+    _fields_ = [
+        ("dwLength", wintypes.DWORD), ("dwMemoryLoad", wintypes.DWORD), ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong), ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong), ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong), ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+class SystemMeter:
+    """How busy the whole computer is - CPU in use (%) since the last reading
+    and memory in use (%) - from Windows itself, no extra library. None where
+    Windows doesn't say."""
+
+    def __init__(self):
+        self._last = self._cpu_times()
+
+    @staticmethod
+    def _cpu_times():
+        try:
+            idle, kernel, user = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
+            if ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+                as_int = [(t.dwHighDateTime << 32) | t.dwLowDateTime for t in (idle, kernel, user)]
+                return as_int[0], as_int[1] + as_int[2]  # kernel time includes idle time
+        except (AttributeError, OSError):
+            pass
+        return None
+
+    def read(self):
+        now = self._cpu_times()
+        cpu = None
+        if now and self._last and now[1] > self._last[1]:
+            cpu = round(100 * (1 - (now[0] - self._last[0]) / (now[1] - self._last[1])), 1)
+        self._last = now or self._last
+        memory = None
+        try:
+            status = _MemoryStatus()
+            status.dwLength = ctypes.sizeof(_MemoryStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                memory = int(status.dwMemoryLoad)
+        except (AttributeError, OSError):
+            pass
+        return cpu, memory
+
+
+def _median(values, digits=1):
+    return _fmt(statistics.median(values), digits) if values else ""
 
 
 # ---- the trial plan -------------------------------------------------------------
@@ -172,6 +243,9 @@ class TestRun:
         self.folder = Path(folder)
         self.folder.mkdir(parents=True, exist_ok=True)
         self.results_path = self.folder / "results.csv"
+        self.perf_path = self.folder / "performance_log.csv"
+        self.meter = SystemMeter()  # read only by the test window (Tk thread)
+        self.last_system = (None, None)  # its latest (CPU %, memory %)
         self.api = api_client
         self.gate_location = gate_location
         self.describe_setup = describe_setup  # () -> the gate monitor's own settings, for the snapshot
@@ -306,7 +380,7 @@ class TestRun:
         return sum(1 for trial in in_part if trial in done), len(in_part)
 
     # -- frames from the scan loop -------------------------------------------------
-    def on_frame(self, t_frame, t_answer, response, frame_size, camera_resolution):
+    def on_frame(self, t_frame, t_answer, response, frame_size, camera_resolution, t_sent=None):
         items = [r for r in response.get("results", []) if r.get("box")]
         with self._lock:
             if items:
@@ -315,6 +389,16 @@ class TestRun:
             if self.state != "running" or trial is None or t_frame < trial["t_start"]:
                 return
             trial["frames"] += 1
+            if t_sent is not None:
+                trial["capture_ms"].append((t_sent - t_frame) * 1000)
+                answer_ms = (t_answer - t_sent) * 1000
+                trial["answer_ms"].append(answer_ms)
+                if answer_ms >= SLOW_ANSWER_MS:
+                    self._log_perf("slow answer", answer_ms, *self.last_system)
+            timing = response.get("test_timing") or {}
+            for key, field in (("server_ms", "server_ms"), ("faces_ms", "faces_ms"), ("fake_ms", "fake_check_ms")):
+                if timing.get(field) is not None:
+                    trial[key].append(float(timing[field]))
             trial["frame_size"] = frame_size
             trial["camera_resolution"] = camera_resolution
             if not items:
@@ -380,7 +464,8 @@ class TestRun:
                 **plan_trial, "t_start": time.perf_counter(), "frames": 0, "frames_with_face": 0,
                 "frames_covered": 0, "frames_beyond_limit": 0, "skips": Counter(), "first_face": None,
                 "first_usable": None, "last_face": None, "frame_size": None, "camera_resolution": None,
-                "sharpness": [],
+                "sharpness": [], "capture_ms": [], "answer_ms": [], "server_ms": [], "faces_ms": [], "fake_ms": [],
+                "freezes": [], "cpu": [], "memory": [],
             }
             self.state = "running"
             self.message = ""
@@ -423,6 +508,44 @@ class TestRun:
             self.state = "waiting"
             self.message = f"Trial {plan_trial['trial']} skipped."
             return True
+
+    # -- speed ----------------------------------------------------------------------------
+    def sample_system(self):
+        """About once a second, from the test window: how busy the computer is."""
+        cpu, memory = self.last_system = self.meter.read()
+        with self._lock:
+            if self.state == "running" and self.trial is not None:
+                if cpu is not None:
+                    self.trial["cpu"].append(cpu)
+                if memory is not None:
+                    self.trial["memory"].append(memory)
+
+    def note_freeze(self, duration_ms):
+        """The gate monitor's window didn't update for duration_ms (the test
+        window shares its screen loop, so it noticed)."""
+        cpu, memory = self.last_system = self.meter.read()  # over the frozen moment
+        with self._lock:
+            if self.state == "running" and self.trial is not None:
+                self.trial["freezes"].append(duration_ms)
+                if cpu is not None:
+                    self.trial["cpu"].append(cpu)
+                if memory is not None:
+                    self.trial["memory"].append(memory)
+            self._log_perf("screen freeze", duration_ms, cpu, memory)
+
+    def _log_perf(self, event, duration_ms, cpu, memory):
+        """One line in performance_log.csv - caller holds the lock."""
+        new = not self.perf_path.exists()
+        trial = self.trial["trial"] if self.state == "running" and self.trial else ""
+        with open(self.perf_path, "a", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=PERF_FIELDS)
+            if new:
+                writer.writeheader()
+            writer.writerow({
+                "date_time": datetime.now().isoformat(sep=" ", timespec="milliseconds"), "event": event,
+                "duration_ms": _fmt(duration_ms, 0), "trial": trial,
+                "cpu_pct": "" if cpu is None else _fmt(cpu, 0), "memory_pct": "" if memory is None else memory,
+            })
 
     # -- writing a trial ---------------------------------------------------------------
     def _finish(self, result, t_end, item):
@@ -478,6 +601,16 @@ class TestRun:
             "sharpness_min": _fmt(min(sharp)) if sharp else "",
             "sharpness_median": _fmt(statistics.median(sharp)) if sharp else "",
             "sharpness_max": _fmt(max(sharp)) if sharp else "",
+            "capture_ms_median": _median(trial.get("capture_ms")),
+            "answer_ms_median": _median(trial.get("answer_ms")),
+            "answer_ms_max": _fmt(max(trial["answer_ms"])) if trial.get("answer_ms") else "",
+            "server_ms_median": _median(trial.get("server_ms")),
+            "face_ai_ms_median": _median(trial.get("faces_ms")),
+            "fake_check_ms_median": _median(trial.get("fake_ms")),
+            "screen_freezes": len(trial.get("freezes") or []),
+            "longest_freeze_ms": _fmt(max(trial["freezes"]), 0) if trial.get("freezes") else "",
+            "cpu_max_pct": _fmt(max(trial["cpu"]), 0) if trial.get("cpu") else "",
+            "memory_max_pct": max(trial["memory"]) if trial.get("memory") else "",
             "result": result, "expected_result": expected, "correct": correct,
             # Decided by the same voting, but within the repeat-entry cooldown
             # of an earlier one, so it reused that record instead of a new one.
@@ -600,6 +733,8 @@ class TestWindow:
         self._build_setup()
         self._build_trials()
         self.setup.pack(fill="both", expand=True, padx=16, pady=16)
+        self._last_poll = None
+        self._last_sample = 0.0
         self._poll()
 
     # -- session setup ------------------------------------------------------------
@@ -798,11 +933,22 @@ class TestWindow:
         threading.Thread(target=work, daemon=True).start()
 
     def _poll(self):
+        now = time.perf_counter()
+        late_ms = (now - self._last_poll) * 1000 - POLL_MS if self._last_poll else 0
+        self._last_poll = now
         try:
+            # This window shares the gate monitor's screen loop: if this
+            # comes late, the gate monitor's screen was frozen that long.
+            if late_ms >= FREEZE_MS:
+                self.run.note_freeze(late_ms)
+                self._last_sample = now
+            elif now - self._last_sample >= 1.0:
+                self.run.sample_system()
+                self._last_sample = now
             self.run.tick()
             self._refresh()
         finally:
-            self.window.after(100, self._poll)
+            self.window.after(POLL_MS, self._poll)
 
     def _blur_limit(self):
         settings = (self.run.session or {}).get("settings") or {}
@@ -859,6 +1005,10 @@ class TestWindow:
                      f"{row['frames_processed']} frames · face {row['face_width_px']}x{row['face_height_px']} px"
                      f"\nsharpness {row['sharpness_median'] or '-'} (blur limit {self._blur_limit()}) · "
                      f"{row['frames_skipped_blur']} of {row['frames_with_face']} face frames skipped as blurry"
+                     f" · real-face {row['liveness_score'] or '-'}"
+                     f"\nspeed: answer {row['answer_ms_median'] or '-'} ms (backend {row['server_ms_median'] or '-'}, "
+                     f"face AI {row['face_ai_ms_median'] or '-'}) · {row['screen_freezes']} screen freeze(s) · "
+                     f"CPU up to {row['cpu_max_pct'] or '-'}% · memory up to {row['memory_max_pct'] or '-'}%"
             )
         else:
             self.result_label.configure(text="")

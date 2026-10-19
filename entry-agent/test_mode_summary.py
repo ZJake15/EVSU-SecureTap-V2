@@ -45,6 +45,8 @@ CATEGORY_COLOR = {"enrolled": "#2e7d32", "spoof": "#c62828", "unknown": "#ef6c00
 # Each category's points are drawn slightly left/right of the distance, so
 # equal values (say, all 100%) don't hide each other.
 CATEGORY_OFFSET = {"enrolled": -0.06, "spoof": 0.0, "unknown": 0.06}
+# Per-trial speed columns (test_mode.py): the summary gives their middle value.
+SPEED_COLUMNS = ("answer_ms_median", "server_ms_median", "face_ai_ms_median")
 RESULT_ORDER = ["Match", "Spoof", "Unknown", "Tiebreak requested", "Occluded", "No decision", "Not detected"]
 
 
@@ -68,6 +70,9 @@ def load(path):
     for column in ("decision_time_ms", "decision_time_from_first_face_ms", "time_to_first_detection_ms",
                    "best_similarity", "liveness_score"):
         rows[column] = pd.to_numeric(rows[column], errors="coerce")
+    for column in SPEED_COLUMNS + ("screen_freezes",):
+        if column in rows:  # results from before the speed measurements don't have these
+            rows[column] = pd.to_numeric(rows[column], errors="coerce")
     rows["confidence_pct"] = rows["best_similarity"] * 100
     rows["is_correct"] = rows["correct"].str.lower() == "yes"
     return rows, skipped
@@ -107,6 +112,12 @@ def _summarize(group):
         "first_detection_mean_ms": _mean(group["time_to_first_detection_ms"]),
         "confidence_mean_pct": _mean(group["confidence_pct"]),
         "liveness_mean": _mean(group["liveness_score"], 3),
+        # Speed: each frame's answer time, the backend's part of it, the face
+        # AI's part of that - middle values over the trials - and how many
+        # times the gate monitor's screen froze.
+        **{column: (round(group[column].median(), 1) if column in group and group[column].notna().any() else None)
+           for column in SPEED_COLUMNS},
+        "screen_freezes": int(group["screen_freezes"].fillna(0).sum()) if "screen_freezes" in group else None,
     }
 
 

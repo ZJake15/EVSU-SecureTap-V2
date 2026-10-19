@@ -143,6 +143,31 @@ repeat_entry, matched_name, matched_id, match_confidence, best_similarity,
 liveness_score, face_width_px, face_height_px, estimated_distance_m,
 frame_size_sent, camera_resolution, note, status (final / redone).
 
+## Speed — when the gate feels slow
+
+Every trial also records where each frame's time went, and the test window
+shows it after each trial:
+
+- **capture** — taking and encoding the picture on the gate laptop;
+- **answer** — from sending the picture until its result is ready (network +
+  backend + building the result); **answer max** is the slowest frame;
+- **backend** (server) — the backend's own part of the answer, of which
+  **face AI** is finding faces and their fingerprints, and **fake check** the
+  liveness model;
+- **screen freezes** — times the gate monitor's window didn't update for
+  0.5 s or more, the longest one, and how busy the computer was (CPU % and
+  memory %).
+
+Every freeze and every answer slower than 1.5 s is also written, with the
+time and the trial number, to `performance_log.csv` in the results folder.
+
+How to read it: a big **answer** with a small **backend** = the time is lost
+on the gate laptop or between the programs; a big **backend** with a small
+**face AI** = the database or other checks; a big **face AI** = the processor
+is too slow for the face models. Freezes with memory near 90–100 % = the
+laptop is short of memory (close the browser and other programs); with CPU
+near 100 % = it's overloaded (plug it in, power mode "Best performance").
+
 ## The summary
 
 ```

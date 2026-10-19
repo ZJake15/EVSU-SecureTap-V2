@@ -100,6 +100,18 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def camera_report(self, gate_location, report):
+        """Tells the backend what this gate's camera actually runs at -
+        shown under the Settings page's Camera settings."""
+        response = self.session.post(
+            f"{self.base_url}/gate/camera-report",
+            headers={"X-Service-Token": self.service_token},
+            json={"gate_location": gate_location, "report": report},
+            timeout=5,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def test_snapshot(self, subject_id):
         """The test mode's settings snapshot: every Settings-page value, the
         backend's model setup, and the enrolled test subject (None if no one

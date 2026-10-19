@@ -1,5 +1,6 @@
 import threading
 import time
+from collections import deque
 
 import cv2
 
@@ -24,6 +25,16 @@ UPLOAD_JPEG_QUALITY = 85
 # 1280x720 frame's middle half is 640x360, still at least the 640 px sent in
 # Light mode; past that the picture would only be enlarged, which adds blur.
 MIN_ZOOM, MAX_ZOOM = 1.0, 2.0
+
+# The Settings page's Camera values that change how the camera itself is
+# opened (configure() reconnects it when one changes). "auto" = as before
+# this group existed: 1280x720, the driver's own frame rate, exposure,
+# backlight and focus.
+CAPTURE_KEYS = ("camera_resolution", "camera_fps", "camera_exposure", "backlight_compensation", "camera_focus")
+# DirectShow's exposure mode values for CAP_PROP_AUTO_EXPOSURE. Many cameras
+# read it back as -1 whatever it is (the EMEET does), so its "own" mode can't
+# be remembered and put back - Auto switches automatic exposure on instead.
+AUTO_EXPOSURE_ON, AUTO_EXPOSURE_OFF = 0.75, 0.25
 
 # How often to retry opening the camera while it isn't connected - covers
 # both "never was" (nothing plugged in at startup) and "used to be, isn't
@@ -67,6 +78,13 @@ class Camera:
         # loop tick retry immediately, instead of waiting out whatever's left
         # of the current RECONNECT_INTERVAL_SECONDS window.
         self._next_open_attempt = 0.0
+        # Settings > Camera (configure()); _reopen asks _run_loop to reconnect
+        # with them, on its own thread, between two reads.
+        self._capture = {key: "auto" for key in CAPTURE_KEYS}
+        self._reopen = False
+        self._applied = {}  # exposure / backlight / focus -> "applied" | "ignored" | "camera"
+        self._originals = {}  # the camera's own values, put back when a setting returns to Auto
+        self._frame_times = deque(maxlen=90)  # for the measured frame rate
 
     def start(self):
         """No camera plugged in (or the wrong index configured) is a real,
@@ -94,11 +112,97 @@ class Camera:
         if not cap.isOpened():
             cap.release()
             return
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
+        wanted = dict(self._capture)
+        width, height = _resolution(wanted["camera_resolution"])
+        if wanted["camera_resolution"] != "auto" or wanted["camera_fps"] != "auto":
+            # Most webcams only give big pictures at a full frame rate in their
+            # compressed (MJPG) mode - asked for first, as DirectShow needs.
+            # One that can't just stays in its own mode.
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        if wanted["camera_fps"] != "auto":
+            cap.set(cv2.CAP_PROP_FPS, float(wanted["camera_fps"]))
         self._cap = cap
-        if self.exposure is not None:
+        self._frame_times.clear()
+        self._applied = self._apply_picture_settings(wanted)
+
+    def _apply_picture_settings(self, wanted):
+        """Exposure, backlight and focus - each driver decides whether it
+        takes them, so each is read back and reported ("applied" or
+        "ignored"). Auto puts back what the camera had before this program
+        changed it (drivers often keep a value even after the camera's
+        closed), or leaves it alone if it never was."""
+        applied = {}
+        exposure = wanted["camera_exposure"]
+        if exposure != "auto":
+            applied["exposure"] = self._apply_exposure(float(exposure))
+        elif self.exposure is not None:  # CAMERA_EXPOSURE in this computer's gate settings
             self._apply_exposure(self.exposure)
+            applied["exposure"] = "camera"
+        else:
+            # The driver keeps a manual exposure even after the camera is
+            # closed, so Auto always switches automatic exposure back on.
+            self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, AUTO_EXPOSURE_ON)
+            applied["exposure"] = "camera"
+        backlight = wanted["backlight_compensation"]
+        if backlight != "auto":
+            applied["backlight"] = self._set_checked(cv2.CAP_PROP_BACKLIGHT, 1 if backlight == "on" else 0)
+        else:
+            self._restore(cv2.CAP_PROP_BACKLIGHT)
+            applied["backlight"] = "camera"
+        if wanted["camera_focus"] == "locked":
+            applied["focus"] = self._set_checked(cv2.CAP_PROP_AUTOFOCUS, 0)
+        else:
+            self._restore(cv2.CAP_PROP_AUTOFOCUS)
+            applied["focus"] = "camera"
+        return applied
+
+    def _set_checked(self, prop, value):
+        """Sets a camera property and reads it back: "applied" if the camera
+        kept it, "ignored" if not. Remembers the camera's own value first."""
+        cap = self._cap
+        if prop not in self._originals:
+            self._originals[prop] = cap.get(prop)
+        accepted = cap.set(prop, value)
+        return "applied" if accepted and abs(cap.get(prop) - value) < 0.5 else "ignored"
+
+    def _restore(self, prop):
+        if prop in self._originals:
+            self._cap.set(prop, self._originals[prop])
+
+    def configure(self, settings):
+        """Settings > Camera, as sent with every scan answer. Reconnects the
+        camera - the picture blinks for about a second - only when one of
+        the CAPTURE_KEYS changed. Returns whether it will."""
+        wanted = {key: str(settings.get(key) or "auto") for key in CAPTURE_KEYS}
+        if wanted == self._capture:
+            return False
+        self._capture = wanted
+        self._reopen = True
+        self._next_open_attempt = 0.0
+        return True
+
+    def measured_fps(self):
+        """Frames a second the camera really delivers (over its last ~90
+        frames), or None until there are enough to tell."""
+        times = list(self._frame_times)
+        if len(times) < 10 or times[-1] <= times[0]:
+            return None
+        return (len(times) - 1) / (times[-1] - times[0])
+
+    def report(self):
+        """What this camera actually runs at - for Settings > Camera."""
+        size = self.capture_size()
+        fps = self.measured_fps()
+        return {
+            "resolution": f"{size[0]}x{size[1]}" if size else None,
+            "resolution_asked": self._capture["camera_resolution"],
+            "fps": round(fps, 1) if fps else None,
+            "fps_asked": self._capture["camera_fps"],
+            "zoom": self.zoom,
+            **self._applied,
+        }
 
     def _apply_exposure(self, exposure):
         """Best-effort, experimental: a shorter exposure time (faster
@@ -114,8 +218,9 @@ class Camera:
         control panel/driver docs, then confirm the change actually took by
         watching the preview darken or reading back
         cap.get(cv2.CAP_PROP_EXPOSURE) after this call."""
-        self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
-        self._cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
+        self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, AUTO_EXPOSURE_OFF)
+        accepted = self._cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
+        return "applied" if accepted and abs(self._cap.get(cv2.CAP_PROP_EXPOSURE) - exposure) < 0.5 else "ignored"
 
     def is_open(self):
         return bool(self._cap and self._cap.isOpened())
@@ -167,6 +272,10 @@ class Camera:
         can never freeze the Tk UI or the scan loop."""
         consecutive_failures = 0
         while self._running:
+            if self._reopen:  # Settings > Camera changed (configure)
+                self._reopen = False
+                self._close_after_failure()
+                self._next_open_attempt = 0.0
             if self._cap is None:
                 now = time.monotonic()
                 if now >= self._next_open_attempt:
@@ -187,6 +296,7 @@ class Camera:
                 continue
 
             consecutive_failures = 0
+            self._frame_times.append(time.monotonic())
             with self._lock:
                 self._latest_frame = frame
 
@@ -232,6 +342,15 @@ class Camera:
             raise RuntimeError("Failed to encode the captured frame as JPEG.")
         height, width = frame.shape[:2]
         return buffer.tobytes(), (width, height)
+
+
+def _resolution(value):
+    """Settings > Camera's "1920x1080" -> (1920, 1080); "auto" -> 720p."""
+    try:
+        width, height = (int(part) for part in str(value).lower().split("x"))
+        return width, height
+    except ValueError:
+        return CAPTURE_WIDTH, CAPTURE_HEIGHT
 
 
 def list_available_cameras(max_probe=10):

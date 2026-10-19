@@ -296,3 +296,15 @@ class TestSession(models.Model):
     gate_location = models.CharField(max_length=100)
     first_seen = models.DateTimeField()
     last_seen = models.DateTimeField()
+
+
+class GateCamera(models.Model):
+    """What a gate monitor's camera actually runs at - the resolution it
+    gave, the frame rate it measures, whether it took the exposure /
+    backlight / focus settings - as that gate monitor last reported it
+    (POST /api/gate/camera-report). Shown under the Settings page's Camera
+    settings; see logs/camera_status.py."""
+
+    gate_location = models.CharField(max_length=100, unique=True)
+    report = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)

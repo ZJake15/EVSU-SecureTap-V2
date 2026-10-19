@@ -542,13 +542,19 @@ class TestRun:
             return info
 
 
-def describe_setup(config, camera, camera_name):
-    """The gate monitor's own settings, for the session's settings snapshot."""
+def describe_setup(config, camera, camera_name, report=None):
+    """The gate monitor's own settings, for the session's settings snapshot -
+    the values it actually runs with (speed mode, then Settings > Camera),
+    from main.camera_report when given."""
+    report = report or {}
     return {
         "camera": camera_name, "camera_index": camera.index, "camera_zoom": camera.zoom,
-        "camera_resolution": camera.capture_size(), "upload_max_dimension": config.upload_max_dimension,
-        "scan_pause_seconds": config.scan_pause_seconds, "video_fps": config.video_fps,
+        "camera_resolution": camera.capture_size(),
+        "upload_max_dimension": report.get("upload_size", config.upload_max_dimension),
+        "scan_pause_seconds": report.get("scan_pause", config.scan_pause_seconds),
+        "video_fps": report.get("video_fps", config.video_fps),
         "app_version": config.app_version, "gate_location": config.gate_location,
+        "camera_report": report,
     }
 
 

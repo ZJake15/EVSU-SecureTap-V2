@@ -1329,6 +1329,15 @@ class GateMonitorWindow:
     def set_threshold(self, threshold):
         self._queue.put(("threshold", threshold))
 
+    def set_video_fps(self, fps):
+        """Settings > Camera's "Gate monitor video smoothness" (or this
+        computer's speed mode, on Auto) - from the next redraw."""
+        self._queue.put(("video_fps", fps))
+
+    def set_student_display_fps(self, fps):
+        """Settings > Camera's "Student display smoothness"."""
+        self._queue.put(("student_display_fps", fps))
+
     def set_after_hours(self, after_hours):
         """Settings > Scheduling > Gate opening hours: whether it's outside
         them right now (the backend sends it with every scan answer)."""
@@ -1435,6 +1444,12 @@ class GateMonitorWindow:
             self.threshold_label.configure(text=f"{payload:.2f}")
         elif kind == "after_hours":
             self._render_after_hours(payload)
+        elif kind == "video_fps":
+            self._video_refresh_ms = round(1000 / payload) if payload else VIDEO_REFRESH_MS
+        elif kind == "student_display_fps":
+            self._student_display_fps = payload
+            if self._student is not None:
+                self._student.set_fps(payload)
         elif kind == "alert_settings":
             self._alert_spoof = bool(payload.get("spoof", True))
         elif kind == "card_match":

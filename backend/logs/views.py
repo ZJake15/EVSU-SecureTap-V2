@@ -23,11 +23,12 @@ from audit.utils import log_action
 from securetap_project.media_auth import build_signed_media_url
 from configuration import schedule
 from configuration import store as system_settings
+from configuration.registry import CAMERA_KEYS
 from users import insightface_utils, liveness_utils, occlusion_utils, reenrollment
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
-from . import gate_shifts, motion, test_mode
+from . import camera_status, gate_shifts, motion, test_mode
 from .filters import EntryLogFilter
 from .models import (
     EntryLog,
@@ -254,6 +255,21 @@ class TestModeDeleteView(APIView):
 
     def post(self, request):
         return Response({"deleted": test_mode.delete_test_data()})
+
+
+class GateCameraReportView(APIView):
+    """A gate monitor saying what its camera actually runs at (resolution,
+    measured frame rate, whether the exposure / backlight / focus settings
+    took) - shown under the Settings page's Camera settings. See
+    logs/camera_status.py."""
+
+    permission_classes = [HasServiceToken]
+
+    def post(self, request):
+        gate_location = str(request.data.get("gate_location") or "").strip()
+        if not gate_location:
+            return Response({"detail": "gate_location is required."}, status=http_status.HTTP_400_BAD_REQUEST)
+        return Response({"saved": camera_status.save(gate_location, request.data.get("report") or {})})
 
 
 class GateDutyView(APIView):
@@ -779,6 +795,9 @@ class IdentifyView(APIView):
             # Settings > Scheduling > Gate opening hours: the gate monitor
             # alerts the guard and tags its live log while this is true.
             "after_hours": schedule.is_after_hours(),
+            # Settings > Camera: resolution, frame rate, face-check pace and
+            # so on - "auto" leaves that computer's speed mode in charge.
+            "camera": {key: system_settings.get(key) for key in CAMERA_KEYS},
         }
 
     @staticmethod

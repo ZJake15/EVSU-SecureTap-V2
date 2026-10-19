@@ -200,6 +200,10 @@ class StudentDisplayWindow:
         if not self._closed:
             self.set_fullscreen(not self.window.attributes("-fullscreen"))
 
+    def set_fps(self, fps):
+        """Settings > Camera's "Student display smoothness" - from the next redraw."""
+        self._refresh_ms = round(1000 / fps) if fps else REFRESH_MS
+
     def close(self):
         if self._closed:
             return

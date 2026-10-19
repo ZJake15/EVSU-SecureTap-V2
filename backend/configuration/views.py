@@ -24,9 +24,13 @@ class SettingsView(APIView):
 
     @staticmethod
     def _payload():
+        from logs import camera_status
+
         return store.describe(status={
             "covered_face_mode": occlusion_utils.active_mode_description(),
             "cleanup_time": schedule.describe_cleanup(),  # last run and what it deleted, next run
+            # Camera group: what each gate's camera actually does, as it reported.
+            **camera_status.describe(),
         })
 
     def get(self, request):

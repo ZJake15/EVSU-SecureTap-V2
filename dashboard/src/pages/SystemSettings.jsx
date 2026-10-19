@@ -231,6 +231,7 @@ const SECTION_ICONS = {
   face: "user-focus",
   spoof: "shield-warning",
   quality: "image",
+  camera: "video-camera",
   nfc: "identification-card",
   enrollment: "user-plus",
   privacy: "lock-key",
@@ -241,6 +242,9 @@ const SECTION_ICONS = {
 
 // Small headings inside a long group, shown above the setting they start with.
 const SUBHEADINGS = {
+  camera_resolution: "The camera's picture",
+  scan_pause: "Face checks",
+  video_fps: "Screens",
   auto_delete_enabled: "Automatic deletion",
   reenroll_months: "Face re-enrollment",
   gate_hours_enabled: "Gate opening hours",

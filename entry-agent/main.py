@@ -23,6 +23,9 @@ from ui import GateMonitorWindow, set_app_user_model_id
 # value meant someone walking past at normal speed could cross the frame
 # between samples entirely.
 STATUS_CHECK_INTERVAL_SECONDS = 5
+# How often the gate tells the backend what its camera runs at, when nothing
+# changed (Settings > Camera shows it - see camera_report).
+CAMERA_REPORT_SECONDS = 60
 
 # Read by the root launcher (launcher.py's _read_last_session_summary) to show
 # a "last session" line before the entry-agent is even started again - in
@@ -248,7 +251,71 @@ def _build_profile(api_client, result, card_id, direction):
     }
 
 
-def scan_loop(config, api_client, camera, ui, stop_event, test_run=None):
+def live_settings(config):
+    """What this gate monitor runs with right now: the launcher's speed mode
+    (config.py) until Settings > Camera says otherwise - apply_camera_settings
+    keeps it current. Shared with the test mode's settings snapshot."""
+    return {
+        "scan_pause_seconds": config.scan_pause_seconds, "upload_max_dimension": config.upload_max_dimension,
+        "video_fps": config.video_fps, "student_display_fps": config.student_display_fps, "camera_name": "",
+    }
+
+
+def apply_camera_settings(settings, config, camera, ui, live):
+    """Settings > Camera, as sent with a scan answer. "auto" keeps this
+    computer's speed mode; the camera reconnects only when its picture
+    settings changed (Camera.configure)."""
+    def chosen(key, fallback, cast):
+        value = settings.get(key)
+        if value in (None, "", "auto"):
+            return fallback
+        try:
+            return cast(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    live["scan_pause_seconds"] = chosen("scan_pause", config.scan_pause_seconds, float)
+    live["upload_max_dimension"] = chosen("upload_size", config.upload_max_dimension, int)
+    camera.max_upload_dimension = live["upload_max_dimension"]
+    live["video_fps"] = chosen("video_fps", config.video_fps, int)
+    ui.set_video_fps(live["video_fps"])
+    live["student_display_fps"] = chosen("student_display_fps", config.student_display_fps, int)
+    ui.set_student_display_fps(live["student_display_fps"])
+    camera.configure(settings)
+
+
+def camera_report(camera, live):
+    """What this gate's camera and scan actually run at - for Settings > Camera."""
+    return {
+        **camera.report(), "camera": live.get("camera_name") or None, "scan_pause": live["scan_pause_seconds"],
+        "upload_size": live["upload_max_dimension"], "video_fps": live["video_fps"],
+        "student_display_fps": live["student_display_fps"],
+    }
+
+
+def _report_camera(config, api_client, camera, live, last):
+    """Sends camera_report when it changes (or once its frame rate is first
+    measured), and otherwise once every CAMERA_REPORT_SECONDS - on its own
+    thread, so it never delays a face check."""
+    report = camera_report(camera, live)
+    if report["resolution"] is None:
+        return  # no picture yet
+    steady = {**report, "fps": report["fps"] is not None}
+    now = time.monotonic()
+    if steady == last.get("steady") and now - last.get("at", 0.0) < CAMERA_REPORT_SECONDS:
+        return
+    last["steady"], last["at"] = steady, now
+
+    def send():
+        try:
+            api_client.camera_report(config.gate_location, report)
+        except requests.RequestException:
+            pass  # sent again later
+
+    threading.Thread(target=send, daemon=True).start()
+
+
+def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=None):
     """Runs continuously on its own thread: samples a frame and checks every
     face in it against every enrolled face (1:N search per face) - this is
     the primary gate check, no card tap required, and handles several
@@ -264,13 +331,16 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None):
     last_threshold = None
     last_alerts = None
     last_sign_in = None
+    last_camera = None
+    last_report = {}
+    live = live if live is not None else live_settings(config)
     photo_cache = {}  # URL -> bytes, lives for this scan session
     while not stop_event.is_set():
         t_frame = time.perf_counter()
         try:
             image_bytes, image_size = camera.capture_jpeg()
         except RuntimeError:
-            stop_event.wait(config.scan_pause_seconds)
+            stop_event.wait(live["scan_pause_seconds"])
             continue
 
         try:
@@ -295,6 +365,11 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None):
                 last_sign_in = sign_in
             # Settings > Scheduling > Gate opening hours.
             ui.set_after_hours(response.get("after_hours", False))
+            # Settings > Camera - resolution, frame rate, face-check pace...
+            camera_settings = response.get("camera")
+            if camera_settings is not None and camera_settings != last_camera:
+                apply_camera_settings(camera_settings, config, camera, ui, live)
+                last_camera = camera_settings
             recognitions = [
                 r
                 for r in (
@@ -319,7 +394,8 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None):
             # feed kept looking live.
             traceback.print_exc()
 
-        stop_event.wait(config.scan_pause_seconds)
+        _report_camera(config, api_client, camera, live, last_report)
+        stop_event.wait(live["scan_pause_seconds"])
 
 
 def handle_tap(config, api_client, offline_queue, ui, nfc_id):
@@ -441,11 +517,15 @@ def main():
         camera_index, exposure=config.camera_exposure, max_upload_dimension=config.upload_max_dimension,
         zoom=config.camera_zoom,
     )
+    # What this gate runs with right now (speed mode, then Settings > Camera).
+    live = live_settings(config)
+    live["camera_name"] = camera_names.get(camera_index, f"#{camera_index}")
 
     def pick_camera(index):
         """The guard chose a camera in the gate monitor - use it now and
         prefer it next time."""
         camera.set_index(index)
+        live["camera_name"] = camera_names.get(index, f"#{index}")
         if index in camera_names:
             camera_select.remember(camera_names[index])
     # Starts a background thread that opens the webcam (retrying on its own
@@ -541,13 +621,13 @@ def main():
         results_folder = Path(data_file("test-results"))
         test_run = test_mode.TestRun(
             results_folder, api_client, config.gate_location,
-            lambda: test_mode.describe_setup(config, camera, camera_names.get(camera.index, f"#{camera.index}")),
+            lambda: test_mode.describe_setup(config, camera, live["camera_name"], camera_report(camera, live)),
         )
         monitor.set_test_mode()
         test_mode.TestWindow(monitor, test_run, api_client, results_folder)
 
     threading.Thread(
-        target=scan_loop, args=(config, api_client, camera, monitor, stop_event, test_run), daemon=True
+        target=scan_loop, args=(config, api_client, camera, monitor, stop_event, test_run, live), daemon=True
     ).start()
 
     status_busy = threading.Event()

@@ -60,6 +60,9 @@ SECTIONS = [
     ("face", "Face Recognition", "How the camera decides who someone is."),
     ("spoof", "Anti-Spoofing (Fake Face Check)", "Stops someone using a printed photo or a phone screen of another student."),
     ("quality", "Photo Quality Checks", "Which camera frames are good enough to use."),
+    ("camera", "Camera",
+     "How every gate's camera takes its picture and how often faces are checked. Auto keeps what each "
+     "computer's speed mode (in the launcher) picks."),
     ("nfc", "NFC Card", "When the system asks for a card tap instead of deciding from the face alone."),
     ("enrollment", "Enrollment", "Registering a new student or staff member."),
     ("privacy", "Privacy & Data Retention",
@@ -78,7 +81,17 @@ MORE_OPTIONS = {
     "spoof_cooldown_seconds",  # Anti-Spoofing
     "max_turn", "edge_margin", "distance_correction", "show_face_distance",  # Photo Quality Checks
     "covered_face_mode", "covered_rule_mouth", "covered_rule_texture", "covered_rule_det_score",
+    "student_display_fps", "camera_exposure", "backlight_compensation", "camera_focus",  # Camera
 }
+
+# The Camera group - sent to every gate monitor with each scan answer
+# (logs.views.IdentifyView._agent_info), which applies a change within a
+# second. "auto" = what that computer's speed mode picks (device_setup.py),
+# exactly as before this group existed.
+CAMERA_KEYS = (
+    "camera_resolution", "camera_fps", "scan_pause", "upload_size", "video_fps", "student_display_fps",
+    "camera_exposure", "backlight_compensation", "camera_focus",
+)
 
 DEFINITIONS = [
     # ---- 1. Face Recognition -------------------------------------------------
@@ -176,6 +189,83 @@ DEFINITIONS = [
         FLOAT, _from_settings("OCCLUSION_CLASSIFIER_THRESHOLD"), 0.05, 0.95, 0.01,
         note='Used with the "Trained model" detection method (see More options, below).',
         depends_on="covered_face_enabled",
+    ),
+    # ---- 3b. Camera ------------------------------------------------------------
+    # Under each one, the Settings page shows what every gate's camera actually
+    # does (logs/camera_status.py - the gate monitors report it).
+    SettingDef(
+        "camera_resolution", "camera", "Camera resolution",
+        "How detailed a picture the camera takes. Higher keeps faces far away sharper but works the computer "
+        "harder. It only helps together with camera zoom (launcher) above 1x or more \"Detail sent for face "
+        "checks\" - otherwise the picture is shrunk again before checking.",
+        CHOICE, "auto",
+        choices=(("auto", "Auto (720p)"), ("640x480", "480p"), ("1280x720", "720p"), ("1920x1080", "1080p"),
+                 ("2560x1440", "1440p")),
+        note="A camera without the chosen size uses its nearest. After changing it, check the distance shown on "
+             "the face boxes at a measured spot - a differently shaped picture can change it.",
+    ),
+    SettingDef(
+        "camera_fps", "camera", "Camera frame rate",
+        "How many pictures a second the camera is asked for. A higher rate means less motion blur in each "
+        "picture. Not how often faces are checked - that's the pause below.",
+        CHOICE, "auto", choices=(("auto", "Auto"), ("15", "15"), ("24", "24"), ("30", "30"), ("60", "60")),
+        unit="a second",
+        note="A camera that can't do the chosen rate gives its nearest; under each gate is the rate it measures. "
+             "In dim light many cameras slow down to lengthen each shot (the EMEET: about 17 a second indoors) - "
+             "a faster Exposure (More options) gets the full rate back, at the cost of a darker picture.",
+    ),
+    SettingDef(
+        "scan_pause", "camera", "Pause between face checks",
+        "After each face check the gate waits this long before checking the next picture. Shorter decides "
+        "faster - a decision needs 2 agreeing checks - but keeps the computer busier.",
+        CHOICE, "auto",
+        choices=(("auto", "Auto"), ("0.05", "0.05 s"), ("0.1", "0.1 s"), ("0.2", "0.2 s"), ("0.35", "0.35 s"),
+                 ("0.5", "0.5 s")),
+        note="Auto = the computer's speed mode: 0.1 s Fast, 0.2 s Standard, 0.35 s Light.",
+    ),
+    SettingDef(
+        "upload_size", "camera", "Detail sent for face checks",
+        "How wide each picture is when its faces are checked. Wider keeps more detail in faces far away - better "
+        "matching and fake-face checks at 4-5 m - but each check takes longer.",
+        CHOICE, "auto", choices=(("auto", "Auto"), ("640", "640 px"), ("960", "960 px"), ("1280", "1280 px")),
+        note="Auto = 960 px (640 px in the Light speed mode). A picture already smaller is sent as it is.",
+    ),
+    SettingDef(
+        "video_fps", "camera", "Gate monitor video smoothness",
+        "How many times a second the guard's screen redraws the camera picture. Only how smooth it looks - "
+        "not what's checked.",
+        CHOICE, "auto", choices=(("auto", "Auto"), ("10", "10"), ("15", "15"), ("20", "20"), ("30", "30")),
+        unit="a second",
+        note="Auto = 20 Fast, 15 Standard, 12 Light. Lower it if the gate monitor feels sluggish.",
+    ),
+    SettingDef(
+        "student_display_fps", "camera", "Student display smoothness",
+        "How many times a second the student-facing screen redraws the camera picture.",
+        CHOICE, "auto", choices=(("auto", "Auto"), ("5", "5"), ("10", "10"), ("15", "15"), ("30", "30")),
+        unit="a second",
+        note="Auto = 15 Fast, 10 Standard, 6 Light.",
+    ),
+    SettingDef(
+        "camera_exposure", "camera", "Exposure (shutter speed)",
+        "A faster shutter freezes people walking - less motion blur - but makes the picture darker. Use it only "
+        "where the gate is well lit.",
+        CHOICE, "auto", choices=(("auto", "Auto"), ("-6", "1/64 s"), ("-7", "1/128 s"), ("-8", "1/256 s")),
+        note="Auto = the camera adjusts its own exposure. Depends on the camera - under each gate, whether its "
+             "camera took it.",
+    ),
+    SettingDef(
+        "backlight_compensation", "camera", "Backlight compensation",
+        "For a gate with bright daylight behind the people walking in, which makes their faces come out dark.",
+        CHOICE, "auto", choices=(("auto", "Camera's own"), ("on", "On"), ("off", "Off")),
+        note="Depends on the camera - under each gate, whether its camera took it.",
+    ),
+    SettingDef(
+        "camera_focus", "camera", "Focus",
+        "Autofocus can \"hunt\" and blur faces 3-5 m away as people move. Locked turns it off and keeps the "
+        "focus where it is when the camera starts.",
+        CHOICE, "auto", choices=(("auto", "Autofocus"), ("locked", "Locked")),
+        note="Depends on the camera - under each gate, whether its camera took it. If faces look soft when "
+             "locked, go back to Autofocus.",
     ),
     # ---- 4. NFC Card ----------------------------------------------------------
     SettingDef(

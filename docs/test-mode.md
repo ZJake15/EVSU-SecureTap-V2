@@ -140,7 +140,10 @@ decision_time_ms, decision_time_from_first_face_ms, frames_processed,
 frames_with_face, frames_skipped_turned / _moving / _blur / _edge,
 frames_covered, frames_face_beyond_limit, result, expected_result, correct,
 repeat_entry, matched_name, matched_id, match_confidence, best_similarity,
-liveness_score, face_width_px, face_height_px, estimated_distance_m,
+liveness_score, liveness_model_27, liveness_model_40, liveness_classical
+(the fake-face score's parts: each trained model's own "real" score and the
+texture cues - for comparing the models and tuning the strictness),
+face_width_px, face_height_px, estimated_distance_m,
 frame_size_sent, camera_resolution, note, status (final / redone).
 
 ## Speed — when the gate feels slow

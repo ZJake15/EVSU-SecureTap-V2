@@ -33,7 +33,7 @@ class Command(BaseCommand):
         if not source.is_file():
             raise CommandError(f"{source} doesn't exist (is the USB drive still plugged in?).")
         if not target.is_dir() or any(target.iterdir()):
-            raise CommandError(f"{target} has to be an empty folder.")
+            raise CommandError(f"{target} has to be an existing, empty folder - make one first.")
         password = sys.stdin.buffer.readline().decode("utf-8-sig").rstrip("\r\n")
         self.stdout.write(f"Unlocking {source.name}...")
         try:

@@ -236,6 +236,9 @@ class Camera:
         if new_index == self.index:
             return
         self.index = new_index
+        # The old camera's own exposure/backlight/focus values mean nothing
+        # for the new one - Auto must put back the new camera's.
+        self._originals = {}
         self._close_after_failure()
         self._next_open_attempt = 0.0
 

@@ -42,6 +42,9 @@ entry-agent/camera_choice.json
 # Launcher local state (remembered gate/direction/guard name - per-machine,
 # not something to check in)
 launcher_settings.json
+# The launcher's and the Gate icon's logs (launcher.py LogFile).
+launcher.log*
+gate-launcher.log*
 # This computer's speed mode and speed-test result (device_setup.py).
 device_profile.json
 

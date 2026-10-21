@@ -1,6 +1,7 @@
 import time
 
 import numpy as np
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.core.files.base import ContentFile
 from django.utils import timezone
@@ -26,6 +27,7 @@ from securetap_project.media_auth import build_signed_media_url
 from configuration import schedule
 from configuration import store as system_settings
 from configuration.registry import CAMERA_KEYS
+from securetap_project.code_fingerprint import code_fingerprint
 from users import insightface_utils, liveness_utils, occlusion_utils, reenrollment
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
@@ -108,9 +110,13 @@ class HealthView(APIView):
     # answers with an older number (or none at all - an older SecureTap left
     # running on the same computer), see launcher.backend_identity.
     API_VERSION = 2
+    # The code this process was started with (securetap_project/
+    # code_fingerprint.py) - the launcher won't use a backend still running
+    # code from before an update or an edit.
+    CODE = code_fingerprint(settings.BASE_DIR)
 
     def get(self, request):
-        return Response({"status": "ok", "app": "evsu-securetap", "api_version": self.API_VERSION})
+        return Response({"status": "ok", "app": "evsu-securetap", "api_version": self.API_VERSION, "code": self.CODE})
 
 
 class GateSummaryView(APIView):

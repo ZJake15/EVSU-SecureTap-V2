@@ -385,16 +385,17 @@ class TestRun:
         with self._lock:
             if items:
                 self.last_face_at = t_answer
+            # Logged the whole time test mode is open, not only during a
+            # trial - "the results come late" can happen any time.
+            if t_sent is not None and (t_answer - t_sent) * 1000 >= SLOW_ANSWER_MS:
+                self._log_perf("slow answer", (t_answer - t_sent) * 1000, *self.last_system)
             trial = self.trial
             if self.state != "running" or trial is None or t_frame < trial["t_start"]:
                 return
             trial["frames"] += 1
             if t_sent is not None:
                 trial["capture_ms"].append((t_sent - t_frame) * 1000)
-                answer_ms = (t_answer - t_sent) * 1000
-                trial["answer_ms"].append(answer_ms)
-                if answer_ms >= SLOW_ANSWER_MS:
-                    self._log_perf("slow answer", answer_ms, *self.last_system)
+                trial["answer_ms"].append((t_answer - t_sent) * 1000)
             timing = response.get("test_timing") or {}
             for key, field in (("server_ms", "server_ms"), ("faces_ms", "faces_ms"), ("fake_ms", "fake_check_ms")):
                 if timing.get(field) is not None:

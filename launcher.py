@@ -19,6 +19,8 @@ Run it with the repo's venv:  .venv\\Scripts\\python.exe launcher.py
 or double-click SecureTap.bat, which does the same thing.
 """
 
+import ctypes
+import hashlib
 import json
 import os
 import re
@@ -146,6 +148,102 @@ ENTRY_AGENT_DESCRIPTION = "Gate monitor — camera face recognition + NFC card r
 # entry-agent's Tk windows are unaffected - this suppresses the console, not
 # the GUI.
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+_CREATE_SUSPENDED = 0x00000004
+
+# The launcher's log is also kept on disk (it used to vanish with the
+# window), so an error can still be read - or sent - after the fact.
+LOG_FILE = (device_setup.DATA_DIR or ROOT) / "launcher.log"
+GATE_LOG_FILE = (device_setup.DATA_DIR or ROOT) / "gate-launcher.log"
+
+
+class LogFile:
+    """Appends each log line, with the time, to a file - about 2 MB at most,
+    then it starts again (the previous one kept as .1). Never lets a disk
+    problem break the launcher."""
+
+    MAX_BYTES = 2_000_000
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self._lock = threading.Lock()
+        self._fh = None
+
+    def write(self, line):
+        with self._lock:
+            try:
+                if self._fh is None:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    self._fh = open(self.path, "a", encoding="utf-8", errors="replace")
+                self._fh.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
+                self._fh.flush()
+                if self._fh.tell() > self.MAX_BYTES:
+                    self._fh.close()
+                    self._fh = None
+                    os.replace(self.path, self.path.with_name(self.path.name + ".1"))
+            except OSError:
+                self._fh = None
+
+
+# ---- the launcher's programs close with it ---------------------------------------
+#
+# Everything the launcher starts (the backend, the gate monitor) goes into one
+# Windows "job" that closes everything in it when the launcher's process ends
+# - however it ends. Before, a launcher that was closed from Task Manager, or
+# crashed, left its backend running invisibly; the next launcher then used
+# that old backend, still running the code from before an update.
+class _BasicLimits(ctypes.Structure):
+    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t), ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32)]
+
+
+class _ExtendedLimits(ctypes.Structure):
+    _fields_ = [("BasicLimitInformation", _BasicLimits), ("IoInfo", ctypes.c_uint64 * 6),
+                ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JobObjectExtendedLimitInformation = 9
+_job = None
+
+
+def _kill_on_exit_job():
+    """The launcher's job (made on first use), or None if Windows won't."""
+    global _job
+    if _job is None and os.name == "nt":
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        kernel32.SetInformationJobObject.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        job = kernel32.CreateJobObjectW(None, None)
+        limits = _ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if job and kernel32.SetInformationJobObject(job, _JobObjectExtendedLimitInformation, ctypes.byref(limits),
+                                                     ctypes.sizeof(limits)):
+            _job = job
+    return _job
+
+
+def _start_in_job(popen_args, popen_kwargs):
+    """Popen, with the new process (and so everything it starts) in the
+    launcher's job. Started paused and only let go once it's in the job, so
+    not even a process it starts at once (the venv's python.exe starts the
+    real one straight away) can slip out. Falls back to a plain start."""
+    job = _kill_on_exit_job()
+    if job is None:
+        return subprocess.Popen(popen_args, **popen_kwargs)
+    popen_kwargs = {**popen_kwargs, "creationflags": popen_kwargs.get("creationflags", 0) | _CREATE_SUSPENDED}
+    process = subprocess.Popen(popen_args, **popen_kwargs)
+    handle = int(process._handle)
+    try:
+        ctypes.windll.kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        ctypes.windll.kernel32.AssignProcessToJobObject(job, handle)
+    finally:
+        ctypes.windll.ntdll.NtResumeProcess.argtypes = [ctypes.c_void_p]
+        ctypes.windll.ntdll.NtResumeProcess(handle)  # always - never leave it paused
+    return process
 
 # How each service reads in the status bar: word, color, icon.
 SERVICE_STATES = {
@@ -214,12 +312,47 @@ def _dashboard_build_is_current():
     return all(path.stat().st_mtime <= built_at for path in sources if path.is_file())
 
 
+_CODE_SKIP_FOLDERS = {"__pycache__", "media", "staticfiles", "node_modules", ".git"}
+_backend_code = None
+
+
+def code_fingerprint(folder):
+    """The same fingerprint backend/securetap_project/code_fingerprint.py
+    makes - every .py file's path, size and save time. Keep them in step."""
+    folder = Path(folder)
+    digest = hashlib.sha1()
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = sorted(d for d in dirs if d not in _CODE_SKIP_FOLDERS)
+        for name in sorted(files):
+            if not name.endswith(".py"):
+                continue
+            path = Path(root) / name
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            digest.update(f"{path.relative_to(folder).as_posix()}|{stat.st_size}|{int(stat.st_mtime)}\n".encode())
+    return digest.hexdigest()[:16]
+
+
+def backend_code():
+    """This copy's backend code fingerprint - worked out once per launcher."""
+    global _backend_code
+    if _backend_code is None:
+        _backend_code = code_fingerprint(BACKEND_DIR)
+    return _backend_code
+
+
 def backend_identity(timeout=1.0):
-    """Which backend answers on port 8000: "ours" (this version, or newer),
-    "old" (an older SecureTap - its /api/health has no api_version, e.g. the
-    old copy still running on a computer the new app was installed on), or
-    None (nothing). The launcher never uses an old one: the dashboard and
-    the gate monitor would quietly run on the old system and its old data."""
+    """Which backend answers on port 8000:
+    - "ours": this version, running this copy's code;
+    - "stale": this version, but started before the code changed (an update
+      was installed, or a file edited) - it would quietly serve old code;
+    - "old": an older SecureTap (its /api/health has no api_version, e.g. the
+      old copy still running on a computer the new app was installed on);
+    - None: nothing.
+    The launcher never uses an old or stale one: the dashboard and the gate
+    monitor would quietly run on the wrong code (missing pages answer 404)."""
     try:
         response = requests.get(HEALTH_URL, timeout=timeout)
     except requests.RequestException:
@@ -229,7 +362,36 @@ def backend_identity(timeout=1.0):
     except ValueError:
         return "old"
     version = data.get("api_version") if isinstance(data, dict) else None
-    return "ours" if isinstance(version, int) and version >= BACKEND_API_VERSION else "old"
+    if not (isinstance(version, int) and version >= BACKEND_API_VERSION):
+        return "old"
+    return "ours" if data.get("code") == backend_code() else "stale"
+
+
+def backend_process_on_port():
+    """(pid, command line) of whatever listens on port 8000, or None - to
+    tell whether it's a SecureTap backend this launcher may stop."""
+    script = ("$c = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | "
+              "Select-Object -First 1; if ($c) { $p = Get-CimInstance Win32_Process -Filter "
+              "\"ProcessId=$($c.OwningProcess)\"; Write-Output \"$($p.ProcessId)|$($p.CommandLine)\" }")
+    try:
+        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                                capture_output=True, text=True, timeout=20, creationflags=_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    line = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+    pid, _, command = line.partition("|")
+    return (int(pid), command) if pid.isdigit() else None
+
+
+def stop_stale_backend():
+    """Stops the out-of-date SecureTap backend on port 8000 - only if it
+    really is one (its command line runs manage.py runserver). Returns
+    whether it did."""
+    found = backend_process_on_port()
+    if not found or "manage.py" not in found[1] or "runserver" not in found[1]:
+        return False
+    subprocess.run(["taskkill", "/PID", str(found[0]), "/T", "/F"], capture_output=True, creationflags=_NO_WINDOW)
+    return True
 
 
 def service_responds(url, timeout=1.0):
@@ -449,8 +611,7 @@ class ManagedProcess:
             # the child in ways that have nothing to do with what's actually
             # being overridden (gate/officer name).
             env = {**os.environ, **env_overrides}
-        self.process = subprocess.Popen(
-            args,
+        self.process = _start_in_job(args, dict(
             cwd=str(cwd),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # one stream to read; Django logs to stderr
@@ -461,7 +622,7 @@ class ManagedProcess:
             errors="replace",
             creationflags=_NO_WINDOW,
             env=env,
-        )
+        ))
         threading.Thread(target=self._pump_output, args=(self.process,), daemon=True).start()
         return True
 
@@ -510,6 +671,7 @@ def _icon_label(parent, name, size, color, bold=True, **kwargs):
 class LauncherWindow:
     def __init__(self):
         self._log = deque(maxlen=LOG_MAX_LINES)
+        self._log_file = LogFile(LOG_FILE)
         self._log_dirty = False
         self._log_lock = threading.Lock()
         self._browser_opened = False
@@ -1185,8 +1347,8 @@ class LauncherWindow:
             self._append_log("[launcher] a backend is already running on port 8000 - using that one")
             self._set_status_message("Using a backend that was already running.")
             return
-        if identity == "old":
-            self._block_old_backend()
+        if identity in ("old", "stale"):
+            self._block_old_backend(stale=identity == "stale")
             return
         if not (BACKEND_DIR / "manage.py").exists():
             self._append_log(f"[launcher] backend not found at {BACKEND_DIR}")
@@ -1233,14 +1395,23 @@ class LauncherWindow:
 
         self._run_in_background(migrate, start)
 
-    def _block_old_backend(self):
-        """An older SecureTap's backend holds port 8000. Don't use it - and
+    def _block_old_backend(self, stale=False):
+        """An older SecureTap's backend - or this one's, still running code
+        from before an update (stale) - holds port 8000. Don't use it - and
         don't open the dashboard or gate monitor on it - until it's closed;
         _poll_health then starts this version's backend by itself."""
         already = self._backend_blocked
         self._backend_blocked = True
         self._backend_ok = False
         self._set_status("backend", "failed")
+        if stale:
+            self._set_status_message("SecureTap's backend is still running from before the last update, with the "
+                                     "old code. This one starts by itself once it's stopped.")
+            if not already:
+                self._append_log("[launcher] the backend on port 8000 runs older code (started before an update or "
+                                 "a code change) - not using it")
+                self.root.after(300, self._offer_to_stop_stale_backend)
+            return
         self._set_status_message("An older SecureTap is still running on this computer. Close it (or restart the "
                                  "computer) — this one starts by itself once it's gone.")
         if not already:
@@ -1252,6 +1423,30 @@ class LauncherWindow:
                 "the computer. This window starts SecureTap by itself as soon as the old one is gone.",
                 parent=self.root,
             ))
+
+    def _offer_to_stop_stale_backend(self):
+        if not messagebox.askyesno(
+            "SecureTap needs a restart",
+            "SecureTap's backend is still running in the background from before the last update (or a code "
+            "change), so it runs the old code - pages added since then would be missing.\n\n"
+            "Stop it now and start the current one? (A gate monitor that's open shows \"offline\" for a few "
+            "seconds.)",
+            parent=self.root,
+        ):
+            return
+
+        def done(stopped):
+            if stopped:
+                self._append_log("[launcher] stopped the old backend - starting the current one")
+            else:
+                messagebox.showwarning(
+                    "Couldn't stop it",
+                    "The program on port 8000 doesn't look like SecureTap's backend, so it wasn't stopped. Close "
+                    "it yourself, or restart the computer - SecureTap then starts by itself.",
+                    parent=self.root,
+                )
+
+        self._run_in_background(stop_stale_backend, done)
 
     def _open_dashboard(self):
         """The backend serves the dashboard at DASHBOARD_URL, so this only
@@ -1400,6 +1595,9 @@ class LauncherWindow:
         if identity == "old":
             warnings.append(("plugs", "An older SecureTap is still running on this computer — the gate monitor "
                                       "would log into the old system. Close the old SecureTap first."))
+        elif identity == "stale":
+            warnings.append(("plugs", "The backend is still running the code from before the last update — "
+                                      "restart SecureTap first."))
         elif identity is None:
             warnings.append(("plugs", "The backend isn't responding yet — entries won't be recorded until it is."))
         reader_ids = _nfc_reader_usb_ids()
@@ -1897,11 +2095,13 @@ class LauncherWindow:
                     self._start_backend()
                 self.root.after(HEALTH_POLL_MS, self._poll_health)
                 return
-            if identity == "old" and not self.backend.is_running():
-                self._block_old_backend()
+            if identity in ("old", "stale") and not self.backend.is_running():
+                self._block_old_backend(stale=identity == "stale")
                 self.root.after(HEALTH_POLL_MS, self._poll_health)
                 return
-            self._apply_health(identity == "ours")
+            # "stale" here is this launcher's own backend after a code file was
+            # edited - still running fine, just needing a restart to pick it up.
+            self._apply_health(identity in ("ours", "stale"))
             self.root.after(HEALTH_POLL_MS, self._poll_health)
 
         self._run_in_background(probe, apply)
@@ -2014,6 +2214,7 @@ class LauncherWindow:
         with self._log_lock:
             self._log.append(line)
             self._log_dirty = True
+        self._log_file.write(line)
 
     def _flush_log(self):
         # Also where signals spotted by the output-reader threads get acted on,
@@ -2110,6 +2311,7 @@ class GateStarter:
         self.profile = device_setup.load_profile()
         self._lines = deque(maxlen=200)
         self._lines_lock = threading.Lock()
+        self._log_file = LogFile(GATE_LOG_FILE)
         self._ready = False
         self._already_open = False
         self._started_backend = False
@@ -2153,6 +2355,7 @@ class GateStarter:
     def _record(self, line):
         with self._lines_lock:
             self._lines.append(line)
+        self._log_file.write(line)
 
     def _entry_agent_output(self, line):
         self._record(line)
@@ -2221,6 +2424,9 @@ class GateStarter:
         if identity == "old":
             self._fail("An older SecureTap is still running on this computer. Close it, then open EVSU SecureTap "
                        "Gate again.")
+        elif identity == "stale":
+            self._fail("SecureTap is still running from before the last update. Open EVSU SecureTap Admin - it offers "
+                       "to restart it - or restart the computer, then open the Gate again.")
         elif identity == "ours":
             self._open_gate_monitor()  # the Admin launcher's backend - use it
         else:

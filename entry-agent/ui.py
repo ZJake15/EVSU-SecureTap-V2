@@ -643,8 +643,8 @@ class GateMonitorWindow:
         self._feed_bounds = (0, 0, 1, 1)
         self._panel_bounds = None
         self._seen_log_ids = set()
-        self._log_entries = []  # newest first
-        self._log_photo_images = []  # keeps CTkImage refs alive for the log list
+        self._log_entries = []  # newest first; each keeps its own row widgets and thumbnails (_add_log_row)
+        self._log_placeholder = None  # "Earlier events appear here." while the list is empty
         self.stats = {"entries": 0, "unknown": 0, "spoof": 0, "occlusion": 0}
         self._alert = None  # {"kind": ..., "time": ..., "sub": ...} while the alarm banner shows
         # Settings page: "Alert on suspected fake face" - on until the
@@ -1146,9 +1146,23 @@ class GateMonitorWindow:
         self._log_relayout_job = self.window.after(150, self._relayout_log)
 
     def _relayout_log(self):
+        """The list's width changed: re-fit the texts that were shortened to
+        it - only re-setting their text, never recreating the rows (that
+        used to rebuild the whole list a second time after every event,
+        since adding a row nudges the width)."""
         self._log_relayout_job = None
-        if not self._closed:
-            self._rebuild_log_list()
+        if self._closed:
+            return
+        if self._log_entries:
+            self._render_featured(self._log_entries[0])
+        row_font, meta_font = self._log_fonts()
+        for entry in self._log_entries[1:]:
+            row = entry.get("_row")
+            if row is None:
+                continue
+            width = self._log_name_width(row["word_w"])
+            row["name"].configure(text=_ellipsize(row_font, entry["name"], width))
+            row["meta"].configure(text=_ellipsize(meta_font, self._meta(entry), width))
 
     def _build_status_bar(self):
         tk.Frame(self.window, bg=LINE, height=max(1, self._px(1))).grid(row=3, column=0, sticky="ew")
@@ -1936,14 +1950,20 @@ class GateMonitorWindow:
         removed = [entry for entry in self._log_entries if entry.get("log_id") in log_ids]
         if not removed:
             return
+        featured_before = self._log_entries[0]
+        for entry in removed:
+            self._destroy_log_row(entry)
         self._log_entries = [entry for entry in self._log_entries if entry.get("log_id") not in log_ids]
+        if self._log_entries and self._log_entries[0] is not featured_before:
+            self._destroy_log_row(self._log_entries[0])  # moves up from the list into the featured card
+        self._show_featured_entry()
+        self._refresh_log_placeholder()
         unknowns = sum(1 for entry in removed if entry["kind"] == "unknown")
         self.stats["unknown"] = max(0, self.stats["unknown"] - unknowns)
         if unknowns and self._alert and self._alert.get("kind") in ("unknown", "repeated"):
             if self._alert_hide_job:
                 self.window.after_cancel(self._alert_hide_job)
             self._hide_alert_banner()
-        self._rebuild_log_list()
         self._refresh_stat_labels()
 
     def _show_alert_banner(self, kind, sub=None):
@@ -1978,6 +1998,7 @@ class GateMonitorWindow:
         as the same kind of row, differing only in their kind - so the log
         is a single chronological record of the gate rather than two
         half-stories."""
+        previous = self._log_entries[0] if self._log_entries else None
         self._log_entries.insert(0, {
             "kind": kind,
             "name": name,
@@ -1991,8 +2012,17 @@ class GateMonitorWindow:
             "extra": extra,
             "log_id": log_id,  # so an undone Unknown can be taken out again (_undo_unknowns)
         })
+        # Only what changed is drawn: the new event takes the featured card,
+        # the one it replaces becomes the top row of the list, and the oldest
+        # row goes once the list is full. (Rebuilding all ~60 rows on every
+        # event froze the gate monitor for 1-2 s each time.)
+        for dropped in self._log_entries[self.MAX_LOG_ROWS:]:
+            self._destroy_log_row(dropped)
         self._log_entries = self._log_entries[: self.MAX_LOG_ROWS]
-        self._rebuild_log_list()
+        self._show_featured_entry()
+        if previous is not None and previous in self._log_entries:
+            self._add_log_row(previous)
+        self._refresh_log_placeholder()
 
     def _render_after_hours(self, after_hours):
         """The header pill: ENTRY during opening hours, a caution AFTER HOURS
@@ -2060,9 +2090,9 @@ class GateMonitorWindow:
         self.feat_word.configure(text=entry["feature_word"])
         self.feat_time.configure(text=entry["time"])
 
-        image = self._thumb(entry, s["feat_thumb"])
-        self._log_photo_images.append(image)
-        self.feat_thumb.configure(image=image)
+        if "_thumb_feat" not in entry:  # made once - Tk also needs the image kept referenced
+            entry["_thumb_feat"] = self._thumb(entry, s["feat_thumb"])
+        self.feat_thumb.configure(image=entry["_thumb_feat"])
         body_width = self.feat_body.winfo_width() / self._scale
         # Before the window is first laid out the width reads as ~1 - fall
         # back to a sensible wrap rather than wrapping every word.
@@ -2087,75 +2117,109 @@ class GateMonitorWindow:
             self.feat_match.grid_remove()
 
     def _rebuild_log_list(self):
+        """Draws the whole live log from scratch - only when the window is
+        built. Every later change draws just the rows it touches
+        (_push_log_row, _undo_unknowns, _relayout_log)."""
         for child in self.log_list.winfo_children():
             child.destroy()
-        self._log_photo_images = []  # keep CTkImage refs alive - Tk drops unreferenced ones
+        self._log_placeholder = None
+        for entry in self._log_entries:
+            entry.pop("_row", None)
+        self._show_featured_entry()
+        for entry in self._log_entries[1:]:
+            self._add_log_row(entry)
+        self._refresh_log_placeholder()
 
+    def _show_featured_entry(self):
+        """The newest event in the big card at the top, or "no events yet"."""
         if not self._log_entries:
             self.feat_card.grid_remove()
             self.feat_empty.grid(row=1, column=0, sticky="w", pady=(4, 0))
-            self._label(self.log_list, "Earlier events appear here.", (FONT, 14), INK_400).grid(
-                row=0, column=0, sticky="w", padx=14, pady=14
-            )
             return
-
         self.feat_empty.grid_remove()
         self.feat_card.grid()
         self._render_featured(self._log_entries[0])
 
+    def _refresh_log_placeholder(self):
+        has_rows = any("_row" in entry for entry in self._log_entries[1:])
+        if has_rows and self._log_placeholder is not None:
+            self._log_placeholder.destroy()
+            self._log_placeholder = None
+        elif not has_rows and self._log_placeholder is None:
+            self._log_placeholder = self._label(self.log_list, "Earlier events appear here.", (FONT, 14), INK_400)
+            self._log_placeholder.pack(anchor="w", padx=14, pady=14)
+
+    def _log_fonts(self):
         s = self._s
-        earlier = self._log_entries[1:]
-        if not earlier:
-            self._label(self.log_list, "Earlier events appear here.", (FONT, 14), INK_400).grid(
-                row=0, column=0, sticky="w", padx=14, pady=14
-            )
-            return
-        row_font = self._tkfont(FONT, s["row_name"], "bold")
-        meta_font = self._tkfont(FONT_MONO_MEDIUM, 14)
-        word_font = self._tkfont(COND_HEAVY, s["row_word"])
+        return self._tkfont(FONT, s["row_name"], "bold"), self._tkfont(FONT_MONO_MEDIUM, 14)
+
+    def _log_name_width(self, word_w):
+        """How wide a row's name and detail line may be. The scrollable
+        frame's own width is its content's width, not the visible width -
+        measure the panel instead, less the thumb column, this row's status
+        word, paddings and the scrollbar."""
         panel_width = self._log_panel.winfo_width()
         if panel_width <= 1:
-            panel_width = self._px(560)  # not laid out yet - _on_log_configure redoes this once it is
-        for index, entry in enumerate(earlier):
-            view = LOG_KINDS[entry["kind"]]
-            bg = view.get("tint", SURFACE)
-            row = ctk.CTkFrame(self.log_list, fg_color=bg, corner_radius=0)
-            row.grid(row=index * 2, column=0, sticky="ew")
-            row.grid_columnconfigure(2, weight=1)
-            ctk.CTkFrame(row, fg_color=view["color"] if view.get("sec") else bg, width=3, height=1, corner_radius=0).grid(
-                row=0, column=0, sticky="ns"
-            )
-            thumb = self._thumb(entry, self.LIST_THUMB_SIZE)
-            self._log_photo_images.append(thumb)
-            ctk.CTkLabel(row, image=thumb, text="", fg_color=bg).grid(row=0, column=1, padx=(14, 14), pady=10)
+            panel_width = self._px(560)  # not laid out yet - _on_log_configure re-fits it once it is
+        return panel_width - self._px(self.LIST_THUMB_SIZE + 28 + 40) - word_w
 
-            text = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
-            text.grid(row=0, column=2, sticky="ew")
-            # The scrollable frame's own width is its content's width, not
-            # the visible width - measure the panel instead, less the thumb
-            # column, this row's status word, paddings and the scrollbar.
-            word_w = word_font.measure(entry["word"]) + self._px(s["row_word"] + 6 + 10 + 16)
-            name_width = panel_width - self._px(self.LIST_THUMB_SIZE + 28 + 40) - word_w
-            self._label(
-                text, _ellipsize(row_font, entry["name"], name_width), (FONT, s["row_name"], "bold"), INK,
-                anchor="w", fg_color=bg,
-            ).pack(fill="x", anchor="w")
-            self._label(
-                text, _ellipsize(meta_font, self._meta(entry), name_width), (FONT_MONO_MEDIUM, 14), INK_600,
-                anchor="w", fg_color=bg,
-            ).pack(fill="x", anchor="w")
+    def _add_log_row(self, entry):
+        """Draws one entry's row in the list, in its place: newest at the top,
+        so just above the row of the next older entry (or at the end)."""
+        entry["_row"] = self._build_log_row(entry)
+        index = self._log_entries.index(entry)
+        below = next((other["_row"]["box"] for other in self._log_entries[index + 1:] if "_row" in other), None)
+        if below is not None:
+            entry["_row"]["box"].pack(fill="x", before=below)
+        else:
+            entry["_row"]["box"].pack(fill="x")
 
-            word = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
-            word.grid(row=0, column=3, sticky="e", padx=(10, 16))
-            self._icon_label(word, view["icon"], s["row_word"], view["color"], fg_color=bg).pack(
-                side="left", padx=(0, 6)
-            )
-            self._label(word, entry["word"], (COND_HEAVY, s["row_word"]), view["color"], fg_color=bg).pack(side="left")
+    def _destroy_log_row(self, entry):
+        row = entry.pop("_row", None)
+        if row is not None:
+            row["box"].destroy()
 
-            # Plain tk.Frame - a CTkFrame this thin draws nothing at all.
-            tk.Frame(self.log_list, bg=LINE, height=max(1, self._px(1))).grid(
-                row=index * 2 + 1, column=0, sticky="ew"
-            )
+    def _build_log_row(self, entry):
+        s = self._s
+        view = LOG_KINDS[entry["kind"]]
+        bg = view.get("tint", SURFACE)
+        row_font, meta_font = self._log_fonts()
+        word_font = self._tkfont(COND_HEAVY, s["row_word"])
+        box = tk.Frame(self.log_list, bg=SURFACE)
+        row = ctk.CTkFrame(box, fg_color=bg, corner_radius=0)
+        row.pack(fill="x")
+        row.grid_columnconfigure(2, weight=1)
+        ctk.CTkFrame(row, fg_color=view["color"] if view.get("sec") else bg, width=3, height=1, corner_radius=0).grid(
+            row=0, column=0, sticky="ns"
+        )
+        if "_thumb_list" not in entry:  # made once - Tk also needs the image kept referenced
+            entry["_thumb_list"] = self._thumb(entry, self.LIST_THUMB_SIZE)
+        ctk.CTkLabel(row, image=entry["_thumb_list"], text="", fg_color=bg).grid(row=0, column=1, padx=(14, 14),
+                                                                                  pady=10)
+
+        text = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
+        text.grid(row=0, column=2, sticky="ew")
+        word_w = word_font.measure(entry["word"]) + self._px(s["row_word"] + 6 + 10 + 16)
+        name_width = self._log_name_width(word_w)
+        name = self._label(
+            text, _ellipsize(row_font, entry["name"], name_width), (FONT, s["row_name"], "bold"), INK,
+            anchor="w", fg_color=bg,
+        )
+        name.pack(fill="x", anchor="w")
+        meta = self._label(
+            text, _ellipsize(meta_font, self._meta(entry), name_width), (FONT_MONO_MEDIUM, 14), INK_600,
+            anchor="w", fg_color=bg,
+        )
+        meta.pack(fill="x", anchor="w")
+
+        word = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
+        word.grid(row=0, column=3, sticky="e", padx=(10, 16))
+        self._icon_label(word, view["icon"], s["row_word"], view["color"], fg_color=bg).pack(side="left", padx=(0, 6))
+        self._label(word, entry["word"], (COND_HEAVY, s["row_word"]), view["color"], fg_color=bg).pack(side="left")
+
+        # Plain tk.Frame - a CTkFrame this thin draws nothing at all.
+        tk.Frame(box, bg=LINE, height=max(1, self._px(1))).pack(fill="x")
+        return {"box": box, "name": name, "meta": meta, "word_w": word_w}
 
     # ---- video panel ------------------------------------------------------
 

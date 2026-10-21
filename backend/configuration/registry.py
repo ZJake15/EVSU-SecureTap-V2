@@ -78,7 +78,7 @@ SECTIONS = [
 # Advanced group any more).
 MORE_OPTIONS = {
     "recognition_cooldown_seconds", "unknown_cooldown_seconds",  # Face Recognition
-    "spoof_cooldown_seconds",  # Anti-Spoofing
+    "spoof_cooldown_seconds", "spoof_models",  # Anti-Spoofing
     "max_turn", "edge_margin", "distance_correction", "show_face_distance",  # Photo Quality Checks
     "covered_face_mode", "covered_rule_mouth", "covered_rule_texture", "covered_rule_det_score",
     "student_display_fps", "camera_exposure", "backlight_compensation", "camera_focus",  # Camera
@@ -143,6 +143,15 @@ DEFINITIONS = [
         note="Off (0) by default. 0.10 is a good starting point if you turn it on.",
         depends_on="spoof_check_enabled",
     ),
+    SettingDef(
+        "spoof_models", "spoof", "Fake-face check models",
+        "Both: two trained models look at each face - one close in, one with more of the surroundings (the edge "
+        "of a printed sheet or a phone) - and their answers are averaged, as the method was designed. One: only "
+        "the close-in model, as before the second was added.",
+        CHOICE, "both", choices=(("both", "Both (recommended)"), ("one", "Only the close-in one")),
+        note="Changing this changes the fake-face scores, so check Spoof check strictness again afterwards.",
+        depends_on="spoof_check_enabled",
+    ),
     # ---- 3. Photo Quality Checks ----------------------------------------------
     SettingDef(
         "blur_min", "quality", "Blur sensitivity",
@@ -172,8 +181,10 @@ DEFINITIONS = [
         "max_scan_distance", "quality", "Ignore faces farther than",
         "Faces farther from the camera than this are ignored - never checked, matched, or recorded as unknown "
         "or as a fake. A face that far away is too small to check reliably. 0 checks every face it can see.",
-        FLOAT, 5.0, 0.0, 15.0, 0.5, unit="metres",
-        note="Estimated from the size of each face in the picture and the gate's camera zoom. Check it once "
+        FLOAT, 6.0, 0.0, 15.0, 0.5, unit="metres",
+        note="Keep it a metre past the farthest place people are recognized (6 m for 5 m) - the estimate wobbles, "
+             "and a face right on the line keeps being dropped. Estimated from the size of each face in the "
+             "picture and the gate's camera zoom. Check it once "
              "with Show distance on face boxes (More options, below), and if it's off, set Distance correction there.",
     ),
     SettingDef(

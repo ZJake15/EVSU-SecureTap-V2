@@ -78,7 +78,7 @@ RESULT_FIELDS = [
     "capture_ms_median", "answer_ms_median", "answer_ms_max", "server_ms_median", "face_ai_ms_median",
     "fake_check_ms_median", "screen_freezes", "longest_freeze_ms", "cpu_max_pct", "memory_max_pct",
     "result", "expected_result", "correct", "repeat_entry", "matched_name", "matched_id", "match_confidence", "best_similarity",
-    "liveness_score", "face_width_px", "face_height_px", "estimated_distance_m", "frame_size_sent",
+    "liveness_score", "liveness_model_27", "liveness_model_40", "liveness_classical", "face_width_px", "face_height_px", "estimated_distance_m", "frame_size_sent",
     "camera_resolution", "note", "status",
 ]
 
@@ -621,6 +621,11 @@ class TestRun:
             "match_confidence": _fmt(similarity * 100) if matched and similarity is not None else "",
             "best_similarity": _fmt(similarity, 3),
             "liveness_score": _fmt(item.get("liveness_score"), 3),
+            # The fake-face score's parts: each trained model's own "real"
+            # score and the texture/frequency/reflectance cues.
+            "liveness_model_27": _fmt((item.get("test_liveness_parts") or {}).get("2.7"), 3),
+            "liveness_model_40": _fmt((item.get("test_liveness_parts") or {}).get("4.0"), 3),
+            "liveness_classical": _fmt((item.get("test_liveness_parts") or {}).get("classical"), 3),
             "face_width_px": "" if width is None else width, "face_height_px": "" if height is None else height,
             "estimated_distance_m": _fmt(item.get("test_distance_m"), 2),
             "frame_size_sent": f"{frame_size[0]}x{frame_size[1]}" if frame_size else "",

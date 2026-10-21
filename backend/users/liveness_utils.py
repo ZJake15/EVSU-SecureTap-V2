@@ -8,9 +8,10 @@ response (blink/turn-your-head) prompt to the person at the gate.
 
 Two complementary signals are combined into one score:
 
-1. MiniFASNetV2 (from the Silent-Face-Anti-Spoofing project by Minivision
-   AI, Apache-2.0) - a small trained CNN that classifies an 80x80 face crop
-   as live / print-attack / replay-attack. This is the primary signal: it's
+1. MiniFASNet (from the Silent-Face-Anti-Spoofing project by Minivision
+   AI, Apache-2.0) - two small trained CNNs (MiniFASNetV2 on a 2.7x crop,
+   MiniFASNetV1SE on a 4.0x crop, averaged as the project combines them)
+   that classify an 80x80 face crop as live / print-attack / replay-attack. This is the primary signal: it's
    specifically trained on print/screen spoof data, which is exactly the
    attack this gate is most exposed to. Run here as a from-source ONNX
    export of the official PyTorch weights (see liveness_models/NOTICE.md for
@@ -71,67 +72,85 @@ import onnxruntime as ort
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# MiniFASNetV2 (primary signal) - see liveness_models/NOTICE.md for
+# MiniFASNet (primary signal) - see liveness_models/NOTICE.md for
 # provenance/verification.
 # ---------------------------------------------------------------------------
 
 _MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "liveness_models")
-_MINIFASNET_MODEL_PATH = os.path.join(_MODEL_DIR, "2.7_80x80_MiniFASNetV2.onnx")
 _MINIFASNET_CROP_SIZE = 80
-# Matches the official repo's CropImage scale for this exact weights file
-# (encoded in its filename, "2.7_80x80" - parsed via their src/utility.py
-# parse_model_name). The model was trained on this wider, re-centered
-# context crop around the detected face, not a tight face-only crop -
-# verified during integration that a tight crop meaningfully hurts accuracy.
-_MINIFASNET_CROP_SCALE = 2.7
+# The two official models, as the Silent-Face-Anti-Spoofing project runs
+# them together (its test.py adds both models' softmax outputs - so the
+# combined P(live) is their average). Each was trained on its own wider,
+# re-centered context crop around the detected face - the scale encoded in
+# its filename ("2.7_80x80", "4_0_0_80x80"; their src/utility.py
+# parse_model_name). A tight face-only crop meaningfully hurts accuracy
+# (verified when the 2.7 model was integrated). The 4.0 model sees more of
+# the surroundings - the edge of a printed sheet or a phone, the hand
+# holding it - which is what a close, sharp print gives away.
+MINIFASNET_MODELS = (
+    ("2.7", os.path.join(_MODEL_DIR, "2.7_80x80_MiniFASNetV2.onnx"), 2.7),
+    ("4.0", os.path.join(_MODEL_DIR, "4.0_80x80_MiniFASNetV1SE.onnx"), 4.0),
+)
 
-_session = None
-_session_load_failed = False
+_sessions = {}
+_failed_models = set()
 _session_lock = threading.Lock()
 
 
-def _get_session():
-    """Lazily loads the ONNX session once per process, the same singleton
-    pattern insightface_utils uses for its FaceAnalysis instances. Returns
-    None (permanently, for the life of this process) if the model file is
-    missing or fails to load - logged once, not on every gate-scan frame -
-    so compute_liveness_score() can fall back to the classical-only score
-    instead of crashing the scan loop."""
-    global _session, _session_load_failed
-    if _session is not None or _session_load_failed:
-        return _session
+def _get_session(name, path):
+    """Lazily loads one model's ONNX session once per process, the same
+    singleton pattern insightface_utils uses for its FaceAnalysis instances.
+    Returns None (permanently, for the life of this process) if the model
+    file is missing or fails to load - logged once, not on every gate-scan
+    frame - so the score falls back to the other model, or to the classical
+    cues alone, instead of crashing the scan loop."""
+    if name in _sessions or name in _failed_models:
+        return _sessions.get(name)
     with _session_lock:
-        if _session is None and not _session_load_failed:
+        if name not in _sessions and name not in _failed_models:
             try:
                 # Same thread cap as the face models - see
                 # insightface_utils.ai_session_options.
                 from users.insightface_utils import ai_session_options
 
-                _session = ort.InferenceSession(
-                    _MINIFASNET_MODEL_PATH, sess_options=ai_session_options(), providers=["CPUExecutionProvider"]
+                _sessions[name] = ort.InferenceSession(
+                    path, sess_options=ai_session_options(), providers=["CPUExecutionProvider"]
                 )
             except Exception:
                 logger.warning(
-                    "MiniFASNet ONNX model failed to load from %s - passive liveness will fall back to "
-                    "classical texture/frequency/reflectance scoring only.",
-                    _MINIFASNET_MODEL_PATH, exc_info=True,
+                    "MiniFASNet %s ONNX model failed to load from %s - passive liveness will use the other "
+                    "model and/or the classical texture/frequency/reflectance scoring only.",
+                    name, path, exc_info=True,
                 )
-                _session_load_failed = True
-    return _session
+                _failed_models.add(name)
+    return _sessions.get(name)
 
 
-def _minifasnet_crop(bgr_image, box):
-    """Expands the detected face box by _MINIFASNET_CROP_SCALE around its
-    center (clamped to the frame), then resizes to 80x80 - replicates the
-    official repo's CropImage._get_new_box/crop exactly. Returns None for a
-    degenerate box rather than raising."""
+def _enabled_models():
+    """Settings > Anti-Spoofing: "Fake-face check models" - both (default)
+    or only the 2.7 one, as before the 4.0 model was added."""
+    try:
+        from configuration import store
+
+        if store.get("spoof_models") == "one":
+            return MINIFASNET_MODELS[:1]
+    except Exception:
+        pass
+    return MINIFASNET_MODELS
+
+
+def _minifasnet_crop(bgr_image, box, crop_scale=2.7):
+    """Expands the detected face box by crop_scale around its center
+    (clamped to the frame), then resizes to 80x80 - replicates the official
+    repo's CropImage._get_new_box/crop exactly. Returns None for a degenerate
+    box rather than raising."""
     x1, y1, x2, y2 = box
     box_w, box_h = x2 - x1, y2 - y1
     if box_w <= 0 or box_h <= 0:
         return None
     src_h, src_w = bgr_image.shape[:2]
 
-    scale = min((src_h - 1) / box_h, min((src_w - 1) / box_w, _MINIFASNET_CROP_SCALE))
+    scale = min((src_h - 1) / box_h, min((src_w - 1) / box_w, crop_scale))
     new_w, new_h = box_w * scale, box_h * scale
     center_x, center_y = x1 + box_w / 2, y1 + box_h / 2
     left, top = center_x - new_w / 2, center_y - new_h / 2
@@ -159,28 +178,37 @@ def _minifasnet_crop(bgr_image, box):
     return cv2.resize(crop, (_MINIFASNET_CROP_SIZE, _MINIFASNET_CROP_SIZE))
 
 
-def _minifasnet_score(bgr_image, box):
-    """Returns P(live) in [0, 1] from MiniFASNetV2, or None if the model
-    isn't available or the crop is degenerate - callers must handle None by
-    falling back to the classical score alone."""
-    session = _get_session()
-    if session is None:
-        return None
-    crop = _minifasnet_crop(bgr_image, box)
-    if crop is None:
-        return None
+def _minifasnet_scores(bgr_image, box):
+    """P(live) in [0, 1] from each enabled MiniFASNet model that's available
+    ({"2.7": ..., "4.0": ...}); a model that's missing, or a degenerate crop,
+    is simply left out."""
+    scores = {}
+    for name, path, crop_scale in _enabled_models():
+        session = _get_session(name, path)
+        if session is None:
+            continue
+        crop = _minifasnet_crop(bgr_image, box, crop_scale)
+        if crop is None:
+            continue
+        # Deliberately NOT divided by 255 - the official repo's custom
+        # to_tensor() has that normalization commented out in its source;
+        # the models were trained on raw [0,255] BGR values. Dividing by 255
+        # here silently breaks them (verified during integration - see
+        # liveness_models/NOTICE.md). BGR is correct too: cv2 crops are
+        # already BGR and the original pipeline never converts to RGB.
+        tensor = crop.astype(np.float32).transpose(2, 0, 1)[None, ...]
+        logits = session.run(None, {"input": tensor})[0][0]
+        probabilities = np.exp(logits - logits.max())
+        probabilities /= probabilities.sum()
+        scores[name] = float(probabilities[1])  # index 1 = "real" class (see official repo's test.py)
+    return scores
 
-    # Deliberately NOT divided by 255 - the official repo's custom
-    # to_tensor() has that normalization commented out in its source; the
-    # model was trained on raw [0,255] BGR values. Dividing by 255 here
-    # silently breaks the model (verified during integration - see
-    # liveness_models/NOTICE.md). BGR is correct too: cv2 crops are already
-    # BGR and the original pipeline never converts to RGB.
-    tensor = crop.astype(np.float32).transpose(2, 0, 1)[None, ...]
-    logits = session.run(None, {"input": tensor})[0][0]
-    probabilities = np.exp(logits - logits.max())
-    probabilities /= probabilities.sum()
-    return float(probabilities[1])  # index 1 = "real" class (see official repo's test.py)
+
+def _minifasnet_score(bgr_image, box):
+    """The models' combined P(live) - their average, as the official method
+    combines them - or None if no model is available."""
+    scores = _minifasnet_scores(bgr_image, box)
+    return sum(scores.values()) / len(scores) if scores else None
 
 
 # ---------------------------------------------------------------------------
@@ -232,22 +260,34 @@ def compute_liveness_score(bgr_image, box):
     better in both cases). Never raises - a crop too small/degenerate to
     analyze scores 0.0 (treated as not live) rather than crashing the scan
     loop over one bad frame."""
+    return compute_liveness_details(bgr_image, box)["score"]
+
+
+def compute_liveness_details(bgr_image, box):
+    """compute_liveness_score's parts: {"score": the final score, "classical":
+    the texture/frequency/reflectance sub-score, "2.7"/"4.0": each MiniFASNet
+    model's P(live)} - the capstone test mode records them per trial, so the
+    two models can be compared and the threshold tuned on real data."""
     crop = _face_crop(bgr_image, box)
     if crop is None or crop.size == 0 or min(crop.shape[:2]) < 16:
-        return 0.0
+        return {"score": 0.0}
 
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    classical_score = (
+    classical_score = float(
         TEXTURE_WEIGHT * _texture_score(gray)
         + FREQUENCY_WEIGHT * _frequency_score(gray)
         + REFLECTANCE_WEIGHT * _reflectance_score(crop)
     )
 
-    minifasnet_score = _minifasnet_score(bgr_image, box)
-    if minifasnet_score is None:
-        return float(classical_score)
-
-    return float(MINIFASNET_WEIGHT * minifasnet_score + CLASSICAL_WEIGHT * classical_score)
+    model_scores = _minifasnet_scores(bgr_image, box)
+    if not model_scores:
+        return {"score": classical_score, "classical": classical_score}
+    minifasnet_score = sum(model_scores.values()) / len(model_scores)
+    return {
+        "score": float(MINIFASNET_WEIGHT * minifasnet_score + CLASSICAL_WEIGHT * classical_score),
+        "classical": classical_score,
+        **model_scores,
+    }
 
 
 def _face_crop(bgr_image, box):

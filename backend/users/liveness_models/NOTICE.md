@@ -39,6 +39,36 @@ output (verified: it collapses to a near-constant, wrong prediction
 regardless of input). Preserve this if the model is ever re-converted or
 replaced.
 
+## The second model: `4.0_80x80_MiniFASNetV1SE.onnx`
+
+The official project runs **two** models together and adds their outputs
+(its `test.py`); this file is the second one, used the same way (the
+combined P(live) is the two models' average - `users/liveness_utils.py`).
+It looks at a wider 4.0x context crop around the face.
+
+- **Original weights file:** `resources/anti_spoof_models/4_0_0_80x80_MiniFASNetV1SE.pth`
+  (same repository and license as above)
+- **Original weights SHA-256:** `84EE1D37D96894D5E82DE5A57DF044EF80A58BE2B218B5ED7CDFD875EC2F5990`
+- **This ONNX file's SHA-256:** `B8EC84AA7B0F24B709AA370C173D7489031B952AD4C93DD91891ED0B1E82B1C1`
+- **Converted:** 2026-10-21, from the official `MiniFASNetV1SE` definition
+  (`src/model_lib/MiniFASNet.py`, `conv6_kernel=(5, 5)` as the official
+  `get_kernel(80, 80)` gives), the `module.` prefix stripped as the official
+  loader does, loaded with `strict=True` (all keys matched), exported with
+  `torch.onnx.export(..., opset_version=12, dynamo=False)`.
+- **Numerical parity:** ONNX Runtime vs. PyTorch on 5 random raw-[0, 255]
+  inputs - max absolute difference `2.86e-6`. (The same check of the
+  existing 2.7 file against the official 2.7 weights: `1.91e-6`, and the
+  downloaded 2.7 weights' SHA-256 matched the one recorded above.)
+- **End-to-end** (InsightFace detection -> 4.0x crop -> this model) on the
+  official samples: `image_T1.jpg` (real) P(live) **1.000**, `image_F1.jpg`
+  (spoof) **0.418**, `image_F2.jpg` (spoof) **0.002**. On F1 it is less sure
+  than the 2.7 model (0.011), so whether the pair beats the 2.7 model alone
+  on a gate's own print attacks has to be measured there - the capstone test
+  mode records each model's score per trial for exactly that.
+
+Settings > Anti-Spoofing (More options) > "Fake-face check models" switches
+back to the 2.7 model alone.
+
 ## What this model does and doesn't cover
 
 MiniFASNetV2 is a **single-frame, passive** anti-spoofing classifier trained

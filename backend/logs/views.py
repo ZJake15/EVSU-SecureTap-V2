@@ -697,6 +697,7 @@ class IdentifyView(APIView):
         beyond_limit = 0  # faces left out by "Ignore faces farther than" - reported in test mode
         distances = {}  # (left, top, right, bottom) -> metres, for "Show distance on face boxes"
         sharpness = {}  # (left, top, right, bottom) -> the blur check's score - recorded by the test mode
+        liveness_parts = {}  # box -> the fake-face score's parts (each model, classical) - also for the test mode
         # How fast each face moved since this gate's last frame, and which
         # earlier face it is (see logs/motion.py).
         tracked = motion.track_faces(gate_location, [detection[1] for detection in detections])
@@ -742,7 +743,9 @@ class IdentifyView(APIView):
             liveness_unsure = False
             if system_settings.get("spoof_check_enabled"):
                 check_started = time.perf_counter()
-                liveness_score = liveness_utils.compute_liveness_score(bgr_image, box)
+                liveness_details = liveness_utils.compute_liveness_details(bgr_image, box)
+                liveness_score = liveness_details["score"]
+                liveness_parts[box] = liveness_details
                 self._add_time("fake_check_ms", check_started)
                 spoof_limit = system_settings.get("spoof_strictness")
                 if liveness_score < spoof_limit:
@@ -796,6 +799,9 @@ class IdentifyView(APIView):
                         result["test_distance_m"] = round(distance, 2)
                 if testing and key in sharpness:  # the score "Blur sensitivity" is compared with
                     result["test_sharpness"] = round(sharpness[key], 1)
+                if testing and key in liveness_parts:
+                    result["test_liveness_parts"] = {name: round(value, 3) for name, value in
+                                                     liveness_parts[key].items() if name != "score"}
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},

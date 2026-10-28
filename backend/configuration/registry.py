@@ -78,7 +78,7 @@ SECTIONS = [
 # Advanced group any more).
 MORE_OPTIONS = {
     "recognition_cooldown_seconds", "unknown_cooldown_seconds",  # Face Recognition
-    "spoof_cooldown_seconds", "spoof_models",  # Anti-Spoofing
+    "spoof_cooldown_seconds", "spoof_models", "spoof_blocks_match",  # Anti-Spoofing
     "max_turn", "edge_margin", "distance_correction", "show_face_distance",  # Photo Quality Checks
     "covered_face_mode", "covered_rule_mouth", "covered_rule_texture", "covered_rule_det_score",
     "student_display_fps", "camera_exposure", "backlight_compensation", "camera_focus",  # Camera
@@ -151,6 +151,15 @@ DEFINITIONS = [
         CHOICE, "both", choices=(("both", "Both (recommended)"), ("one", "Only the close-in one")),
         note="Changing this changes the fake-face scores, so check Spoof check strictness again afterwards.",
         depends_on="spoof_check_enabled",
+    ),
+    SettingDef(
+        "spoof_blocks_match", "spoof", "A failed check holds the match",
+        "A face that failed the fake-face check is only let in once it passes the check on as many frames in a "
+        "row as Frames that must agree. Without this, a photo that fails on some frames can still be let in on "
+        "the others.",
+        BOOL, True, depends_on="spoof_check_enabled",
+        off_warning="Turning this off lets a photo in once it passes the fake-face check on enough frames, even "
+                    "if it failed the check in between.",
     ),
     # ---- 3. Photo Quality Checks ----------------------------------------------
     SettingDef(

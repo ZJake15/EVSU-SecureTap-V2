@@ -71,6 +71,7 @@ RESULT_FIELDS = [
     "time_to_first_detection_ms", "decision_time_ms", "decision_time_from_first_face_ms",
     "frames_processed", "frames_with_face", "frames_skipped_turned", "frames_skipped_moving",
     "frames_skipped_blur", "frames_skipped_edge", "frames_covered", "frames_face_beyond_limit",
+    "frames_failed_fake_check", "frames_match_held",
     "sharpness_min", "sharpness_median", "sharpness_max",
     # Where the time went (see "Speed" below): per trial, the middle value of
     # its frames, and the slowest answer; screen freezes; how busy the
@@ -78,7 +79,7 @@ RESULT_FIELDS = [
     "capture_ms_median", "answer_ms_median", "answer_ms_max", "server_ms_median", "face_ai_ms_median",
     "fake_check_ms_median", "screen_freezes", "longest_freeze_ms", "cpu_max_pct", "memory_max_pct",
     "result", "expected_result", "correct", "repeat_entry", "matched_name", "matched_id", "match_confidence", "best_similarity",
-    "liveness_score", "liveness_model_27", "liveness_model_40", "liveness_classical", "face_width_px", "face_height_px", "estimated_distance_m", "frame_size_sent",
+    "liveness_score", "liveness_min", "liveness_model_27", "liveness_model_40", "liveness_classical", "face_width_px", "face_height_px", "estimated_distance_m", "frame_size_sent",
     "camera_resolution", "note", "status",
 ]
 
@@ -408,9 +409,17 @@ class TestRun:
                 self._check_timeout(t_answer)
                 return
             trial["frames_with_face"] += 1
-            trial["last_face"] = max(items, key=_width)
-            if trial["last_face"].get("test_sharpness") is not None:
-                trial["sharpness"].append(trial["last_face"]["test_sharpness"])
+            trial["last_face"] = subject = max(items, key=_width)
+            if subject.get("test_sharpness") is not None:
+                trial["sharpness"].append(subject["test_sharpness"])
+            # The subject's fake-face check on every frame, not just the last:
+            # how often it failed, and how often a failed one held a match back.
+            if subject.get("spoof_suspected"):
+                trial["frames_failed_fake"] += 1
+            if subject.get("fake_check_hold"):
+                trial["frames_held"] += 1
+            if subject.get("liveness_score") is not None:
+                trial["liveness"].append(subject["liveness_score"])
             if trial["first_face"] is None:
                 trial["first_face"] = (t_frame, t_answer)
             for item in items:
@@ -463,7 +472,8 @@ class TestRun:
                 return False
             self.trial = {
                 **plan_trial, "t_start": time.perf_counter(), "frames": 0, "frames_with_face": 0,
-                "frames_covered": 0, "frames_beyond_limit": 0, "skips": Counter(), "first_face": None,
+                "frames_covered": 0, "frames_beyond_limit": 0, "frames_failed_fake": 0, "frames_held": 0,
+                "liveness": [], "skips": Counter(), "first_face": None,
                 "first_usable": None, "last_face": None, "frame_size": None, "camera_resolution": None,
                 "sharpness": [], "capture_ms": [], "answer_ms": [], "server_ms": [], "faces_ms": [], "fake_ms": [],
                 "freezes": [], "cpu": [], "memory": [],
@@ -597,6 +607,11 @@ class TestRun:
             "frames_skipped_blur": skips["blur"], "frames_skipped_edge": skips["edge"],
             "frames_covered": trial.get("frames_covered", 0),
             "frames_face_beyond_limit": trial.get("frames_beyond_limit", 0),
+            # Frames the subject's face failed the fake-face check on, and
+            # frames a match was held back because it had (Settings: "A
+            # failed check holds the match").
+            "frames_failed_fake_check": trial.get("frames_failed_fake", 0),
+            "frames_match_held": trial.get("frames_held", 0),
             # The blur check's score of the subject's face in this trial's
             # frames - frames under "Blur sensitivity" were skipped as blurry.
             "sharpness_min": _fmt(min(sharp)) if sharp else "",
@@ -621,6 +636,7 @@ class TestRun:
             "match_confidence": _fmt(similarity * 100) if matched and similarity is not None else "",
             "best_similarity": _fmt(similarity, 3),
             "liveness_score": _fmt(item.get("liveness_score"), 3),
+            "liveness_min": _fmt(min(trial["liveness"]), 3) if trial.get("liveness") else "",
             # The fake-face score's parts: each trained model's own "real"
             # score and the texture/frequency/reflectance cues.
             "liveness_model_27": _fmt((item.get("test_liveness_parts") or {}).get("2.7"), 3),
@@ -1011,7 +1027,8 @@ class TestWindow:
                      f"{row['frames_processed']} frames · face {row['face_width_px']}x{row['face_height_px']} px"
                      f"\nsharpness {row['sharpness_median'] or '-'} (blur limit {self._blur_limit()}) · "
                      f"{row['frames_skipped_blur']} of {row['frames_with_face']} face frames skipped as blurry"
-                     f" · real-face {row['liveness_score'] or '-'}"
+                     f" · real-face {row['liveness_score'] or '-'} (lowest {row['liveness_min'] or '-'}, "
+                     f"{row['frames_failed_fake_check']} failed the fake check)"
                      f"\nspeed: answer {row['answer_ms_median'] or '-'} ms (backend {row['server_ms_median'] or '-'}, "
                      f"face AI {row['face_ai_ms_median'] or '-'}) · {row['screen_freezes']} screen freeze(s) · "
                      f"CPU up to {row['cpu_max_pct'] or '-'}% · memory up to {row['memory_max_pct'] or '-'}%"

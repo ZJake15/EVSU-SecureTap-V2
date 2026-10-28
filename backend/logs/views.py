@@ -1051,7 +1051,7 @@ class IdentifyView(APIView):
             return self._start_tiebreak(gate_location, direction, candidate_ids, box, best_similarity)
 
         result = self._confirm_or_vote(
-            best_person, best_similarity, direction, gate_location, request, box, liveness_score
+            best_person, best_similarity, direction, gate_location, request, box, liveness_score, embedding
         )
         if result.get("log_id") is not None:
             corrected = self._correct_recent_unknowns(embedding, best_person, owners, known_matrix, gate_location)
@@ -1148,12 +1148,22 @@ class IdentifyView(APIView):
             elif not result.get("spoof_suspected") and not result.get("tiebreak_required"):
                 motion.remember_unknown(gate_location, track, result["log_id"])
 
-    def _confirm_or_vote(self, person, similarity, direction, gate_location, request, box, liveness_score):
+    def _confirm_or_vote(self, person, similarity, direction, gate_location, request, box, liveness_score,
+                         embedding=None):
         """A face match is never confirmed from a single frame - it has to
         be the top match in enough recent scans first (see class docstring).
         Not-yet-confirmed matches come back with log_id: null, which the
         entry-agent's existing dedup-aware UI already treats as "not a new
-        event yet" with no entry-agent changes needed."""
+        event yet" with no entry-agent changes needed.
+
+        Settings page (More options): "A failed check holds the match" - the
+        match is also held while this same face failed the fake-face check
+        on a frame since the oldest of the frames that would confirm it.
+        Passing and failing frames are counted separately, so without this
+        a photo that fails the check on some frames and passes on others is
+        let in as soon as it has passed enough times - measured in the
+        capstone test, that was 7 of the 9 photos let in. A real face that
+        fails once just needs that many passing frames in a row after it."""
         RecognitionAttempt.objects.create(gate_location=gate_location, person=person, similarity=similarity)
 
         window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
@@ -1161,9 +1171,17 @@ class IdentifyView(APIView):
             RecognitionAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
             .order_by("-timestamp")[: system_settings.get("frames_considered")]
         )
-        agreement = sum(1 for attempt in recent_attempts if attempt.person_id == person.id)
+        agreeing = [attempt for attempt in recent_attempts if attempt.person_id == person.id]
+        must_agree = system_settings.get("frames_must_agree")
+        held = (
+            len(agreeing) >= must_agree
+            and embedding is not None
+            and system_settings.get("spoof_check_enabled")
+            and system_settings.get("spoof_blocks_match")
+            and self._failed_fake_check_since(embedding, gate_location, agreeing[must_agree - 1].timestamp)
+        )
 
-        if agreement < system_settings.get("frames_must_agree"):
+        if len(agreeing) < must_agree or held:
             return {
                 "success": True,
                 "retry": False,
@@ -1172,6 +1190,7 @@ class IdentifyView(APIView):
                 "similarity": similarity,
                 "liveness_score": liveness_score,
                 "box": _box_to_dict(box),
+                **({"fake_check_hold": True} if held else {}),
                 **person_payload(person, request),
             }
 
@@ -1226,6 +1245,20 @@ class IdentifyView(APIView):
             "box": _box_to_dict(box),
             **person_payload(person, request),
         }
+
+    @staticmethod
+    def _failed_fake_check_since(embedding, gate_location, since):
+        """True if this same face failed the fake-face check at this gate
+        after `since` - "the same face" grouped by embedding similarity, the
+        way _confirm_or_vote_spoof groups its SpoofAttempt rows."""
+        query = np.array(embedding, dtype=np.float32)
+        spoof_limit = system_settings.get("spoof_strictness")
+        alike = system_settings.get("match_strictness")
+        return any(
+            attempt.liveness_score < spoof_limit
+            and float(np.dot(np.array(attempt.embedding, dtype=np.float32), query)) >= alike
+            for attempt in SpoofAttempt.objects.filter(gate_location=gate_location, timestamp__gt=since)
+        )
 
     @staticmethod
     def _start_tiebreak(

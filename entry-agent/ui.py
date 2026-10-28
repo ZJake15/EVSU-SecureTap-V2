@@ -582,11 +582,15 @@ class GateMonitorWindow:
     def __init__(self, gate_location, direction, get_preview_frame, on_tap,
                  officer_name="", version="", on_close=None,
                  camera_options=None, on_camera_change=None, initial_camera_index=None,
-                 video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0):
+                 video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0,
+                 get_camera_size=None):
         self._get_preview_frame = get_preview_frame
         # This gate's camera zoom (launcher's Entry Agent settings) - the frames
         # arrive already zoomed; this is only for the video caption.
         self._camera_zoom = camera_zoom or 1.0
+        # () -> (width, height) of the camera's own frames, before zoom and
+        # before shrinking for the face checks - also only for the caption.
+        self._get_camera_size = get_camera_size
         # Outside the gate's opening hours (Settings > Scheduling), as the
         # backend says with every scan answer - see set_after_hours().
         self._after_hours = False
@@ -2415,7 +2419,13 @@ class GateMonitorWindow:
 
         count = len(self._latest_recognitions)
         zoom = f" · zoom {self._camera_zoom:.1f}x" if self._camera_zoom > 1.0 else ""
-        self._caption_text = f"{src_w}×{src_h}{zoom} · {count} face{'s' if count != 1 else ''} tracked"
+        # Two sizes, so 1440p doesn't look like it isn't working: what the
+        # camera takes, and what the face checks get (zoomed, then shrunk to
+        # Settings > Camera > "Detail sent for face checks").
+        camera_size = self._get_camera_size() if self._get_camera_size else None
+        camera = f"camera {camera_size[0]}×{camera_size[1]} · " if camera_size else ""
+        checked = f"checked {src_w}×{src_h}" if src_w > 1 and src_h > 1 else "checked –"
+        self._caption_text = f"{camera}{checked}{zoom} · {count} face{'s' if count != 1 else ''} tracked"
         self._draw_overlays(rect)
 
     @staticmethod

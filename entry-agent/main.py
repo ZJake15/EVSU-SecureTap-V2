@@ -597,6 +597,7 @@ def main():
         on_tap=on_tap,
         officer_name=config.officer_name,
         camera_zoom=config.camera_zoom,
+        get_camera_size=camera.capture_size,
         version=config.app_version,
         on_close=on_close,
         camera_options=camera_options,

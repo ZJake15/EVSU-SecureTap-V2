@@ -13,7 +13,7 @@ from datetime import datetime
 from tkinter import messagebox
 
 import customtkinter as ctk
-from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageTk
+from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps, ImageTk
 
 # ---------------------------------------------------------------------------
 # Design tokens - the redesign's whole palette is these 17 colors (see
@@ -978,8 +978,8 @@ class GateMonitorWindow:
     def _build_video_panel(self, parent):
         # The canvas fills its cell edge-to-edge and paints the whole panel
         # itself - dark rounded body, the top strip (LIVE row or alarm
-        # banner) and the feed - as ONE composited image each frame, masked
-        # to the panel's corner radius (see _compose_panel). Overlay text is
+        # banner) and the feed - as ONE composited image each frame, its
+        # corners rounded off in the canvas color (see _compose_panel). Overlay text is
         # drawn straight onto the canvas on top of that, never as CTkLabel
         # widgets: a widget can't show the live video behind it, so any
         # label over the feed would sit in its own flat-colored box.
@@ -2286,26 +2286,33 @@ class GateMonitorWindow:
     # near the edge of the picture can be cropped out of view.
     MAX_FEED_CROP = 0.35
 
-    def _compose_panel(self, frame_image=None):
+    def _compose_panel(self, frame=None):
         """The whole video panel as one image, filling the canvas cell: dark
         body, the top strip (filled with the alarm color while a banner
-        shows), and the live frame filling the area below it (cropped a
-        little if its shape differs from the panel's - see MAX_FEED_CROP) -
-        then ONE rounded mask over the lot. Returns (image, panel rect,
-        frame placement): the rect is (x, y, w, h) on the canvas; the
+        shows), and the live frame (OpenCV BGR) filling the area below it
+        (cropped a little if its shape differs from the panel's - see
+        MAX_FEED_CROP) - then the corners rounded off. Returns (image, panel
+        rect, frame placement): the rect is (x, y, w, h) on the canvas; the
         placement is where the full, uncropped frame would sit, for mapping
-        face boxes, which _draw_box then clips to the visible feed."""
+        face boxes, which _draw_box then clips to the visible feed.
+
+        Shrunk with OpenCV and turned RGB only after shrinking, and the
+        corners painted in the canvas color instead of an alpha mask over the
+        whole panel: measured at 1037x530, 5 ms a frame instead of 21 - the
+        difference between ~18 and the chosen 30 frames a second."""
+        import cv2  # already loaded by the camera; here so the launcher's `from ui import` doesn't load it
+
         canvas_w, canvas_h = self._panel_size()
         rect = (0, 0, canvas_w, canvas_h)
         strip_h = self._strip_height()
         feed_w, feed_h = canvas_w, max(1, canvas_h - strip_h)
         self._feed_bounds = (0, strip_h, feed_w, strip_h + feed_h)
-        panel = Image.new("RGBA", (canvas_w, canvas_h), INK)
+        panel = Image.new("RGB", (canvas_w, canvas_h), INK)
         if self._alert:
             ImageDraw.Draw(panel).rectangle((0, 0, canvas_w, strip_h), fill=ALERTS[self._alert["kind"]]["color"])
         placement = None
-        if frame_image is not None:
-            src_w, src_h = frame_image.size
+        if frame is not None:
+            src_h, src_w = frame.shape[:2]
             cover = max(feed_w / src_w, feed_h / src_h)
             crop = 1 - min(feed_w / (src_w * cover), feed_h / (src_h * cover))
             scale = cover if crop <= self.MAX_FEED_CROP else min(feed_w / src_w, feed_h / src_h)
@@ -2313,17 +2320,32 @@ class GateMonitorWindow:
             origin_x, origin_y = (feed_w - img_w) // 2, strip_h + (feed_h - img_h) // 2
             # Bilinear, not Lanczos: on a moving video frame the difference
             # isn't visible, and it's several times cheaper every frame.
-            resized = frame_image.resize((img_w, img_h), Image.BILINEAR)
+            resized = cv2.resize(frame, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
             # Paste only the part inside the feed area, so a cropped frame
             # can't spill up into the strip.
-            visible = resized.crop((
-                max(0, -origin_x), max(0, strip_h - origin_y),
-                min(img_w, feed_w - origin_x), min(img_h, strip_h + feed_h - origin_y),
-            ))
-            panel.paste(visible, (max(0, origin_x), max(strip_h, origin_y)))
+            left, top = max(0, -origin_x), max(0, strip_h - origin_y)
+            right, bottom = min(img_w, feed_w - origin_x), min(img_h, strip_h + feed_h - origin_y)
+            visible = cv2.cvtColor(resized[top:bottom, left:right], cv2.COLOR_BGR2RGB)
+            panel.paste(Image.fromarray(visible), (max(0, origin_x), max(strip_h, origin_y)))
             placement = (origin_x, origin_y, img_w, img_h)
-        panel.putalpha(self._corner_mask(panel.size, self._px(self.VIDEO_PANEL_CORNER_RADIUS)))
+        background = ImageColor.getrgb(CANVAS)
+        for box, cutout in self._corner_cutouts(panel.size, self._px(self.VIDEO_PANEL_CORNER_RADIUS)):
+            panel.paste(background, box, mask=cutout)
         return panel, rect, placement
+
+    def _corner_cutouts(self, size, radius):
+        """The four corners outside the rounded panel, as (box, mask) - built
+        once per panel size from _corner_mask and painted each frame."""
+        key = (size, radius)
+        if getattr(self, "_corner_cutouts_key", None) != key:
+            outside = ImageOps.invert(self._corner_mask(size, radius))
+            width, height = size
+            r = max(1, min(radius, width, height))
+            boxes = ((0, 0, r, r), (width - r, 0, width, r), (0, height - r, r, height),
+                     (width - r, height - r, width, height))
+            self._corner_cutouts_key = key
+            self._corner_cutouts_list = [(box, outside.crop(box)) for box in boxes]
+        return self._corner_cutouts_list
 
     def _corner_mask(self, size, radius):
         """The rounded-corner mask for the video panel - built once per panel
@@ -2338,8 +2360,13 @@ class GateMonitorWindow:
 
     def _show_panel(self, panel, rect):
         # Kept as self._video_image (not a local) - Tk drops a PhotoImage
-        # with no surviving reference, which would blank the canvas.
-        self._video_image = ImageTk.PhotoImage(panel)
+        # with no surviving reference, which would blank the canvas. Reused
+        # (pasted into) while the panel keeps its size.
+        image = self._video_image
+        if image is not None and (image.width(), image.height()) == panel.size:
+            image.paste(panel)
+        else:
+            self._video_image = ImageTk.PhotoImage(panel)
         self.video_canvas.delete("all")
         self.video_canvas.create_image(rect[0], rect[1], image=self._video_image, anchor="nw")
         self._panel_bounds = rect
@@ -2420,9 +2447,7 @@ class GateMonitorWindow:
         self._draw_overlays(rect)
 
     def _draw_frame(self, frame):
-        rgb = frame[:, :, ::-1]  # BGR (OpenCV) -> RGB
-        image = Image.fromarray(rgb)
-        panel, rect, placement = self._compose_panel(image)
+        panel, rect, placement = self._compose_panel(frame)
         self._show_panel(panel, rect)
 
         src_w, src_h = self._latest_image_size

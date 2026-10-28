@@ -8,6 +8,7 @@ import tkinter as tk
 import traceback
 import tkinter.font as tkfont
 import winsound
+from collections import deque
 from datetime import datetime
 from tkinter import messagebox
 
@@ -66,6 +67,9 @@ SIGN_IN_REMIND_MS = 5 * 60 * 1000
 # ~15 fps - smooth enough for a live view, and on a low-power laptop (the
 # Intel N100 the system is presented on) it leaves CPU for the face AI.
 VIDEO_REFRESH_MS = 66
+# The least time between drawing one video frame and starting the next, so a
+# computer too slow for the chosen smoothness still answers clicks and keys.
+VIDEO_MIN_GAP_MS = 10
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 ICON_PATH = os.path.join(ASSETS_DIR, "icon.png")
@@ -583,7 +587,7 @@ class GateMonitorWindow:
                  officer_name="", version="", on_close=None,
                  camera_options=None, on_camera_change=None, initial_camera_index=None,
                  video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0,
-                 get_camera_size=None):
+                 get_camera_size=None, get_camera_fps=None):
         self._get_preview_frame = get_preview_frame
         # This gate's camera zoom (launcher's Entry Agent settings) - the frames
         # arrive already zoomed; this is only for the video caption.
@@ -591,6 +595,11 @@ class GateMonitorWindow:
         # () -> (width, height) of the camera's own frames, before zoom and
         # before shrinking for the face checks - also only for the caption.
         self._get_camera_size = get_camera_size
+        # () -> frames a second the camera really delivers, or None; and when
+        # this window drew its last frames - both shown in the caption, so
+        # "it doesn't feel like 60" can be read off the screen.
+        self._get_camera_fps = get_camera_fps
+        self._draw_times = deque(maxlen=30)
         # Outside the gate's opening hours (Settings > Scheduling), as the
         # backend says with every scan answer - see set_after_hours().
         self._after_hours = False
@@ -2230,13 +2239,18 @@ class GateMonitorWindow:
     def _update_video(self):
         if self._closed:
             return
+        started = time.perf_counter()
         try:
             self._refresh_video()
         except Exception:
             # Logged, then the next frame tries again - an escaped error here
             # used to skip the reschedule and leave the feed frozen for good.
             traceback.print_exc()
-        self.window.after(self._video_refresh_ms, self._update_video)
+        # The next frame is due one interval after this one STARTED - waiting
+        # the whole interval after drawing made 20 a second come out at ~13.
+        # But never sooner than VIDEO_MIN_GAP_MS after drawing ends.
+        spent_ms = (time.perf_counter() - started) * 1000
+        self.window.after(max(VIDEO_MIN_GAP_MS, round(self._video_refresh_ms - spent_ms)), self._update_video)
 
     def _refresh_video(self):
         frame = self._get_preview_frame()
@@ -2423,9 +2437,17 @@ class GateMonitorWindow:
         # camera takes, and what the face checks get (zoomed, then shrunk to
         # Settings > Camera > "Detail sent for face checks").
         camera_size = self._get_camera_size() if self._get_camera_size else None
-        camera = f"camera {camera_size[0]}×{camera_size[1]} · " if camera_size else ""
+        camera_fps = self._get_camera_fps() if self._get_camera_fps else None
+        camera = (f"camera {camera_size[0]}×{camera_size[1]}" + (f" {camera_fps:.0f} fps" if camera_fps else "")
+                  + " · ") if camera_size else ""
         checked = f"checked {src_w}×{src_h}" if src_w > 1 and src_h > 1 else "checked –"
-        self._caption_text = f"{camera}{checked}{zoom} · {count} face{'s' if count != 1 else ''} tracked"
+        # How smooth the video really is: redraws a second (each shows the
+        # camera's latest picture, so it can't look smoother than the camera).
+        self._draw_times.append(time.monotonic())
+        times = self._draw_times
+        screen = (f" · screen {(len(times) - 1) / (times[-1] - times[0]):.0f} fps"
+                  if len(times) >= 10 and times[-1] > times[0] else "")
+        self._caption_text = f"{camera}{checked}{zoom}{screen} · {count} face{'s' if count != 1 else ''} tracked"
         self._draw_overlays(rect)
 
     @staticmethod

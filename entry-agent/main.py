@@ -598,6 +598,7 @@ def main():
         officer_name=config.officer_name,
         camera_zoom=config.camera_zoom,
         get_camera_size=camera.capture_size,
+        get_camera_fps=camera.measured_fps,
         version=config.app_version,
         on_close=on_close,
         camera_options=camera_options,

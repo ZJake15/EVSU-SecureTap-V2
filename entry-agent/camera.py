@@ -186,7 +186,10 @@ class Camera:
     def measured_fps(self):
         """Frames a second the camera really delivers (over its last ~90
         frames), or None until there are enough to tell."""
-        times = list(self._frame_times)
+        # .copy(), not list(): the capture thread appends while this runs
+        # (on the Tk and camera-report threads), and iterating a deque that
+        # changes underneath raises - a deque's own copy is taken in one step.
+        times = list(self._frame_times.copy())
         if len(times) < 10 or times[-1] <= times[0]:
             return None
         return (len(times) - 1) / (times[-1] - times[0])

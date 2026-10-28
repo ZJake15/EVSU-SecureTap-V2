@@ -167,6 +167,10 @@ shows it after each trial:
 
 Every freeze and every answer slower than 1.5 s is also written, with the
 time and the trial number, to `performance_log.csv` in the results folder.
+For a slow answer, `backend_ms` is the backend's own part of it; the rest was
+spent between the programs. (Setup C's slow answers were that: the gate
+monitor connected to "localhost", and on Windows every new connection to it
+waited ~2 s - it now connects to 127.0.0.1.)
 
 How to read it: a big **answer** with a small **backend** = the time is lost
 on the gate laptop or between the programs; a big **backend** with a small

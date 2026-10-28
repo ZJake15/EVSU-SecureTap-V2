@@ -96,7 +96,9 @@ RESULT_FIELDS = [
 POLL_MS = 100
 FREEZE_MS = 500
 SLOW_ANSWER_MS = 1500
-PERF_FIELDS = ["date_time", "event", "duration_ms", "trial", "cpu_pct", "memory_pct"]
+# backend_ms: of a slow answer, the backend's own part - the rest was spent
+# between the programs (connecting, sending, building the result).
+PERF_FIELDS = ["date_time", "event", "duration_ms", "trial", "cpu_pct", "memory_pct", "backend_ms"]
 
 
 class _MemoryStatus(ctypes.Structure):
@@ -389,7 +391,8 @@ class TestRun:
             # Logged the whole time test mode is open, not only during a
             # trial - "the results come late" can happen any time.
             if t_sent is not None and (t_answer - t_sent) * 1000 >= SLOW_ANSWER_MS:
-                self._log_perf("slow answer", (t_answer - t_sent) * 1000, *self.last_system)
+                self._log_perf("slow answer", (t_answer - t_sent) * 1000, *self.last_system,
+                               backend_ms=(response.get("test_timing") or {}).get("server_ms"))
             trial = self.trial
             if self.state != "running" or trial is None or t_frame < trial["t_start"]:
                 return
@@ -544,9 +547,20 @@ class TestRun:
                     self.trial["memory"].append(memory)
             self._log_perf("screen freeze", duration_ms, cpu, memory)
 
-    def _log_perf(self, event, duration_ms, cpu, memory):
+    def _log_perf(self, event, duration_ms, cpu, memory, backend_ms=None):
         """One line in performance_log.csv - caller holds the lock."""
         new = not self.perf_path.exists()
+        if not new:
+            with open(self.perf_path, encoding="utf-8") as fh:
+                reader = csv.DictReader(fh)
+                old_rows = list(reader) if reader.fieldnames != PERF_FIELDS else None
+            if old_rows is not None:
+                # Written by an older version with fewer columns - rewrite it
+                # once with today's header (old lines keep their values).
+                with open(self.perf_path, "w", newline="", encoding="utf-8") as fh:
+                    writer = csv.DictWriter(fh, fieldnames=PERF_FIELDS, extrasaction="ignore")
+                    writer.writeheader()
+                    writer.writerows(old_rows)
         trial = self.trial["trial"] if self.state == "running" and self.trial else ""
         with open(self.perf_path, "a", newline="", encoding="utf-8") as fh:
             writer = csv.DictWriter(fh, fieldnames=PERF_FIELDS)
@@ -556,6 +570,7 @@ class TestRun:
                 "date_time": datetime.now().isoformat(sep=" ", timespec="milliseconds"), "event": event,
                 "duration_ms": _fmt(duration_ms, 0), "trial": trial,
                 "cpu_pct": "" if cpu is None else _fmt(cpu, 0), "memory_pct": "" if memory is None else memory,
+                "backend_ms": "" if backend_ms is None else _fmt(backend_ms, 0),
             })
 
     # -- writing a trial ---------------------------------------------------------------

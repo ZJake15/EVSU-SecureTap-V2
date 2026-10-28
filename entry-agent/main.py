@@ -105,20 +105,31 @@ def _extract_image_size(response, fallback):
     return fallback
 
 
+PHOTO_CACHE_SIZE = 200  # photos kept for the live log - the oldest goes first
+
+
 def _fetch_photo_cached(api_client, photo_cache, url):
     """Fetches a reference/captured photo's bytes, cached by URL so a
     person (or lingering unrecognized face, which server-side dedup already
     keys to the same captured_photo URL across frames) is only fetched once
-    per camera-scanner session, not once per ~0.2s poll cycle."""
+    per camera-scanner session, not once per ~0.2s poll cycle.
+
+    Cached by the file's address without its ?token=: the token is signed
+    with the time, so the same photo's URL changes every second - keyed by
+    the whole URL, a matched face's photo was fetched again (on the scan
+    thread) every second and kept each time."""
     if not url:
         return None
-    if url in photo_cache:
-        return photo_cache[url]
+    key = url.split("?", 1)[0]
+    if key in photo_cache:
+        return photo_cache[key]
     try:
         photo_bytes = api_client.fetch_photo(url)
     except requests.RequestException:
         photo_bytes = None
-    photo_cache[url] = photo_bytes
+    if len(photo_cache) >= PHOTO_CACHE_SIZE:
+        photo_cache.pop(next(iter(photo_cache)))
+    photo_cache[key] = photo_bytes
     return photo_bytes
 
 

@@ -1,9 +1,25 @@
+from urllib.parse import urlsplit, urlunsplit
+
 import requests
+
+
+def _ipv4_loopback(url):
+    """"localhost" -> 127.0.0.1. The backend (manage.py runserver) listens on
+    IPv4 only, and Windows tries IPv6 first: every NEW connection to
+    "localhost" waits ~2 s for that to fail (measured: 2,050 ms vs 2 ms for
+    127.0.0.1). The Session below keeps one connection open, but a second
+    thread's request or a dropped connection opens another - the gate's
+    1.5-3.4 s "slow answers" in the capstone test. Any other host is left as
+    it is."""
+    parts = urlsplit(url)
+    if parts.hostname != "localhost":
+        return url
+    return urlunsplit(parts._replace(netloc="127.0.0.1" + (f":{parts.port}" if parts.port else "")))
 
 
 class ApiClient:
     def __init__(self, base_url, service_token, timeout=10):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = _ipv4_loopback(base_url.rstrip("/"))
         self.service_token = service_token
         self.timeout = timeout
         # A plain requests.post() opens a brand new TCP connection every
@@ -139,6 +155,6 @@ class ApiClient:
     def fetch_photo(self, url):
         """Fetches a person's reference photo (returned by /verify) as raw bytes,
         to display on the tap-lookup result."""
-        response = self.session.get(url, timeout=self.timeout)
+        response = self.session.get(_ipv4_loopback(url), timeout=self.timeout)
         response.raise_for_status()
         return response.content

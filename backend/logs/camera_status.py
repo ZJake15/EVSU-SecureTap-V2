@@ -16,7 +16,7 @@ from .models import GateCamera
 FIELDS = {
     "camera": str, "resolution": str, "resolution_asked": str, "fps": float, "fps_asked": str,
     "scan_pause": float, "upload_size": int, "video_fps": int, "student_display_fps": int, "zoom": float,
-    "exposure": str, "backlight": str, "focus": str,
+    "exposure": str, "backlight": str, "focus": str, "driver": str,
 }
 # Gates not heard from in this long aren't shown any more.
 SHOW_FOR = timezone.timedelta(days=7)
@@ -53,7 +53,10 @@ def _lines(report):
             f" (asked {asked} - this camera's nearest)" if asked and asked != "auto" and asked != resolution else ""
         )
     fps = report.get("fps")
-    lines["camera_fps"] = f"about {fps:.0f} a second" if fps else "measuring…"
+    # driver: how the gate monitor opened the camera (Media Foundation, or
+    # DirectShow as the fallback) - it changes what a camera does in dim light.
+    driver = f" ({report['driver']})" if report.get("driver") else ""
+    lines["camera_fps"] = (f"about {fps:.0f} a second" if fps else "measuring…") + driver
     if report.get("scan_pause") is not None:
         lines["scan_pause"] = f"{_number(report['scan_pause'])} s"
     if report.get("upload_size"):

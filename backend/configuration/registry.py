@@ -230,9 +230,10 @@ DEFINITIONS = [
         "picture. Not how often faces are checked - that's the pause below.",
         CHOICE, "auto", choices=(("auto", "Auto"), ("15", "15"), ("24", "24"), ("30", "30"), ("60", "60")),
         unit="a second",
-        note="A camera that can't do the chosen rate gives its nearest; under each gate is the rate it measures. "
-             "In dim light many cameras slow down to lengthen each shot (the EMEET: about 17 a second indoors) - "
-             "a faster Exposure (More options) gets the full rate back, at the cost of a darker picture.",
+        note="A camera that can't do the chosen rate gives its nearest; under each gate is the rate it measures "
+             "and how the camera is opened. Opened through Media Foundation (as the Windows Camera app), the "
+             "EMEET keeps 30 a second indoors; through DirectShow - the fallback - it slowed to about 17 in dim "
+             "light, which a faster Exposure (More options) undoes at the cost of a darker picture.",
     ),
     SettingDef(
         "scan_pause", "camera", "Pause between face checks",

@@ -57,7 +57,9 @@ Every cycle below repeats roughly every 0.2 seconds, independently for every fac
 currently in frame.
 
 1. **Capture.** The entry-agent's `Camera` class keeps the webcam open continuously
-   (DirectShow, up to 1280×720). Every `SCAN_INTERVAL_SECONDS` (0.2s) it grabs the
+   (Media Foundation, as the Windows Camera app - DirectShow for a camera Media
+   Foundation doesn't list or can't get frames from; 1280×720 unless Settings >
+   Camera asks otherwise). Every `SCAN_INTERVAL_SECONDS` (0.2s) it grabs the
    latest frame, downsizes it to at most 960px on the long edge, and JPEG-encodes
    it — this happens whether or not anyone is actually standing at the gate.
 2. **Upload.** The JPEG is POSTed to `/api/identify` along with the entry-agent's

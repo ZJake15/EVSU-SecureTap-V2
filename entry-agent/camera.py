@@ -1,8 +1,16 @@
+import ctypes
+import os
 import threading
 import time
+import uuid
 from collections import deque
+from ctypes import wintypes
 
-import cv2
+# OpenCV's Media Foundation capture with its hardware transforms on took 44 s
+# to give the EMEET's first frame; off, 1 s. Read when cv2 loads, so set first.
+os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
+
+import cv2  # noqa: E402
 
 CAPTURE_WIDTH = 1280  # requested from the webcam driver - many DSHOW webcams
 CAPTURE_HEIGHT = 720  # otherwise default to 640x480, which leaves a face 10ft
@@ -31,10 +39,17 @@ MIN_ZOOM, MAX_ZOOM = 1.0, 2.0
 # this group existed: 1280x720, the driver's own frame rate, exposure,
 # backlight and focus.
 CAPTURE_KEYS = ("camera_resolution", "camera_fps", "camera_exposure", "backlight_compensation", "camera_focus")
-# DirectShow's exposure mode values for CAP_PROP_AUTO_EXPOSURE. Many cameras
-# read it back as -1 whatever it is (the EMEET does), so its "own" mode can't
-# be remembered and put back - Auto switches automatic exposure on instead.
-AUTO_EXPOSURE_ON, AUTO_EXPOSURE_OFF = 0.75, 0.25
+# How a camera is opened: Media Foundation (as the Windows Camera app) first.
+# Measured with the EMEET in a dim room, DirectShow's automatic exposure
+# slowed it to 17 frames a second; Media Foundation's kept 30 at the same
+# brightness. DirectShow stays the fallback - for a camera Media Foundation
+# doesn't list (DirectShow-only virtual cameras) or can't get frames from.
+MSMF, DSHOW = "Media Foundation", "DirectShow"
+# CAP_PROP_AUTO_EXPOSURE's (on, off) values - each driver has its own. Many
+# cameras read it back as -1 whatever it is (the EMEET does), so its "own"
+# mode can't be remembered and put back - Auto switches automatic exposure on.
+AUTO_EXPOSURE = {DSHOW: (0.75, 0.25), MSMF: (1, 0)}
+COINIT_APARTMENTTHREADED = 2  # how comtypes (pygrabber) starts COM - a thread can't mix modes
 
 # How often to retry opening the camera while it isn't connected - covers
 # both "never was" (nothing plugged in at startup) and "used to be, isn't
@@ -85,6 +100,11 @@ class Camera:
         self._applied = {}  # exposure / backlight / focus -> "applied" | "ignored" | "camera"
         self._originals = {}  # the camera's own values, put back when a setting returns to Auto
         self._frame_times = deque(maxlen=90)  # for the measured frame rate
+        self._driver = None  # MSMF or DSHOW, once open
+        self._frames_since_open = 0
+        # Media Foundation opened this camera but gave no frames - DirectShow
+        # from then on (until another camera is chosen).
+        self._msmf_failed = False
 
     def start(self):
         """No camera plugged in (or the wrong index configured) is a real,
@@ -108,10 +128,19 @@ class Camera:
         indefinitely - a failed cv2.VideoCapture().isOpened() check returns
         near-instantly, it doesn't hang waiting for a device that isn't
         there."""
-        cap = cv2.VideoCapture(self.index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap.release()
-            return
+        cap = None
+        msmf_index = None if self._msmf_failed else _media_foundation_index(self.index)
+        if msmf_index is not None:
+            cap, self._driver = cv2.VideoCapture(msmf_index, cv2.CAP_MSMF), MSMF
+            if not cap.isOpened():
+                cap.release()
+                cap = None
+        if cap is None:
+            cap, self._driver = cv2.VideoCapture(self.index, cv2.CAP_DSHOW), DSHOW
+            if not cap.isOpened():
+                cap.release()
+                return
+        self._frames_since_open = 0
         wanted = dict(self._capture)
         width, height = _resolution(wanted["camera_resolution"])
         if wanted["camera_resolution"] != "auto" or wanted["camera_fps"] != "auto":
@@ -123,6 +152,11 @@ class Camera:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         if wanted["camera_fps"] != "auto":
             cap.set(cv2.CAP_PROP_FPS, float(wanted["camera_fps"]))
+        if self._driver == MSMF:
+            # Media Foundation starts the stream on the first read and puts the
+            # camera's controls back then - exposure, backlight and focus set
+            # before it are lost (measured: 1/64 s "applied", picture unchanged).
+            cap.read()
         self._cap = cap
         self._frame_times.clear()
         self._applied = self._apply_picture_settings(wanted)
@@ -143,7 +177,7 @@ class Camera:
         else:
             # The driver keeps a manual exposure even after the camera is
             # closed, so Auto always switches automatic exposure back on.
-            self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, AUTO_EXPOSURE_ON)
+            self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, AUTO_EXPOSURE[self._driver][0])
             applied["exposure"] = "camera"
         backlight = wanted["backlight_compensation"]
         if backlight != "auto":
@@ -204,6 +238,7 @@ class Camera:
             "fps": round(fps, 1) if fps else None,
             "fps_asked": self._capture["camera_fps"],
             "zoom": self.zoom,
+            "driver": self._driver,
             **self._applied,
         }
 
@@ -221,8 +256,12 @@ class Camera:
         control panel/driver docs, then confirm the change actually took by
         watching the preview darken or reading back
         cap.get(cv2.CAP_PROP_EXPOSURE) after this call."""
-        self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, AUTO_EXPOSURE_OFF)
+        self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, AUTO_EXPOSURE[self._driver][1])
         accepted = self._cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
+        if self._driver == MSMF:
+            # Media Foundation reads it back rounded (the EMEET: -6 read as -5
+            # while the picture did darken) - only the camera's answer counts.
+            return "applied" if accepted else "ignored"
         return "applied" if accepted and abs(self._cap.get(cv2.CAP_PROP_EXPOSURE) - exposure) < 0.5 else "ignored"
 
     def is_open(self):
@@ -242,6 +281,7 @@ class Camera:
         # The old camera's own exposure/backlight/focus values mean nothing
         # for the new one - Auto must put back the new camera's.
         self._originals = {}
+        self._msmf_failed = False
         self._close_after_failure()
         self._next_open_attempt = 0.0
 
@@ -277,6 +317,9 @@ class Camera:
         while not. Runs on its own thread so a slow/hanging open attempt
         can never freeze the Tk UI or the scan loop."""
         consecutive_failures = 0
+        # This thread looks the camera's name up through COM (pygrabber,
+        # Media Foundation) - each thread has to start COM for itself.
+        ctypes.windll.ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
         while self._running:
             if self._reopen:  # Settings > Camera changed (configure)
                 self._reopen = False
@@ -295,6 +338,8 @@ class Camera:
             if not success:
                 consecutive_failures += 1
                 if consecutive_failures >= MAX_CONSECUTIVE_READ_FAILURES:
+                    if self._driver == MSMF and not self._frames_since_open:
+                        self._msmf_failed = True  # opened, but never a frame: DirectShow next time
                     self._close_after_failure()
                     consecutive_failures = 0
                 else:
@@ -302,6 +347,7 @@ class Camera:
                 continue
 
             consecutive_failures = 0
+            self._frames_since_open += 1
             self._frame_times.append(time.monotonic())
             with self._lock:
                 self._latest_frame = frame
@@ -389,6 +435,86 @@ def list_available_cameras(max_probe=10):
             available.append((index, f"Camera {index}"))
         cap.release()
     return available
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("data1", ctypes.c_uint32), ("data2", ctypes.c_uint16), ("data3", ctypes.c_uint16),
+                ("data4", ctypes.c_ubyte * 8)]
+
+    @classmethod
+    def parse(cls, text):
+        value = uuid.UUID(text)
+        return cls(*value.fields[:3], (ctypes.c_ubyte * 8)(*value.bytes[8:]))
+
+
+_MF_SOURCE_TYPE = _GUID.parse("c60ac5fe-252a-478f-a0ef-bc8fa5f7cad3")  # MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE
+_MF_VIDEO_CAPTURE = _GUID.parse("8ac3587a-4ae7-42d8-99e0-0a6013eef90f")  # ..._SOURCE_TYPE_VIDCAP_GUID
+_MF_FRIENDLY_NAME = _GUID.parse("60d0e559-52f8-4fa2-bbce-acdb34a8ec01")  # MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME
+_MF_VERSION = 0x20070
+# Slots in the COM objects' method tables (IUnknown, then IMFAttributes - mfobjects.h).
+_RELEASE, _GET_ALLOCATED_STRING, _SET_GUID = 2, 13, 24
+
+
+def _com_method(obj, slot, *argtypes):
+    table = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    return ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *argtypes)(table[slot])
+
+
+def _media_foundation_names():
+    """The cameras Media Foundation lists, in its order - the index OpenCV's
+    CAP_MSMF opens. [] if anything about asking fails."""
+    names = []
+    try:
+        mfplat, mf, ole32 = ctypes.WinDLL("mfplat"), ctypes.WinDLL("mf"), ctypes.WinDLL("ole32")
+        if mfplat.MFStartup(_MF_VERSION, 0) < 0:
+            return names
+        try:
+            attributes = ctypes.c_void_p()
+            if mfplat.MFCreateAttributes(ctypes.byref(attributes), 1) < 0:
+                return names
+            try:
+                set_guid = _com_method(attributes, _SET_GUID, ctypes.POINTER(_GUID), ctypes.POINTER(_GUID))
+                if set_guid(attributes, _MF_SOURCE_TYPE, _MF_VIDEO_CAPTURE) < 0:
+                    return names
+                devices, count = ctypes.POINTER(ctypes.c_void_p)(), ctypes.c_uint32()
+                if mf.MFEnumDeviceSources(attributes, ctypes.byref(devices), ctypes.byref(count)) < 0:
+                    return names
+                for i in range(count.value):
+                    device = devices[i]
+                    text, length = wintypes.LPWSTR(), ctypes.c_uint32()
+                    get_string = _com_method(device, _GET_ALLOCATED_STRING, ctypes.POINTER(_GUID),
+                                             ctypes.POINTER(wintypes.LPWSTR), ctypes.POINTER(ctypes.c_uint32))
+                    names.append(text.value if get_string(device, _MF_FRIENDLY_NAME, ctypes.byref(text),
+                                                          ctypes.byref(length)) >= 0 else None)
+                    ole32.CoTaskMemFree(text)
+                    _com_method(device, _RELEASE)(device)
+                ole32.CoTaskMemFree(devices)
+            finally:
+                _com_method(attributes, _RELEASE)(attributes)
+        finally:
+            mfplat.MFShutdown()
+    except Exception:
+        return []
+    return names
+
+
+def _media_foundation_index(dshow_index):
+    """The camera at DirectShow's `dshow_index` (the camera picker's
+    numbering, list_available_cameras) in Media Foundation's list, matched
+    by name - the two lists can differ: a DirectShow-only virtual camera
+    (e.g. "LSVCam") shifts DirectShow's numbers. Two cameras with the same
+    name are matched in order. None if it isn't there."""
+    try:
+        from pygrabber.dshow_graph import FilterGraph
+        dshow_names = FilterGraph().get_input_devices()
+    except Exception:
+        return None
+    if not 0 <= dshow_index < len(dshow_names):
+        return None
+    name = dshow_names[dshow_index]
+    nth = dshow_names[:dshow_index].count(name)
+    matches = [index for index, mf_name in enumerate(_media_foundation_names()) if mf_name == name]
+    return matches[nth] if nth < len(matches) else None
 
 
 def _cap_dimension(frame, max_dimension):

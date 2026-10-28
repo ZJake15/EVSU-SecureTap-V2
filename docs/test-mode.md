@@ -58,6 +58,10 @@ checks the ID and saves every setting to a file.
   second. Each part has exactly half of every category × distance (10 each).
 - One test = one number of trials per condition. The window refuses a
   different number while the folder has results, until you start a new test.
+- **Categories: "Enrolled and spoof only"** leaves the unknown volunteer's
+  trials out of the plan - for one person testing alone (enrolled, holding a
+  photo of their own face for the spoof trials). It is a separate test: start
+  a new test to switch between it and the full three categories.
 
 Each trial:
 

@@ -232,6 +232,15 @@ REFLECTANCE_WEIGHT = 0.25
 MINIFASNET_WEIGHT = 0.65
 CLASSICAL_WEIGHT = 0.35
 
+# Up close, the second model (4.0, the one that sees more of the
+# surroundings) takes printed photos for real faces - across three capstone
+# tests at 2 m it often rated prints 0.86-1.00 while the close-in model (2.7)
+# didn't. So a face estimated closer than this is scored with the close-in
+# model alone (both still run, and both are reported); farther, the average.
+# Measured at strictness 0.60: 29 of 33 photos at 2 m caught instead of 23,
+# 3 of 51 real faces there flagged instead of 2.
+CLOSE_RANGE_M = 2.5
+
 # LBP texture entropy (in bits, max 8 for a 256-bin histogram) below this is
 # treated as "suspiciously flat" - a starting point pending real calibration.
 _TEXTURE_ENTROPY_MIN = 3.5
@@ -263,11 +272,13 @@ def compute_liveness_score(bgr_image, box):
     return compute_liveness_details(bgr_image, box)["score"]
 
 
-def compute_liveness_details(bgr_image, box):
+def compute_liveness_details(bgr_image, box, distance_m=None):
     """compute_liveness_score's parts: {"score": the final score, "classical":
     the texture/frequency/reflectance sub-score, "2.7"/"4.0": each MiniFASNet
     model's P(live)} - the capstone test mode records them per trial, so the
-    two models can be compared and the threshold tuned on real data."""
+    two models can be compared and the threshold tuned on real data.
+    distance_m: the face's estimated distance - closer than CLOSE_RANGE_M,
+    only the close-in model counts toward the score."""
     crop = _face_crop(bgr_image, box)
     if crop is None or crop.size == 0 or min(crop.shape[:2]) < 16:
         return {"score": 0.0}
@@ -282,7 +293,10 @@ def compute_liveness_details(bgr_image, box):
     model_scores = _minifasnet_scores(bgr_image, box)
     if not model_scores:
         return {"score": classical_score, "classical": classical_score}
-    minifasnet_score = sum(model_scores.values()) / len(model_scores)
+    counted = model_scores
+    if distance_m is not None and distance_m < CLOSE_RANGE_M and "2.7" in model_scores:
+        counted = {"2.7": model_scores["2.7"]}
+    minifasnet_score = sum(counted.values()) / len(counted)
     return {
         "score": float(MINIFASNET_WEIGHT * minifasnet_score + CLASSICAL_WEIGHT * classical_score),
         "classical": classical_score,

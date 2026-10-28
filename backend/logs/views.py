@@ -743,7 +743,7 @@ class IdentifyView(APIView):
             liveness_unsure = False
             if system_settings.get("spoof_check_enabled"):
                 check_started = time.perf_counter()
-                liveness_details = liveness_utils.compute_liveness_details(bgr_image, box)
+                liveness_details = liveness_utils.compute_liveness_details(bgr_image, box, distance_m=distance)
                 liveness_score = liveness_details["score"]
                 liveness_parts[box] = liveness_details
                 self._add_time("fake_check_ms", check_started)

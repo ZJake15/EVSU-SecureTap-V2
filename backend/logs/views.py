@@ -1006,6 +1006,7 @@ class IdentifyView(APIView):
                 track_id=track_id,
             )
 
+        tiebreak = None  # (candidate ids, reason) when this face is settled by a card tap
         # Checked before the normal ambiguity-gap logic below, and overrides
         # it outright: a confusable pair (see users.models.ConfusablePair) is
         # a known, standing fact about this specific person, not a property
@@ -1019,36 +1020,53 @@ class IdentifyView(APIView):
         # The fake-face check was unsure about this face (Settings page,
         # "Ask-for-card range"): it matched someone, so their card settles it.
         if liveness_unsure:
-            return self._start_tiebreak(
-                gate_location, direction, [best_person.id], box, best_similarity,
-                reason=PendingTiebreak.Reason.LIVENESS_UNSURE,
-            )
+            tiebreak = ([best_person.id], PendingTiebreak.Reason.LIVENESS_UNSURE)
 
         # Settings page: "Always ask look-alikes for a card".
         confusable_partner_ids = (
-            get_confusable_partner_ids(best_person.id) if system_settings.get("lookalikes_always_tap") else []
+            get_confusable_partner_ids(best_person.id)
+            if tiebreak is None and system_settings.get("lookalikes_always_tap") else []
         )
         if confusable_partner_ids:
-            candidate_ids = [best_person.id] + confusable_partner_ids
-            return self._start_tiebreak(
-                gate_location, direction, candidate_ids, box, best_similarity,
-                reason=PendingTiebreak.Reason.CONFUSABLE_PAIR,
-            )
+            tiebreak = ([best_person.id] + confusable_partner_ids, PendingTiebreak.Reason.CONFUSABLE_PAIR)
 
-        other_best = None
-        other_owner = None
-        for sim, owner in zip(similarities, owners):
-            if owner.id == best_person.id:
-                continue
-            if other_best is None or sim > other_best:
-                other_best, other_owner = float(sim), owner
+        if tiebreak is None:
+            other_best = None
+            other_owner = None
+            for sim, owner in zip(similarities, owners):
+                if owner.id == best_person.id:
+                    continue
+                if other_best is None or sim > other_best:
+                    other_best, other_owner = float(sim), owner
 
-        borderline = best_similarity < system_settings.get("match_strictness") + system_settings.get("unsure_margin")
-        close_second = other_best is not None and (best_similarity - other_best) < system_settings.get("unsure_margin")
-        # Settings page: "Ask for card when unsure".
-        if (borderline or close_second) and system_settings.get("ask_card_when_unsure"):
-            candidate_ids = [best_person.id] + ([other_owner.id] if close_second else [])
-            return self._start_tiebreak(gate_location, direction, candidate_ids, box, best_similarity)
+            borderline = best_similarity < system_settings.get("match_strictness") + system_settings.get("unsure_margin")
+            close_second = (other_best is not None
+                            and (best_similarity - other_best) < system_settings.get("unsure_margin"))
+            # Settings page: "Ask for card when unsure".
+            if (borderline or close_second) and system_settings.get("ask_card_when_unsure"):
+                tiebreak = ([best_person.id] + ([other_owner.id] if close_second else []),
+                            PendingTiebreak.Reason.AMBIGUOUS_MATCH)
+
+        if tiebreak is not None:
+            # Asked for only once the frames agree, as a match is, and not
+            # while this face failed the fake-face check since (the hold, see
+            # _confirm_or_vote). From a single frame, a printed photo that
+            # passed the check once with a weak match got a card tap: 9 of 40
+            # photos at 2 m in the capstone test, mostly on their first frame.
+            agreed, held = self._vote_for(best_person, best_similarity, gate_location, embedding)
+            if not agreed or held:
+                return {
+                    "success": False,
+                    "retry": True,
+                    "reason": "Checking...",
+                    "log_id": None,
+                    "similarity": best_similarity,
+                    "liveness_score": liveness_score,
+                    "box": _box_to_dict(box),
+                    **({"fake_check_hold": True} if held else {}),
+                }
+            candidate_ids, reason = tiebreak
+            return self._start_tiebreak(gate_location, direction, candidate_ids, box, best_similarity, reason=reason)
 
         result = self._confirm_or_vote(
             best_person, best_similarity, direction, gate_location, request, box, liveness_score, embedding
@@ -1164,24 +1182,9 @@ class IdentifyView(APIView):
         let in as soon as it has passed enough times - measured in the
         capstone test, that was 7 of the 9 photos let in. A real face that
         fails once just needs that many passing frames in a row after it."""
-        RecognitionAttempt.objects.create(gate_location=gate_location, person=person, similarity=similarity)
+        agreed, held = self._vote_for(person, similarity, gate_location, embedding)
 
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
-        recent_attempts = list(
-            RecognitionAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
-            .order_by("-timestamp")[: system_settings.get("frames_considered")]
-        )
-        agreeing = [attempt for attempt in recent_attempts if attempt.person_id == person.id]
-        must_agree = system_settings.get("frames_must_agree")
-        held = (
-            len(agreeing) >= must_agree
-            and embedding is not None
-            and system_settings.get("spoof_check_enabled")
-            and system_settings.get("spoof_blocks_match")
-            and self._failed_fake_check_since(embedding, gate_location, agreeing[must_agree - 1].timestamp)
-        )
-
-        if len(agreeing) < must_agree or held:
+        if not agreed or held:
             return {
                 "success": True,
                 "retry": False,
@@ -1245,6 +1248,32 @@ class IdentifyView(APIView):
             "box": _box_to_dict(box),
             **person_payload(person, request),
         }
+
+    def _vote_for(self, person, similarity, gate_location, embedding):
+        """Tallies this frame for `person`. Returns (agreed, held): agreed
+        once `person` was the top match in "Frames that must agree" of the
+        last "Out of the last" frames; held when, since the oldest of the
+        frames that agree, this same face failed the fake-face check
+        (Settings: "A failed check holds the match" - see _confirm_or_vote).
+        Used for a match and for a card-tap request alike."""
+        RecognitionAttempt.objects.create(gate_location=gate_location, person=person, similarity=similarity)
+
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
+        recent_attempts = list(
+            RecognitionAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
+            .order_by("-timestamp")[: system_settings.get("frames_considered")]
+        )
+        agreeing = [attempt for attempt in recent_attempts if attempt.person_id == person.id]
+        must_agree = system_settings.get("frames_must_agree")
+        if len(agreeing) < must_agree:
+            return False, False
+        held = bool(
+            embedding is not None
+            and system_settings.get("spoof_check_enabled")
+            and system_settings.get("spoof_blocks_match")
+            and self._failed_fake_check_since(embedding, gate_location, agreeing[must_agree - 1].timestamp)
+        )
+        return True, held
 
     @staticmethod
     def _failed_fake_check_since(embedding, gate_location, since):

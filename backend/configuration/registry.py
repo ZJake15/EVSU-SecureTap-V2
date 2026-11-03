@@ -78,7 +78,7 @@ SECTIONS = [
 # Advanced group any more).
 MORE_OPTIONS = {
     "recognition_cooldown_seconds", "unknown_cooldown_seconds",  # Face Recognition
-    "spoof_cooldown_seconds", "spoof_models", "spoof_blocks_match",  # Anti-Spoofing
+    "spoof_cooldown_seconds", "spoof_models", "spoof_blocks_match", "spoof_card_after_failed",  # Anti-Spoofing
     "max_turn", "edge_margin", "distance_correction", "show_face_distance",  # Photo Quality Checks
     "covered_face_mode", "covered_rule_mouth", "covered_rule_texture", "covered_rule_det_score",
     "student_display_fps", "camera_exposure", "backlight_compensation", "camera_focus",  # Camera
@@ -160,6 +160,13 @@ DEFINITIONS = [
         BOOL, True, depends_on="spoof_check_enabled",
         off_warning="Turning this off lets a photo in once it passes the fake-face check on enough frames, even "
                     "if it failed the check in between.",
+    ),
+    SettingDef(
+        "spoof_card_after_failed", "spoof", "Ask for a card after failed checks",
+        "A face that failed the fake-face check on this many frames in the last 10 seconds is asked for a card "
+        "tap instead of being let in by face alone. In the capstone tests a real face failed on at most 1 frame, "
+        "a printed photo usually on 2 or more. 0 turns this off.",
+        INT, 2, 0, 10, 1, unit="frames", depends_on="spoof_check_enabled",
     ),
     # ---- 3. Photo Quality Checks ----------------------------------------------
     SettingDef(

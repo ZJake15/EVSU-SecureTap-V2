@@ -578,6 +578,11 @@ class VerifyView(APIView):
         )
 
 
+# How far back "Ask for a card after failed checks" counts a face's failed
+# fake-face checks - a trial, from turning around to the decision, fits in it.
+FAILED_CHECK_MEMORY_SECONDS = 10
+
+
 class IdentifyView(APIView):
     """Called periodically by the entry-agent's continuous camera scan. There's
     no claimed identity here (unlike VerifyView) - every face detected in the
@@ -1184,6 +1189,20 @@ class IdentifyView(APIView):
         fails once just needs that many passing frames in a row after it."""
         agreed, held = self._vote_for(person, similarity, gate_location, embedding)
 
+        # Settings (More options): "Ask for a card after failed checks". A
+        # good print can pass the fake-face check on enough frames in a row,
+        # but rarely on all of them - in the capstone tests a real face
+        # failed on at most 1 frame, a photo usually on 2 or more. So such a
+        # face is asked for a card tap instead of being let in by face alone.
+        card_after = system_settings.get("spoof_card_after_failed")
+        if (agreed and not held and card_after and embedding is not None
+                and system_settings.get("spoof_check_enabled")
+                and self._failed_fake_checks(embedding, gate_location,
+                                             timezone.now() - timezone.timedelta(seconds=FAILED_CHECK_MEMORY_SECONDS))
+                >= card_after):
+            return self._start_tiebreak(gate_location, direction, [person.id], box, similarity,
+                                        reason=PendingTiebreak.Reason.LIVENESS_UNSURE)
+
         if not agreed or held:
             return {
                 "success": True,
@@ -1271,22 +1290,24 @@ class IdentifyView(APIView):
             embedding is not None
             and system_settings.get("spoof_check_enabled")
             and system_settings.get("spoof_blocks_match")
-            and self._failed_fake_check_since(embedding, gate_location, agreeing[must_agree - 1].timestamp)
+            and self._failed_fake_checks(embedding, gate_location, agreeing[must_agree - 1].timestamp) > 0
         )
         return True, held
 
     @staticmethod
-    def _failed_fake_check_since(embedding, gate_location, since):
-        """True if this same face failed the fake-face check at this gate
-        after `since` - "the same face" grouped by embedding similarity, the
-        way _confirm_or_vote_spoof groups its SpoofAttempt rows."""
+    def _failed_fake_checks(embedding, gate_location, since):
+        """How many frames this same face failed the fake-face check on at
+        this gate after `since` - "the same face" grouped by embedding
+        similarity, the way _confirm_or_vote_spoof groups its SpoofAttempt
+        rows."""
         query = np.array(embedding, dtype=np.float32)
         spoof_limit = system_settings.get("spoof_strictness")
         alike = system_settings.get("match_strictness")
-        return any(
-            attempt.liveness_score < spoof_limit
-            and float(np.dot(np.array(attempt.embedding, dtype=np.float32), query)) >= alike
+        return sum(
+            1
             for attempt in SpoofAttempt.objects.filter(gate_location=gate_location, timestamp__gt=since)
+            if attempt.liveness_score < spoof_limit
+            and float(np.dot(np.array(attempt.embedding, dtype=np.float32), query)) >= alike
         )
 
     @staticmethod

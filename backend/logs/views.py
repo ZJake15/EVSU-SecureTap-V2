@@ -28,7 +28,7 @@ from configuration import schedule
 from configuration import store as system_settings
 from configuration.registry import CAMERA_KEYS
 from securetap_project.code_fingerprint import code_fingerprint
-from users import insightface_utils, liveness_utils, occlusion_utils, reenrollment
+from users import flatness, insightface_utils, liveness_utils, occlusion_utils, reenrollment
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
@@ -639,7 +639,7 @@ class IdentifyView(APIView):
         # the scan below is the same, with the same decisions, either way.
         with test_mode.marking(data["test_mode"], data["gate_location"]):
             started = time.perf_counter()
-            self._timing = {"faces_ms": 0.0, "fake_check_ms": 0.0}
+            self._timing = {"faces_ms": 0.0, "fake_check_ms": 0.0, "flat_ms": 0.0}
             response = self._scan(request, data)
             if data["test_mode"] and isinstance(response.data, dict):
                 # Measurement only: where this frame's time went on the
@@ -703,6 +703,8 @@ class IdentifyView(APIView):
         distances = {}  # (left, top, right, bottom) -> metres, for "Show distance on face boxes"
         sharpness = {}  # (left, top, right, bottom) -> the blur check's score - recorded by the test mode
         liveness_parts = {}  # box -> the fake-face score's parts (each model, classical) - also for the test mode
+        testing = test_mode.active()
+        flat = {}  # box -> the watch-only flat-face measure (users/flatness.py) - test mode only
         # How fast each face moved since this gate's last frame, and which
         # earlier face it is (see logs/motion.py).
         tracked = motion.track_faces(gate_location, [detection[1] for detection in detections])
@@ -732,6 +734,12 @@ class IdentifyView(APIView):
             if skip_result is not None:
                 results.append(skip_result)
                 continue
+            if testing:
+                # Watch-only: recorded by the test mode, never used to decide
+                # - on every checked face, photo or not.
+                flat_started = time.perf_counter()
+                flat[box] = flatness.measure(gate_location, tracked[index][1], bgr_image, box)
+                self._add_time("flat_ms", flat_started)
             # Liveness (anti-spoofing) runs after quality checks but before
             # this face is ever compared against enrolled embeddings - a
             # face that looks like a photo/screen replay is never given the
@@ -791,7 +799,6 @@ class IdentifyView(APIView):
         # Settings page (Advanced): "Show distance on face boxes" - for
         # checking the distance estimate against a measured spot.
         show_distance = system_settings.get("show_face_distance")
-        testing = test_mode.active()
         if show_distance or testing:
             for result in results:
                 face_box = result.get("box")
@@ -807,6 +814,8 @@ class IdentifyView(APIView):
                 if testing and key in liveness_parts:
                     result["test_liveness_parts"] = {name: round(value, 3) for name, value in
                                                      liveness_parts[key].items() if name != "score"}
+                if testing and flat.get(key):
+                    result["test_flat"] = flat[key]
         return Response({
             "results": results,
             "image_size": {"width": image_width, "height": image_height},

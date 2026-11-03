@@ -82,7 +82,8 @@ RESULT_FIELDS = [
     "capture_ms_median", "answer_ms_median", "answer_ms_max", "server_ms_median", "face_ai_ms_median",
     "fake_check_ms_median", "screen_freezes", "longest_freeze_ms", "cpu_max_pct", "memory_max_pct",
     "result", "expected_result", "correct", "repeat_entry", "matched_name", "matched_id", "match_confidence", "best_similarity",
-    "liveness_score", "liveness_min", "liveness_model_27", "liveness_model_40", "liveness_classical", "face_width_px", "face_height_px", "estimated_distance_m", "frame_size_sent",
+    "liveness_score", "liveness_min", "liveness_model_27", "liveness_model_40", "liveness_classical",
+    "flat_judged_frames", "flat_frames", "flat_score_min", "shape_change_max", "face_width_px", "face_height_px", "estimated_distance_m", "frame_size_sent",
     "camera_resolution", "note", "status",
 ]
 
@@ -428,6 +429,13 @@ class TestRun:
                 trial["frames_held"] += 1
             if subject.get("liveness_score") is not None:
                 trial["liveness"].append(subject["liveness_score"])
+            flat = subject.get("test_flat") or {}
+            if flat.get("change") is not None:
+                trial["shape_changes"].append(flat["change"])
+            if flat.get("score") is not None:
+                trial["flat_judged"] += 1
+                trial["flat_scores"].append(flat["score"])
+                trial["flat_frames"] += bool(flat.get("flat"))
             if trial["first_face"] is None:
                 trial["first_face"] = (t_frame, t_answer)
             for item in items:
@@ -481,7 +489,8 @@ class TestRun:
             self.trial = {
                 **plan_trial, "t_start": time.perf_counter(), "frames": 0, "frames_with_face": 0,
                 "frames_covered": 0, "frames_beyond_limit": 0, "frames_failed_fake": 0, "frames_held": 0,
-                "liveness": [], "skips": Counter(), "first_face": None,
+                "liveness": [], "flat_judged": 0, "flat_frames": 0, "flat_scores": [], "shape_changes": [],
+                "skips": Counter(), "first_face": None,
                 "first_usable": None, "last_face": None, "frame_size": None, "camera_resolution": None,
                 "sharpness": [], "capture_ms": [], "answer_ms": [], "server_ms": [], "faces_ms": [], "fake_ms": [],
                 "freezes": [], "cpu": [], "memory": [],
@@ -662,6 +671,12 @@ class TestRun:
             "liveness_model_27": _fmt((item.get("test_liveness_parts") or {}).get("2.7"), 3),
             "liveness_model_40": _fmt((item.get("test_liveness_parts") or {}).get("4.0"), 3),
             "liveness_classical": _fmt((item.get("test_liveness_parts") or {}).get("classical"), 3),
+            # The watch-only flat-face measure (backend users/flatness.py): frames
+            # it could judge (the face turned enough), frames it judged flat, its
+            # lowest score, and the face's largest shape change.
+            "flat_judged_frames": trial.get("flat_judged", 0), "flat_frames": trial.get("flat_frames", 0),
+            "flat_score_min": _fmt(min(trial["flat_scores"]), 3) if trial.get("flat_scores") else "",
+            "shape_change_max": _fmt(max(trial["shape_changes"]), 4) if trial.get("shape_changes") else "",
             "face_width_px": "" if width is None else width, "face_height_px": "" if height is None else height,
             "estimated_distance_m": _fmt(item.get("test_distance_m"), 2),
             "frame_size_sent": f"{frame_size[0]}x{frame_size[1]}" if frame_size else "",

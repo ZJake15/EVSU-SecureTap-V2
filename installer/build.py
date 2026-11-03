@@ -16,7 +16,7 @@ Puts together, in installer/build/SecureTap/:
                ONLY the files tracked in git - so no database, .env, photos,
                training data or trained model can ever end up in it
   dashboard/dist/   the dashboard, freshly built (no Node.js on the target)
-  face-models/      the two face models the system uses (15 MB - no internet
+  face-models/      the three face models the system uses (20 MB - no internet
                     needed on first use)
   securetap-installed.txt   the marker that makes it keep its data in
                %LOCALAPPDATA%\\EVSU SecureTap (device_setup.py)
@@ -47,10 +47,11 @@ PYTHON_VERSION = "3.14"
 # The program's own files, by git - see the module docstring.
 CODE = ["launcher.py", "setup_wizard.py", "device_setup.py", "backend", "entry-agent"]
 REQUIREMENTS = ["backend/requirements.txt", "entry-agent/requirements.txt", "backend/requirements-mysql.txt"]
-# insightface_utils loads only these two from the buffalo_s pack
-# (allowed_modules): the face finder and the fingerprint model.
+# From the buffalo_s pack: the face finder and the fingerprint model
+# (insightface_utils, allowed_modules), and the 106-point landmark model the
+# test mode's watch-only flat-face measure uses (users/flatness.py).
 FACE_MODEL_PACK = "buffalo_s"
-FACE_MODEL_FILES = ("det_500m.onnx", "w600k_mbf.onnx")
+FACE_MODEL_FILES = ("det_500m.onnx", "w600k_mbf.onnx", "2d106det.onnx")
 # Microsoft's C++ runtime, which ONNX Runtime and OpenCV need and a fresh
 # Windows may not have. Microsoft allows shipping these files next to the
 # program ("app-local" deployment), so no separate installer is needed.

@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 
 from django.apps import AppConfig
@@ -34,3 +36,12 @@ class UsersConfig(AppConfig):
         from . import photo_files
 
         photo_files.connect()
+
+        # The face models load on first use, which made the first scans
+        # after starting slow - see users/warmup.py. Only for the web server
+        # (in the process that serves - with auto-reload that's the child),
+        # not for commands like migrate.
+        if "runserver" in sys.argv and (os.environ.get("RUN_MAIN") == "true" or "--noreload" in sys.argv):
+            from . import warmup
+
+            warmup.start()

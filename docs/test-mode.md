@@ -152,7 +152,11 @@ liveness_model_27, liveness_model_40, liveness_classical
 (the fake-face score's parts: each trained model's own "real" score and the
 texture cues - for comparing the models and tuning the strictness; a face
 estimated closer than 2.5 m is scored with the 2.7 model only, both are
-still recorded),
+still recorded), flat_judged_frames, flat_frames, flat_score_min,
+shape_change_max (a watch-only "flat face" measure, recorded but never used
+to decide: on how many frames the face had turned enough to judge, on how
+many it moved like a flat sheet - a held photo - its lowest score, and the
+face's largest change of shape; see backend users/flatness.py),
 face_width_px, face_height_px, estimated_distance_m,
 frame_size_sent, camera_resolution, note, status (final / redone).
 

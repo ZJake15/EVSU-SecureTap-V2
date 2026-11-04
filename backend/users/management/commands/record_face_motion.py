@@ -17,6 +17,14 @@ mark, then it records (one long beep at the start and two at the end). Only
 numbers are saved, never a picture: one CSV per run in the test results
 folder (face-motion/), named after the label and distance. The gate monitor
 has to be closed first - one program at a time can use the camera.
+
+    python manage.py record_face_motion --label photo --distance 2 --save-frames
+
+--save-frames also keeps the pictures themselves, for comparing fake-face
+models offline: about every SAVE_EVERY_SECONDS, exactly the JPEG the gate
+would send to the backend (zoomed, shrunk, same quality), in a folder named
+like the CSV. These are pictures of whoever stands there - delete the folder
+once the comparison is done.
 """
 
 import csv
@@ -34,6 +42,7 @@ from insightface.model_zoo import get_model
 from users import insightface_utils
 
 LANDMARK_MODEL = "2d106det.onnx"
+SAVE_EVERY_SECONDS = 0.15  # --save-frames: about the gate's own pace of face checks
 HEADER = (["t_s", "frame_w", "frame_h", "faces", "x1", "y1", "x2", "y2", "det_score"]
           + [f"k{i}{axis}" for i in range(5) for axis in "xy"]
           + [f"l{i}{axis}" for i in range(106) for axis in "xy"])
@@ -51,7 +60,8 @@ def _beep(times=1, length_ms=150):
 
 
 class Command(BaseCommand):
-    help = "Records a face's 106 landmark points over time (real face or held photo) - numbers only, no pictures."
+    help = ("Records a face's 106 landmark points over time (real face or held photo) - numbers only, unless "
+            "--save-frames also keeps the pictures.")
 
     def add_arguments(self, parser):
         parser.add_argument("--label", required=True, help='What is in front of the camera, e.g. "real" or "photo".')
@@ -62,6 +72,9 @@ class Command(BaseCommand):
         parser.add_argument("--zoom", type=float, default=2.0, help="Camera zoom, as the gate uses it (default 2).")
         parser.add_argument("--resolution", default="2560x1440", help="Camera resolution (default 2560x1440).")
         parser.add_argument("--upload", type=int, default=1280, help="Detail sent for face checks, px (default 1280).")
+        parser.add_argument("--save-frames", action="store_true",
+                            help="Also save the pictures the gate would send (JPEG), beside the CSV - for comparing "
+                                 "fake-face models offline. Delete them afterwards.")
 
     def handle(self, *args, **options):
         sys.path.insert(0, str(settings.BASE_DIR.parent / "entry-agent"))
@@ -73,6 +86,12 @@ class Command(BaseCommand):
         landmarks = get_model(str(landmark_path), providers=["CPUExecutionProvider"])
         landmarks.prepare(ctx_id=-1)
         detector = insightface_utils._get_app().det_model
+
+        folder = _output_folder()
+        stem = f"{options['label']}_{options['distance']:g}m_{datetime.now():%Y%m%d-%H%M%S}"
+        frames_dir = folder / stem if options["save_frames"] else None
+        if frames_dir:
+            frames_dir.mkdir(parents=True)
 
         cam = gate_camera.Camera(index=options["camera"], max_upload_dimension=options["upload"], zoom=options["zoom"])
         cam.configure({"camera_resolution": options["resolution"], "camera_fps": "30", "camera_exposure": "auto",
@@ -97,14 +116,13 @@ class Command(BaseCommand):
                 else:
                     time.sleep(0.5)
             _beep(length_ms=600)
-            rows = self._record(cam, gate_camera._cap_dimension, detector, landmarks, options)
+            rows = self._record(cam, gate_camera._cap_dimension, detector, landmarks, options, frames_dir)
             _beep(times=2)
         finally:
             cam.stop()
 
-        folder = _output_folder()
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{options['label']}_{options['distance']:g}m_{datetime.now():%Y%m%d-%H%M%S}.csv"
+        path = folder / f"{stem}.csv"
         with open(path, "w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
             writer.writerow(HEADER)
@@ -115,13 +133,16 @@ class Command(BaseCommand):
             f"Saved {path}\n{len(rows)} frames ({len(rows) / options['seconds']:.1f} a second), a face in "
             f"{len(with_face)}" + (f", face about {widths[len(widths) // 2]:.0f} px wide." if widths
                                    else " - NO FACE FOUND, check the mark.")
+            + (f"\n{len(list(frames_dir.glob('*.jpg')))} pictures in {frames_dir}" if frames_dir else "")
         ))
 
     @staticmethod
-    def _record(cam, shrink, detector, landmarks, options):
-        """One row per frame: the biggest face's box, 5 points and 106 points."""
+    def _record(cam, shrink, detector, landmarks, options, frames_dir=None):
+        """One row per frame: the biggest face's box, 5 points and 106 points.
+        With frames_dir, also the gate's JPEG about every SAVE_EVERY_SECONDS."""
         rows = []
         last_frame_number = None
+        last_saved = -SAVE_EVERY_SECONDS
         started = time.monotonic()
         while time.monotonic() - started < options["seconds"]:
             # Each camera frame once: the latest frame stays the same until the
@@ -133,6 +154,10 @@ class Command(BaseCommand):
                 continue
             last_frame_number = frame_number
             t = round(time.monotonic() - started, 3)
+            if frames_dir and t - last_saved >= SAVE_EVERY_SECONDS:
+                jpeg, _size = cam.capture_jpeg()  # exactly what the gate sends the backend
+                (frames_dir / f"{t:08.3f}.jpg").write_bytes(jpeg)
+                last_saved = t
             frame = shrink(frame, options["upload"])  # as sent for face checks
             height, width = frame.shape[:2]
             boxes, points = detector.detect(frame, input_size=(settings.GATE_SCAN_DET_SIZE,) * 2, max_num=0,

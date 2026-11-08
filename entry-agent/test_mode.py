@@ -87,6 +87,33 @@ RESULT_FIELDS = [
     "camera_resolution", "note", "status",
 ]
 
+# ---- the group test ----------------------------------------------------------------
+#
+# Several enrolled people side by side at GROUP_DISTANCE_M, facing away, who
+# turn to the camera together after Start. Each trial asks for a group of one
+# of GROUP_SIZES, chosen from the members typed in the session form, and ends
+# once every one of them has been let in (or at the timeout). Timed like the
+# single test, from the first usable face's frame: when each member was let
+# in, and when the last one was (the group's decision time). Its own plan and
+# results files, so it never mixes with the single-person test.
+TEST_TYPES = ("Single person", "Group")
+GROUP_SIZES = (3, 4, 5)
+GROUP_DISTANCE_M = 3
+GROUP_ROUNDS = 10
+GROUP_TIMEOUT_SECONDS = 15.0
+GROUP_PLAN_FIELDS = ["trial", "round", "category", "distance_m", "group_size", "members"]
+GROUP_FIELDS = [
+    "trial", "round", "session_id", "date_time", "category", "distance_m", "group_size", "members", "member_ids",
+    "time_to_first_detection_ms", "group_decision_time_ms", "group_decision_time_from_first_face_ms",
+    "first_member_ms", "member_decision_ms", "members_matched", "members_missed", "wrong_matches",
+    "unknown_events", "spoof_events", "card_request_frames", "repeat_entries", "faces_max",
+    "frames_processed", "frames_with_face", "frames_skipped_turned", "frames_skipped_moving",
+    "frames_skipped_blur", "frames_skipped_edge",
+    "capture_ms_median", "answer_ms_median", "answer_ms_max", "server_ms_median", "face_ai_ms_median",
+    "fake_check_ms_median", "screen_freezes", "longest_freeze_ms", "cpu_max_pct", "memory_max_pct",
+    "result", "correct", "frame_size_sent", "camera_resolution", "note", "status",
+]
+
 
 # ---- speed: where each frame's time goes, and screen freezes ------------------------
 #
@@ -172,26 +199,63 @@ def make_plan(rounds=ROUNDS, seed=PLAN_SEED, categories=CATEGORIES):
     return trials
 
 
-def load_plan(folder):
-    """The folder's trial_plan.csv, or [] if there's none yet."""
-    path = Path(folder) / "trial_plan.csv"
+def make_group_plan(rounds=GROUP_ROUNDS, member_count=5, seed=PLAN_SEED):
+    """`rounds` rounds; each round has every group size (up to member_count)
+    once, in its own random order, and each trial's members (numbered from 1,
+    as typed in the session form) are the ones who have taken part least so
+    far, ties broken at random - so every member takes part equally, within
+    one trial."""
+    rng = random.Random(seed)
+    sizes = [size for size in GROUP_SIZES if size <= member_count]
+    taken = {member: 0 for member in range(1, member_count + 1)}
+    trials, number = [], 1
+    for round_number in range(1, rounds + 1):
+        block = list(sizes)
+        rng.shuffle(block)
+        for size in block:
+            order = sorted(taken, key=lambda member: (taken[member], rng.random()))
+            members = sorted(order[:size])
+            for member in members:
+                taken[member] += 1
+            trials.append({"trial": number, "round": round_number, "category": "group",
+                           "distance_m": GROUP_DISTANCE_M, "group_size": size, "members": members})
+            number += 1
+    return trials
+
+
+def load_plan(folder, name="trial_plan.csv"):
+    """The folder's trial plan (trial_plan.csv, or group_plan.csv for the
+    group test), or [] if there's none yet."""
+    path = Path(folder) / name
     if not path.exists():
         return []
+    plan = []
     with open(path, encoding="utf-8") as fh:
-        return [{"trial": int(r["trial"]), "round": int(r["round"]), "category": r["category"],
-                 "distance_m": float(r["distance_m"])} for r in csv.DictReader(fh)]
+        for r in csv.DictReader(fh):
+            trial = {"trial": int(r["trial"]), "round": int(r["round"]), "category": r["category"],
+                     "distance_m": float(r["distance_m"])}
+            if r.get("group_size"):
+                trial["group_size"] = int(r["group_size"])
+                trial["members"] = [int(member) for member in r["members"].split()]
+            plan.append(trial)
+    return plan
 
 
-def write_plan(folder, plan):
-    with open(Path(folder) / "trial_plan.csv", "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=PLAN_FIELDS)
+def write_plan(folder, plan, name="trial_plan.csv", fields=PLAN_FIELDS):
+    with open(Path(folder) / name, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(plan)
+        writer.writerows({**t, "members": " ".join(str(m) for m in t["members"])} if "members" in t else t
+                         for t in plan)
 
 
 def describe_plan(plan):
     if not plan:
         return "no plan yet"
+    if plan[0]["category"] == "group":
+        sizes = ", ".join(str(s) for s in sorted({t["group_size"] for t in plan}))
+        return (f"{max(t['round'] for t in plan)} trials per group size ({sizes} people) at "
+                f"{plan[0]['distance_m']:g} m ({len(plan)} trials)")
     distances = ", ".join(f"{d:g}" for d in sorted({t["distance_m"] for t in plan}))
     kinds = ", ".join(c for c in CATEGORIES if c in {t["category"] for t in plan})
     return f"{max(t['round'] for t in plan)} trials per condition at {distances} m ({len(plan)} trials: {kinds})"
@@ -250,7 +314,7 @@ class TestRun:
     def __init__(self, folder, api_client, gate_location, describe_setup):
         self.folder = Path(folder)
         self.folder.mkdir(parents=True, exist_ok=True)
-        self.results_path = self.folder / "results.csv"
+        self._use("single")  # results_path, plan_name, fields - the group test switches them
         self.perf_path = self.folder / "performance_log.csv"
         self.meter = SystemMeter()  # read only by the test window (Tk thread)
         self.last_system = (None, None)  # its latest (CPU %, memory %)
@@ -273,6 +337,15 @@ class TestRun:
         self.message = ""
 
     # -- session --------------------------------------------------------------
+    def _use(self, kind):
+        """Which test this is - "single" or "group" - and so its own plan and
+        results files and columns."""
+        group = kind == "group"
+        self.kind = kind
+        self.results_path = self.folder / ("group_results.csv" if group else "results.csv")
+        self.plan_name = "group_plan.csv" if group else "trial_plan.csv"
+        self.fields = GROUP_FIELDS if group else RESULT_FIELDS
+
     def _prepare_plan(self, rounds, part, categories=CATEGORIES):
         """The plan for `rounds` trials per condition of `categories` - the
         existing one if it matches, a new one if there's none or no results
@@ -303,7 +376,8 @@ class TestRun:
         with self._lock:
             if self.state != "setup":
                 return None
-            files = [p for p in (self.results_path, self.folder / "trial_plan.csv") if p.exists()]
+            files = [self.folder / name for name in ("results.csv", "trial_plan.csv", "group_results.csv",
+                                                     "group_plan.csv") if (self.folder / name).exists()]
             files += sorted(self.folder.glob("session_*_settings.json"))
             if not files:
                 return None
@@ -315,18 +389,22 @@ class TestRun:
             return destination
 
     def folder_summary(self):
-        """One line for the session form: what's in the results folder now."""
-        done = len(self._done_trials())
-        plan = load_plan(self.folder)
-        if not plan:
-            return "The results folder is empty - a new plan is made when the session begins."
-        return f"In the results folder: a plan of {describe_plan(plan)}, {done} trials done."
+        """For the session form: what's in the results folder now, for each kind of test."""
+        lines = []
+        for label, plan_name, results in (("Single-person test", "trial_plan.csv", "results.csv"),
+                                          ("Group test", "group_plan.csv", "group_results.csv")):
+            plan = load_plan(self.folder, plan_name)
+            if plan:
+                done = len({r["trial"] for r in self._rows(self.folder / results) if r.get("status") == "final"})
+                lines.append(f"{label}: a plan of {describe_plan(plan)}, {done} trials done.")
+        return "\n".join(lines) or "The results folder is empty - a new plan is made when the session begins."
 
     def begin_session(self, enrolled_id, enrolled_label, unknown_label, spoof_medium, timeout_seconds,
                       trials_per_condition=ROUNDS, part="All", categories=CATEGORIES):
         """Checks the plan and the enrolled subject, and saves the settings
         snapshot. Network - call off the Tk thread. Raises ValueError with a
         message."""
+        self._use("single")
         plan, rounds_in_part = self._prepare_plan(int(trials_per_condition), part, categories)
         snapshot = self.api.test_snapshot(enrolled_id)
         subject = snapshot.get("subject")
@@ -367,11 +445,76 @@ class TestRun:
             self.message = "Session started - settings saved."
         return session
 
+    def begin_group_session(self, member_ids, timeout_seconds, rounds=GROUP_ROUNDS):
+        """The group test: makes (or carries on with) the group plan for this
+        many members, checks every member is registered with face photos,
+        and saves the settings snapshot. Network - call off the Tk thread.
+        Raises ValueError with a message."""
+        self._use("group")
+        plan = load_plan(self.folder, self.plan_name)
+        wanted = make_group_plan(rounds, len(member_ids))
+        if plan != wanted:
+            if self._rows():
+                raise ValueError(
+                    f"The results folder already has group results for another plan ({describe_plan(plan)}). "
+                    "Press 'Start a new test…' to move them into an archive folder first - or type the same "
+                    "number of members and trials per group size to carry on with it."
+                )
+            plan = wanted
+            write_plan(self.folder, plan, self.plan_name, GROUP_PLAN_FIELDS)
+        members, snapshot = [], {}
+        for number, member_id in enumerate(member_ids, 1):
+            snapshot = self.api.test_snapshot(member_id)
+            subject = snapshot.get("subject")
+            if not subject:
+                raise ValueError(f"No registered person has the ID number {member_id!r}.")
+            if not subject.get("is_active", True):
+                raise ValueError(f"{subject['full_name']} is deactivated - the gate won't match them.")
+            if not subject.get("face_photos"):
+                raise ValueError(f"{subject['full_name']} has no face photos - enroll them first.")
+            members.append({"number": number, "label": f"Member {number}", "id": subject["student_or_employee_id"],
+                            "name": subject["full_name"], "face_photos": subject["face_photos"]})
+        session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+        settings = snapshot.get("settings", {})
+        session = {
+            "session_id": session_id,
+            "test": "group",
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "gate_location": self.gate_location,
+            "plan": {"file": self.plan_name, "trials": len(plan), "trials_per_group_size": int(rounds),
+                     "group_sizes": sorted({t["group_size"] for t in plan}), "distance_m": GROUP_DISTANCE_M,
+                     "seed": PLAN_SEED},
+            "members": members,
+            "timeout_seconds": timeout_seconds,
+            "timing": "time.perf_counter on the gate monitor; each member's time = from the first usable face's "
+                      "frame to the first answer letting that member in; the group's = to the last member's",
+            "gate_monitor": self.describe_setup(),
+            "backend": snapshot.get("backend", {}),
+            "settings": settings,
+        }
+        with open(self.folder / f"session_{session_id}_settings.json", "w", encoding="utf-8") as fh:
+            json.dump(session, fh, indent=2, ensure_ascii=False, default=str)
+        with self._lock:
+            self.plan, self.part, self.rounds_in_part = plan, "All", {t["round"] for t in plan}
+            self.session = session
+            self.quiet_seconds = float(settings.get("decision_window_seconds") or 4)
+            self.card_wait_seconds = float(settings.get("card_wait_seconds") or 10)
+            self.timeout_seconds = float(timeout_seconds)
+            self.state = "waiting"
+            self.message = "Group session started - settings saved."
+        return session
+
+    def members_of(self, trial):
+        """This group trial's members, as listed in the session (label, id, name)."""
+        listed = {m["number"]: m for m in (self.session or {}).get("members", [])}
+        return [listed[n] for n in trial.get("members", []) if n in listed]
+
     # -- progress -----------------------------------------------------------------
-    def _rows(self):
-        if not self.results_path.exists():
+    def _rows(self, path=None):
+        path = path or self.results_path
+        if not path.exists():
             return []
-        with open(self.results_path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return list(csv.DictReader(fh))
 
     def _done_trials(self):
@@ -416,6 +559,9 @@ class TestRun:
                 if response.get("test_faces_beyond_limit"):
                     trial["frames_beyond_limit"] += 1
                 self._check_timeout(t_answer)
+                return
+            if trial["category"] == "group":
+                self._group_frame(trial, items, t_frame, t_answer)
                 return
             trial["frames_with_face"] += 1
             trial["last_face"] = subject = max(items, key=_width)
@@ -466,9 +612,57 @@ class TestRun:
                 else:
                     self.state = "waiting"
 
+    def _group_frame(self, trial, items, t_frame, t_answer):
+        """One answer during a group trial: every face in it counts - each
+        member is let in once (the first answer letting them in is their
+        time); the trial ends when the last member is in."""
+        trial["frames_with_face"] += 1
+        trial["faces_max"] = max(trial["faces_max"], len(items))
+        if trial["first_face"] is None:
+            trial["first_face"] = (t_frame, t_answer)
+        for item in items:
+            if item.get("skip"):
+                trial["skips"][item["skip"]] += 1
+        if trial["first_usable"] is None and any(not item.get("skip") for item in items):
+            trial["first_usable"] = (t_frame, t_answer)
+        for item in items:
+            outcome = _outcome(item)
+            if outcome == "Match":
+                person_id = item.get("student_or_employee_id")
+                if person_id in trial["expected"]:
+                    trial["decided"].setdefault(person_id, (t_answer, bool(item.get("deduped"))))
+                else:
+                    trial["wrong"].add(person_id or "?")
+            elif outcome == "Unknown":
+                trial["unknown_logs"].add(item.get("log_id"))
+            elif outcome == "Spoof":
+                trial["spoof_logs"].add(item.get("log_id"))
+            elif outcome == "Tiebreak requested":
+                trial["card_frames"] += 1
+        if len(trial["decided"]) == len(trial["expected"]):
+            self._finish_group(t_answer)
+        else:
+            self._check_timeout(t_answer)
+
+    def _finish_group(self, t_end):
+        trial = self.trial
+        matched = len(trial["decided"])
+        result = "All in" if matched == len(trial["expected"]) else f"{matched} of {len(trial['expected'])} in"
+        row = self._group_row(trial, result, t_end)
+        self._append(row)
+        self.last_row = row
+        self.trial = None
+        self.state = "waiting"
+        if trial["card_frames"]:
+            self.blocked_until = t_end + self.card_wait_seconds + 1.0  # the card-tap request stays open until it expires
+        self.message = ""
+
     def _check_timeout(self, now):
         trial = self.trial
         if now - trial["t_start"] < self.timeout_seconds:
+            return
+        if trial["category"] == "group":
+            self._finish_group(now)
             return
         if trial["first_face"] is None:
             self._finish("Not detected", now, None)
@@ -495,6 +689,9 @@ class TestRun:
                 "sharpness": [], "capture_ms": [], "answer_ms": [], "server_ms": [], "faces_ms": [], "fake_ms": [],
                 "freezes": [], "cpu": [], "memory": [],
             }
+            if plan_trial["category"] == "group":
+                self.trial.update(expected={m["id"]: m["label"] for m in self.members_of(plan_trial)}, decided={},
+                                  wrong=set(), unknown_logs=set(), spoof_logs=set(), card_frames=0, faces_max=0)
             self.state = "running"
             self.message = ""
             return True
@@ -529,7 +726,8 @@ class TestRun:
             plan_trial = self.trial if self.state == "running" else self.current_plan_trial()
             if plan_trial is None:
                 return False
-            row = self._row(plan_trial, result="Skipped", note=note or "skipped")
+            row = (self._group_row(plan_trial, "Skipped", note=note or "skipped") if plan_trial["category"] == "group"
+                   else self._row(plan_trial, result="Skipped", note=note or "skipped"))
             self._append(row)
             self.last_row = row
             self.trial = None
@@ -684,17 +882,69 @@ class TestRun:
             "note": note, "status": "final",
         }
 
+    def _group_row(self, trial, result, t_end=None, note=""):
+        session = self.session or {}
+        members = self.members_of(trial)
+        decided = trial.get("decided") or {}
+        first_face, first_usable = trial.get("first_face"), trial.get("first_usable")
+        start = first_usable[0] if first_usable else None
+        # Each member's time, in the order listed - "-" for one never let in.
+        times = [(decided[m["id"]][0] - start) * 1000 if m["id"] in decided and start is not None else None
+                 for m in members]
+        all_in = bool(members) and len(decided) == len(members)
+        last = max(t for t, _repeat in decided.values()) if decided else None
+        skips = trial.get("skips") or Counter()
+        frame_size, camera_resolution = trial.get("frame_size"), trial.get("camera_resolution")
+        return {
+            "trial": trial["trial"], "round": trial["round"], "session_id": session.get("session_id", ""),
+            "date_time": datetime.now().isoformat(sep=" ", timespec="milliseconds"),
+            "category": "group", "distance_m": f"{trial['distance_m']:g}", "group_size": trial.get("group_size", ""),
+            "members": " ".join(m["label"].replace("Member ", "M") for m in members),
+            "member_ids": " ".join(m["id"] for m in members),
+            "time_to_first_detection_ms": _fmt((first_face[1] - trial["t_start"]) * 1000) if first_face else "",
+            # The main measure: until the last member was let in (only when all were).
+            "group_decision_time_ms": _fmt((last - start) * 1000) if all_in and start is not None else "",
+            "group_decision_time_from_first_face_ms": _fmt((last - first_face[0]) * 1000) if all_in and first_face else "",
+            "first_member_ms": _fmt(min(t for t in times if t is not None)) if any(t is not None for t in times) else "",
+            "member_decision_ms": " ".join("-" if t is None else f"{t:.0f}" for t in times),
+            "members_matched": len(decided), "members_missed": len(members) - len(decided) if result != "Skipped" else "",
+            "wrong_matches": " ".join(sorted(trial.get("wrong") or [])),
+            "unknown_events": len(trial.get("unknown_logs") or ()), "spoof_events": len(trial.get("spoof_logs") or ()),
+            "card_request_frames": trial.get("card_frames", 0),
+            "repeat_entries": sum(1 for _t, repeat in decided.values() if repeat),
+            "faces_max": trial.get("faces_max", 0),
+            "frames_processed": trial.get("frames", 0), "frames_with_face": trial.get("frames_with_face", 0),
+            "frames_skipped_turned": skips["turned"], "frames_skipped_moving": skips["moving"],
+            "frames_skipped_blur": skips["blur"], "frames_skipped_edge": skips["edge"],
+            "capture_ms_median": _median(trial.get("capture_ms")),
+            "answer_ms_median": _median(trial.get("answer_ms")),
+            "answer_ms_max": _fmt(max(trial["answer_ms"])) if trial.get("answer_ms") else "",
+            "server_ms_median": _median(trial.get("server_ms")),
+            "face_ai_ms_median": _median(trial.get("faces_ms")),
+            "fake_check_ms_median": _median(trial.get("fake_ms")),
+            "screen_freezes": len(trial.get("freezes") or []),
+            "longest_freeze_ms": _fmt(max(trial["freezes"]), 0) if trial.get("freezes") else "",
+            "cpu_max_pct": _fmt(max(trial["cpu"]), 0) if trial.get("cpu") else "",
+            "memory_max_pct": max(trial["memory"]) if trial.get("memory") else "",
+            "result": result,
+            # Correct: every member let in as themselves, and nobody else matched.
+            "correct": "" if result == "Skipped" else ("yes" if all_in and not trial.get("wrong") else "no"),
+            "frame_size_sent": f"{frame_size[0]}x{frame_size[1]}" if frame_size else "",
+            "camera_resolution": f"{camera_resolution[0]}x{camera_resolution[1]}" if camera_resolution else "",
+            "note": note, "status": "final",
+        }
+
     def _append(self, row):
         new = not self.results_path.exists()
         if not new:
             with open(self.results_path, encoding="utf-8") as fh:
                 header = next(csv.reader(fh), [])
-            if header != RESULT_FIELDS:
+            if header != self.fields:
                 # Written by an older version with fewer columns - rewrite
                 # it once with today's header (old rows keep their values).
                 self._rewrite(self._rows())
         with open(self.results_path, "a", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=RESULT_FIELDS)
+            writer = csv.DictWriter(fh, fieldnames=self.fields)
             if new:
                 writer.writeheader()
             writer.writerow(row)
@@ -704,7 +954,7 @@ class TestRun:
     def _rewrite(self, rows):
         temporary = self.results_path.with_suffix(".tmp")
         with open(temporary, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=RESULT_FIELDS)
+            writer = csv.DictWriter(fh, fieldnames=self.fields)
             writer.writeheader()
             writer.writerows(rows)
             fh.flush()
@@ -718,7 +968,9 @@ class TestRun:
             plan_trial = self.trial if self.state == "running" else self.current_plan_trial()
             done, total = self._part_progress()
             info = {"state": self.state, "trial": plan_trial, "done": done, "total": total, "part": self.part,
-                    "plan_total": len(self.plan), "last_row": self.last_row, "message": self.message}
+                    "plan_total": len(self.plan), "last_row": self.last_row, "message": self.message,
+                    "kind": self.kind,
+                    "members": self.members_of(plan_trial) if plan_trial and plan_trial["category"] == "group" else []}
             if self.state == "running":
                 info["elapsed"] = now - self.trial["t_start"]
                 info["timeout"] = self.timeout_seconds
@@ -751,7 +1003,7 @@ def describe_setup(config, camera, camera_name, report=None):
 # ---- the window the tester watches ------------------------------------------------------
 
 
-CATEGORY_COLOR = {"enrolled": VERIFIED, "spoof": DANGER, "unknown": CAUTION}
+CATEGORY_COLOR = {"enrolled": VERIFIED, "spoof": DANGER, "unknown": CAUTION, "group": PROMPT}
 
 
 class TestWindow:
@@ -810,6 +1062,17 @@ class TestWindow:
         ctk.CTkButton(folder_row, text="Start a new test…", font=(FONT, 13), width=150, fg_color=LINE,
                       text_color=INK, hover_color=CANVAS, command=self._new_test).pack(side="right")
         self._show_folder_summary()
+        ctk.CTkLabel(f, text="Test type", font=(FONT, 14, "bold"), text_color=INK).pack(anchor="w", padx=20,
+                                                                                      pady=(12, 2))
+        self.test_type = ctk.CTkSegmentedButton(f, values=list(TEST_TYPES), font=(FONT, 14),
+                                                command=self._show_test_type)
+        self.test_type.set(TEST_TYPES[0])
+        self.test_type.pack(anchor="w", padx=20)
+        self.single_box = ctk.CTkFrame(f, fg_color="transparent")
+        self.group_box = ctk.CTkFrame(f, fg_color="transparent")
+        self._build_group_fields(self.group_box)
+        self.single_box.pack(fill="x")
+        f = self.single_box  # the single-person test's own fields below
         self.fields = {}
         for key, label, default in (
             ("enrolled_id", "Enrolled subject's ID number (must be registered with face photos)", ""),
@@ -847,6 +1110,7 @@ class TestWindow:
         ctk.CTkLabel(f, text="Part 1 and Part 2 each have half of every category x distance - for testing on two "
                              "days. Either way it carries on where the last session stopped.",
                      font=(FONT, 12), text_color=INK_600, wraplength=680, justify="left").pack(anchor="w", padx=20)
+        f = self.setup
         self.setup_error = ctk.CTkLabel(f, text="", font=(FONT, 14), text_color=DANGER, wraplength=700,
                                         justify="left")
         self.setup_error.pack(anchor="w", padx=20, pady=(10, 0))
@@ -854,7 +1118,38 @@ class TestWindow:
                                    hover_color=MAROON_DEEP, command=self._begin)
         self.begin.pack(anchor="w", padx=20, pady=16)
 
+    def _build_group_fields(self, f):
+        ctk.CTkLabel(f, text=f"Group test: {', '.join(str(s) for s in GROUP_SIZES)} enrolled people side by side at "
+                             f"{GROUP_DISTANCE_M} m, facing away, who turn to the camera together after Start. Each "
+                             "trial shows which members step up.",
+                     font=(FONT, 12), text_color=INK_600, wraplength=680, justify="left").pack(anchor="w", padx=20,
+                                                                                               pady=(8, 0))
+        self.group_fields = {}
+        for key, label, default in (
+            ("member_ids", "Members' ID numbers - 3 to 5, in order (Member 1, 2, ...), separated by spaces or "
+                           "commas. All registered with face photos.", ""),
+            ("trials_per_size", f"Trials per group size ({GROUP_ROUNDS} for the full test)", f"{GROUP_ROUNDS}"),
+            ("timeout", "Timeout per trial (seconds)", f"{GROUP_TIMEOUT_SECONDS:g}"),
+        ):
+            ctk.CTkLabel(f, text=label, font=(FONT, 14, "bold"), text_color=INK, wraplength=680,
+                         justify="left").pack(anchor="w", padx=20, pady=(12, 2))
+            entry = ctk.CTkEntry(f, font=(FONT, 15), height=36)
+            entry.insert(0, default)
+            entry.pack(fill="x", padx=20)
+            self.group_fields[key] = entry
+
+    def _show_test_type(self, choice):
+        if choice == "Group":
+            self.single_box.pack_forget()
+            self.group_box.pack(fill="x", before=self.setup_error)
+        else:
+            self.group_box.pack_forget()
+            self.single_box.pack(fill="x", before=self.setup_error)
+
     def _begin(self):
+        if self.test_type.get() == "Group":
+            self._begin_group()
+            return
         values = {key: entry.get().strip() for key, entry in self.fields.items()}
         try:
             timeout = float(values["timeout"])
@@ -884,6 +1179,39 @@ class TestWindow:
                                        values["unknown_label"] or "Volunteer 1", self.medium.get(), timeout,
                                        trials_per_condition=trials_per_condition, part=part,
                                        categories=categories)
+                self.window.after(0, self._show_trials)
+            except (ValueError, requests.RequestException) as exc:
+                message = str(exc)
+                self.window.after(0, lambda: self._setup_failed(message))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _begin_group(self):
+        values = {key: entry.get().strip() for key, entry in self.group_fields.items()}
+        member_ids = [part for part in values["member_ids"].replace(",", " ").split() if part]
+        if not 3 <= len(member_ids) <= 5 or len(set(member_ids)) != len(member_ids):
+            self.setup_error.configure(text="Type 3 to 5 different members' ID numbers.")
+            return
+        try:
+            trials_per_size = int(values["trials_per_size"])
+        except ValueError:
+            trials_per_size = 0
+        if not 1 <= trials_per_size <= 50:
+            self.setup_error.configure(text="Trials per group size must be a whole number from 1 to 50.")
+            return
+        try:
+            timeout = float(values["timeout"])
+        except ValueError:
+            timeout = 0
+        if not 3 <= timeout <= 60:
+            self.setup_error.configure(text="The timeout must be a number of seconds between 3 and 60.")
+            return
+        self.begin.configure(state="disabled", text="Checking…")
+        self.setup_error.configure(text="")
+
+        def work():
+            try:
+                self.run.begin_group_session(member_ids, timeout, rounds=trials_per_size)
                 self.window.after(0, self._show_trials)
             except (ValueError, requests.RequestException) as exc:
                 message = str(exc)
@@ -928,6 +1256,9 @@ class TestWindow:
         self.category.pack()
         self.distance = ctk.CTkLabel(f, text="", font=(WIDE_HEAVY, 72), text_color=INK)
         self.distance.pack()
+        # Group trials: which members step up this time.
+        self.members_label = ctk.CTkLabel(f, text="", font=(FONT, 20, "bold"), text_color=INK, wraplength=720)
+        self.members_label.pack()
         self.state_label = ctk.CTkLabel(f, text="", font=(FONT, 20, "bold"), text_color=INK, wraplength=720)
         self.state_label.pack(pady=(6, 0))
         self.result_label = ctk.CTkLabel(f, text="", font=(FONT_MONO, 15), text_color=INK_600, wraplength=720,
@@ -1031,12 +1362,19 @@ class TestWindow:
             where = "" if info["part"] == "All" else f"{info['part']}  ·  "
             self.counter.configure(text=f"Trial {trial['trial']} of {info['plan_total']}  ·  {where}round "
                                         f"{trial['round']}  ·  {info['done']} of {info['total']} done")
-            self.category.configure(text=trial["category"].upper(), text_color=CATEGORY_COLOR[trial["category"]])
+            if trial["category"] == "group":
+                self.category.configure(text=f"GROUP OF {trial['group_size']}", text_color=CATEGORY_COLOR["group"])
+                self.members_label.configure(
+                    text="  ·  ".join(f"{m['label']}: {m['name']}" for m in info["members"]))
+            else:
+                self.category.configure(text=trial["category"].upper(), text_color=CATEGORY_COLOR[trial["category"]])
+                self.members_label.configure(text="")
             self.distance.configure(text=f"{trial['distance_m']:g} m")
         if state == "finished":
             self.counter.configure(text=f"{info['done']} of {info['total']} done")
             self.category.configure(text="ALL DONE", text_color=VERIFIED)
             self.distance.configure(text="")
+            self.members_label.configure(text="")
             self.state_label.configure(
                 text="Every trial in the plan has a result." if info["part"] == "All" else
                 f"Every trial in {info['part']} has a result.", text_color=VERIFIED)
@@ -1046,8 +1384,11 @@ class TestWindow:
                                        text_color=PROMPT)
             self.start_button.configure(state="disabled")
         elif state == "ready":
-            self.state_label.configure(text="READY - subject on the mark, facing away. Press Start (F8), "
-                                            "then they turn to the camera.", text_color=VERIFIED)
+            self.state_label.configure(
+                text="READY - the group on the line, facing away. Press Start (F8), then everyone turns to the "
+                     "camera together." if info.get("kind") == "group" else
+                "READY - subject on the mark, facing away. Press Start (F8), then they turn to the camera.",
+                text_color=VERIFIED)
             self.start_button.configure(state="normal")
         else:
             if info.get("face_in_view"):
@@ -1062,6 +1403,20 @@ class TestWindow:
         row = info["last_row"]
         if info["message"]:
             self.result_label.configure(text=info["message"])
+        elif row and row.get("category") == "group":
+            mark = {"yes": "✓ correct", "no": "✗ not correct"}.get(row["correct"], "")
+            group = (f"group {row['group_decision_time_ms']} ms" if row["group_decision_time_ms"]
+                     else "not everyone was let in")
+            self.result_label.configure(
+                text=f"Last: trial {row['trial']} (group of {row['group_size']}, {row['distance_m']} m) → "
+                     f"{row['result']}  {mark}\n{group} · first member {row['first_member_ms'] or '-'} ms · "
+                     f"each (M order) {row['member_decision_ms'] or '-'} ms"
+                     f"\nwrong matches {row['wrong_matches'] or 'none'} · Unknown {row['unknown_events']} · "
+                     f"Spoof {row['spoof_events']} · card requests {row['card_request_frames']} · "
+                     f"up to {row['faces_max']} faces at once · {row['frames_processed']} frames"
+                     f"\nspeed: answer {row['answer_ms_median'] or '-'} ms (backend {row['server_ms_median'] or '-'}, "
+                     f"face AI {row['face_ai_ms_median'] or '-'}) · {row['screen_freezes']} screen freeze(s) · "
+                     f"CPU up to {row['cpu_max_pct'] or '-'}% · memory up to {row['memory_max_pct'] or '-'}%")
         elif row:
             mark = {"yes": "✓ correct", "no": "✗ not correct"}.get(row["correct"], "")
             timing = f"decision {row['decision_time_ms']} ms" if row["decision_time_ms"] else "no decision time"

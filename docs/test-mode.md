@@ -127,6 +127,71 @@ person within its repeat-entry cooldown (60 s for a match). Such a trial is
 still decided by the same voting, and its time is just as valid; the
 `repeat_entry` column marks it.
 
+## Group test (3–5 people at once)
+
+How fast the gate lets in **several enrolled people standing in front of it
+together**. Each face gets its own frame vote (the frames must agree per
+face, not across the whole picture), so people are let in one after another
+as their own frames agree, not one at a time.
+
+**Before:** 3 to 5 enrolled people (registered with face photos), a line on
+the floor **3 m** from the camera lens, and an **extra person at the laptop**
+pressing Start, out of the camera's view.
+
+**Session form:** **Test type → Group**, then:
+
+- **Members' ID numbers**, in order, separated by spaces or commas. The first
+  is **Member 1**, the second **Member 2**, and so on. With 5 members the
+  plan has groups of 3, 4 and 5; with 4, groups of 3 and 4.
+- **Trials per group size**: 10 for the full test, which makes 30 trials with
+  5 members.
+- **Timeout**: 15 s. A group needs longer than one person.
+
+The group test has its own files (`group_plan.csv`, `group_results.csv`),
+so it never mixes with the single-person test's results. There's no need to
+press "Start a new test" first.
+
+**The plan:** 10 rounds, each with every group size once, in a shuffled
+order (fixed seed). Each trial says which members step up. Everyone takes
+part an equal number of times (24 each with 5 members), so no one person's
+face decides the result.
+
+**Each trial:**
+
+1. The window shows e.g. **GROUP OF 4** and the members who step up
+   ("Member 1: …  ·  Member 3: …").
+2. Those members stand **side by side on the 3 m line, close together**
+   (shoulder to shoulder), **facing away**. The others stay out of view.
+3. Wait for **READY**; the laptop person presses **Start (F8)**; the members
+   turn to the camera **together** and stand still.
+4. The trial ends when the **last** member is let in, or at the timeout.
+
+Redo and Skip work as in the single test. Use Redo, for example, when
+someone turned late or a non-member walked into view.
+
+**What is measured** (from the first usable face's frame, like the single
+test):
+
+- **group_decision_time_ms**: the main measure, until the **last** member
+  was let in. It is filled in only when everyone was let in.
+- **member_decision_ms**: each member's own time, in the order listed in
+  `members` ("-" = never let in). **first_member_ms** is the fastest one.
+- **result**: "All in", or "k of n in" when the timeout came first.
+  **correct** = everyone was let in *and* nobody else was matched.
+- **wrong_matches**: the ID of anyone matched who wasn't in this group
+  (should stay empty). **unknown_events** / **spoof_events**: Unknown or
+  Spoof entries written during the trial. **card_request_frames**: frames
+  that asked for a card tap.
+- **faces_max**: the most faces seen in one picture (a check that everyone
+  was in view). **repeat_entries**: members let in again within the
+  repeat-entry cooldown (still a valid time, as in the single test).
+- the same speed columns as the single test (answer, backend, face AI,
+  freezes, CPU / memory).
+
+The summary script (below) also writes `group_summary_table.csv` (per group
+size: all-in rate with a 95% CI, members let in, the group time's mean /
+median / SD, and each member's median time) and `group_time_vs_size.png`.
+
 ## The files
 
 In `entry-agent\test-results\` (an installed copy: its data folder; the
@@ -134,6 +199,7 @@ In `entry-agent\test-results\` (an installed copy: its data folder; the
 
 - `results.csv` — one row per trial (see the columns below);
 - `trial_plan.csv` — the plan;
+- `group_results.csv`, `group_plan.csv` — the group test's results and plan;
 - `session_<date-time>_settings.json` — every Settings value, the model
   setup, the camera and gate monitor settings for that session (for the
   paper's "materials" section).
@@ -206,7 +272,10 @@ Writes next to `results.csv`:
   mean / median / standard deviation of the decision time, mean confidence,
   mean liveness score;
 - `result_breakdown.csv` — how many trials ended in each result;
-- `decision_time_vs_distance.png`, `success_rate_vs_distance.png`.
+- `decision_time_vs_distance.png`, `success_rate_vs_distance.png`;
+- if `group_results.csv` is there too: `group_summary_table.csv` and
+  `group_time_vs_size.png` (see Group test). Give it the path of a
+  `group_results.csv` to summarize only the group test.
 
 Success rate counts every trial, so Not detected / No decision / Occluded
 lower it. For spoof and unknown, the table also gives a **kept-out rate**:

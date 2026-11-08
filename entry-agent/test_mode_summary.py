@@ -11,6 +11,11 @@ next to it (or into --out):
   and mean liveness score
 - result_breakdown.csv - how many trials ended in each result
 - decision_time_vs_distance.png and success_rate_vs_distance.png
+- for the group test (group_results.csv, next to results.csv or given
+  instead of it): group_summary_table.csv - per group size and overall:
+  trials, "all in" rate (95% CI), members let in, the group's decision time
+  (until the last member was let in; only trials where all were) and each
+  member's own time - and group_time_vs_size.png
 
 How it counts (say this in the paper's method section):
 
@@ -185,18 +190,134 @@ def chart_success_rate(table, path):
     _finish_chart(fig, ax, per_distance, "Success rate (%), with 95% CI", "Success rate vs distance", path)
 
 
+def load_group(path):
+    rows = pd.read_csv(path, dtype={"correct": str, "status": str, "result": str, "member_decision_ms": str,
+                                    "wrong_matches": str})
+    rows = rows[rows["status"] == "final"].copy()
+    skipped = rows[rows["result"] == "Skipped"]
+    rows = rows[rows["result"] != "Skipped"].copy()
+    for column in ("group_size", "group_decision_time_ms", "group_decision_time_from_first_face_ms",
+                   "first_member_ms", "time_to_first_detection_ms", "members_matched", "unknown_events",
+                   "spoof_events", "card_request_frames", "faces_max", "screen_freezes") + SPEED_COLUMNS:
+        rows[column] = pd.to_numeric(rows[column], errors="coerce")
+    rows["is_correct"] = rows["correct"].str.lower() == "yes"
+    rows["all_in"] = rows["result"] == "All in"
+    rows["has_wrong"] = rows["wrong_matches"].fillna("").str.strip() != ""
+    return rows, skipped
+
+
+def _member_times(group):
+    """Every member's own time (ms), over all the trials - "-" (never let in) left out."""
+    return pd.Series([float(t) for cell in group["member_decision_ms"].fillna("") for t in cell.split() if t != "-"],
+                     dtype=float)
+
+
+def _summarize_group(group):
+    trials = len(group)
+    all_in = int(group["all_in"].sum())
+    correct = int(group["is_correct"].sum())
+    low, high = wilson_interval(all_in, trials)
+    expected = int(group["group_size"].sum())
+    matched = int(group["members_matched"].sum())
+    times = group["group_decision_time_ms"].dropna()
+    each = _member_times(group)
+    return {
+        "trials": trials,
+        "all_in": all_in,
+        "all_in_rate_pct": round(all_in / trials * 100, 1) if trials else None,
+        "all_in_ci95_low_pct": None if low is None else round(low, 1),
+        "all_in_ci95_high_pct": None if high is None else round(high, 1),
+        "correct": correct,  # all in, and nobody else matched
+        "members_expected": expected,
+        "members_let_in": matched,
+        "member_rate_pct": round(matched / expected * 100, 1) if expected else None,
+        "group_time_mean_ms": round(times.mean(), 1) if len(times) else None,
+        "group_time_median_ms": round(times.median(), 1) if len(times) else None,
+        "group_time_sd_ms": round(times.std(ddof=1), 1) if len(times) > 1 else None,
+        "group_time_from_first_face_mean_ms": _mean(group["group_decision_time_from_first_face_ms"]),
+        "first_member_mean_ms": _mean(group["first_member_ms"]),
+        "member_time_mean_ms": round(each.mean(), 1) if len(each) else None,
+        "member_time_median_ms": round(each.median(), 1) if len(each) else None,
+        "first_detection_mean_ms": _mean(group["time_to_first_detection_ms"]),
+        "trials_with_wrong_match": int(group["has_wrong"].sum()),
+        "unknown_events": int(group["unknown_events"].fillna(0).sum()),
+        "spoof_events": int(group["spoof_events"].fillna(0).sum()),
+        "trials_with_card_request": int((group["card_request_frames"].fillna(0) > 0).sum()),
+        "faces_max_mean": _mean(group["faces_max"]),
+        **{column: (round(group[column].median(), 1) if group[column].notna().any() else None)
+           for column in SPEED_COLUMNS},
+        "screen_freezes": int(group["screen_freezes"].fillna(0).sum()),
+    }
+
+
+def group_summary_table(rows):
+    table = [{"group_size": f"{size:g}", **_summarize_group(rows[rows["group_size"] == size])}
+             for size in sorted(rows["group_size"].dropna().unique())]
+    table.append({"group_size": "all", **_summarize_group(rows)})
+    return pd.DataFrame(table)
+
+
+def chart_group_time(table, path):
+    fig, ax = plt.subplots(figsize=(7, 4.5), dpi=150)
+    data = table[table["group_size"] != "all"].copy()
+    data["x"] = data["group_size"].astype(float)
+    timed = data[data["group_time_mean_ms"].notna()]
+    ax.errorbar(timed["x"], timed["group_time_mean_ms"], yerr=timed["group_time_sd_ms"].fillna(0), marker="o",
+                capsize=4, color="#1565c0", label="Whole group (until the last member), mean ± SD")
+    each = data[data["member_time_median_ms"].notna()]
+    ax.plot(each["x"], each["member_time_median_ms"], marker="s", linestyle="--", color="#6a1b9a",
+            label="Each member, median")
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("People in front of the camera at once")
+    ax.set_ylabel("Decision time (ms)")
+    ax.set_title("Decision time vs group size")
+    ax.set_xticks(sorted(data["x"].unique()))
+    ax.grid(alpha=0.3)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def summarize_group(path, out):
+    rows, skipped = load_group(path)
+    if rows.empty:
+        print(f"{path.name}: no finished group trials yet.")
+        return
+    table = group_summary_table(rows)
+    table.to_csv(out / "group_summary_table.csv", index=False)
+    chart_group_time(table, out / "group_time_vs_size.png")
+    shown = table[["group_size", "trials", "all_in", "all_in_rate_pct", "member_rate_pct", "group_time_mean_ms",
+                   "group_time_median_ms", "group_time_sd_ms", "first_member_mean_ms", "member_time_median_ms",
+                   "trials_with_wrong_match"]]
+    with pd.option_context("display.width", 200, "display.max_columns", 20):
+        print(shown.to_string(index=False))
+    print(f"\n{len(rows)} group trials summarized, {len(skipped)} skipped. Written to {out}:")
+    for name in ("group_summary_table.csv", "group_time_vs_size.png"):
+        print(f"  {name}")
+
+
 def main(argv=None):
     default = Path(__file__).resolve().parent / "test-results" / "results.csv"
-    parser = argparse.ArgumentParser(description="Summarizes the capstone test mode's results.csv.")
-    parser.add_argument("results", nargs="?", default=str(default), help="the test mode's results.csv")
+    parser = argparse.ArgumentParser(description="Summarizes the capstone test mode's results.csv "
+                                                 "(and group_results.csv next to it, if any).")
+    parser.add_argument("results", nargs="?", default=str(default),
+                        help="the test mode's results.csv, or a group_results.csv")
     parser.add_argument("--out", help="folder for the table and charts (default: next to results.csv)")
     args = parser.parse_args(argv)
 
     path = Path(args.results)
-    if not path.exists():
+    group_path = path if path.name.startswith("group_results") else path.parent / "group_results.csv"
+    if not path.exists() and not group_path.exists():
         sys.exit(f"No results file at {path}")
     out = Path(args.out) if args.out else path.parent
     out.mkdir(parents=True, exist_ok=True)
+    if group_path.exists():
+        summarize_group(group_path, out)
+    if path == group_path or not path.exists():
+        return
+    if group_path.exists():
+        print()
 
     rows, skipped = load(path)
     if rows.empty:

@@ -204,6 +204,10 @@ class RecognitionAttempt(models.Model):
     person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="recognition_attempts")
     similarity = models.FloatField()
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Which face this frame was (its track number, logs/motion.py) - the vote
+    # counts each face's own recent frames, so several people in view at
+    # once each get their own vote. Null: counted gate-wide, as before.
+    track_id = models.IntegerField(null=True, blank=True)
 
 
 class UnmatchedAttempt(models.Model):
@@ -220,6 +224,7 @@ class UnmatchedAttempt(models.Model):
     gate_location = models.CharField(max_length=100)
     embedding = models.JSONField()
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    track_id = models.IntegerField(null=True, blank=True)  # which face - see RecognitionAttempt.track_id
 
 
 class PendingTiebreak(models.Model):
@@ -285,6 +290,7 @@ class SpoofAttempt(models.Model):
     embedding = models.JSONField()
     liveness_score = models.FloatField()
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    track_id = models.IntegerField(null=True, blank=True)  # which face - see RecognitionAttempt.track_id
 
 
 class TestSession(models.Model):

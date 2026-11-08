@@ -768,7 +768,8 @@ class IdentifyView(APIView):
                     else:
                         results.append(
                             self._confirm_or_vote_spoof(
-                                embedding, bgr_image, box, direction, gate_location, request, liveness_score
+                                embedding, bgr_image, box, direction, gate_location, request, liveness_score,
+                                track_id=tracked[index][1],
                             )
                         )
                         continue
@@ -1067,7 +1068,7 @@ class IdentifyView(APIView):
             # _confirm_or_vote). From a single frame, a printed photo that
             # passed the check once with a weak match got a card tap: 9 of 40
             # photos at 2 m in the capstone test, mostly on their first frame.
-            agreed, held = self._vote_for(best_person, best_similarity, gate_location, embedding)
+            agreed, held = self._vote_for(best_person, best_similarity, gate_location, embedding, track_id)
             if not agreed or held:
                 return {
                     "success": False,
@@ -1083,7 +1084,7 @@ class IdentifyView(APIView):
             return self._start_tiebreak(gate_location, direction, candidate_ids, box, best_similarity, reason=reason)
 
         result = self._confirm_or_vote(
-            best_person, best_similarity, direction, gate_location, request, box, liveness_score, embedding
+            best_person, best_similarity, direction, gate_location, request, box, liveness_score, embedding, track_id
         )
         if result.get("log_id") is not None:
             corrected = self._correct_recent_unknowns(embedding, best_person, owners, known_matrix, gate_location)
@@ -1181,7 +1182,7 @@ class IdentifyView(APIView):
                 motion.remember_unknown(gate_location, track, result["log_id"])
 
     def _confirm_or_vote(self, person, similarity, direction, gate_location, request, box, liveness_score,
-                         embedding=None):
+                         embedding=None, track_id=None):
         """A face match is never confirmed from a single frame - it has to
         be the top match in enough recent scans first (see class docstring).
         Not-yet-confirmed matches come back with log_id: null, which the
@@ -1196,7 +1197,7 @@ class IdentifyView(APIView):
         let in as soon as it has passed enough times - measured in the
         capstone test, that was 7 of the 9 photos let in. A real face that
         fails once just needs that many passing frames in a row after it."""
-        agreed, held = self._vote_for(person, similarity, gate_location, embedding)
+        agreed, held = self._vote_for(person, similarity, gate_location, embedding, track_id)
 
         # Settings (More options): "Ask for a card after failed checks". A
         # good print can pass the fake-face check on enough frames in a row,
@@ -1277,20 +1278,17 @@ class IdentifyView(APIView):
             **person_payload(person, request),
         }
 
-    def _vote_for(self, person, similarity, gate_location, embedding):
+    def _vote_for(self, person, similarity, gate_location, embedding, track_id=None):
         """Tallies this frame for `person`. Returns (agreed, held): agreed
         once `person` was the top match in "Frames that must agree" of the
-        last "Out of the last" frames; held when, since the oldest of the
-        frames that agree, this same face failed the fake-face check
-        (Settings: "A failed check holds the match" - see _confirm_or_vote).
-        Used for a match and for a card-tap request alike."""
-        RecognitionAttempt.objects.create(gate_location=gate_location, person=person, similarity=similarity)
-
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
-        recent_attempts = list(
-            RecognitionAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
-            .order_by("-timestamp")[: system_settings.get("frames_considered")]
+        last "Out of the last" frames of this face; held when, since the
+        oldest of the frames that agree, this same face failed the fake-face
+        check (Settings: "A failed check holds the match" - see
+        _confirm_or_vote). Used for a match and for a card-tap request alike."""
+        RecognitionAttempt.objects.create(
+            gate_location=gate_location, person=person, similarity=similarity, track_id=track_id,
         )
+        recent_attempts = self._recent_attempts(RecognitionAttempt, gate_location, track_id)
         agreeing = [attempt for attempt in recent_attempts if attempt.person_id == person.id]
         must_agree = system_settings.get("frames_must_agree")
         if len(agreeing) < must_agree:
@@ -1302,6 +1300,21 @@ class IdentifyView(APIView):
             and self._failed_fake_checks(embedding, gate_location, agreeing[must_agree - 1].timestamp) > 0
         )
         return True, held
+
+    @staticmethod
+    def _recent_attempts(model, gate_location, track_id):
+        """The last "Out of the last" attempts (`model`: match, unmatched or
+        spoof) at this gate within "Scan window length" - of this one face
+        (its track, logs/motion.py) when it has one. Counted per face: with
+        several people in view each frame adds one attempt per face, so
+        counted gate-wide the last 4 attempts never held 4 of one face's -
+        in a group of 3 or more nobody was let in at 4 of 4, and at 2 of 4
+        a group of 5 wasn't either (capstone group-test simulation)."""
+        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
+        attempts = model.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
+        if track_id is not None:
+            attempts = attempts.filter(track_id=track_id)
+        return list(attempts.order_by("-timestamp")[: system_settings.get("frames_considered")])
 
     @staticmethod
     def _failed_fake_checks(embedding, gate_location, since):
@@ -1442,7 +1455,7 @@ class IdentifyView(APIView):
         does, for small/soft faces - see documentation §10) could keep the
         Unknown vote held off and never reach the log. Every non-match is still recorded below, so once
         the covered frames stop dominating, the vote already has them."""
-        UnmatchedAttempt.objects.create(gate_location=gate_location, embedding=embedding)
+        UnmatchedAttempt.objects.create(gate_location=gate_location, embedding=embedding, track_id=track_id)
         motion.note_covered(gate_location, track_id, False)
 
         if self._being_covered(gate_location, track_id):
@@ -1465,11 +1478,7 @@ class IdentifyView(APIView):
             }
 
         query = np.array(embedding, dtype=np.float32)
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
-        recent_attempts = list(
-            UnmatchedAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
-            .order_by("-timestamp")[: system_settings.get("frames_considered")]
-        )
+        recent_attempts = self._recent_attempts(UnmatchedAttempt, gate_location, track_id)
         agreement = sum(
             1
             for attempt in recent_attempts
@@ -1686,7 +1695,8 @@ class IdentifyView(APIView):
             "box": _box_to_dict(box),
         }
 
-    def _confirm_or_vote_spoof(self, embedding, bgr_image, box, direction, gate_location, request, liveness_score):
+    def _confirm_or_vote_spoof(self, embedding, bgr_image, box, direction, gate_location, request, liveness_score,
+                               track_id=None):
         """A failed liveness check is never logged as spoof_suspected from a
         single frame either - same grace-period reasoning _confirm_or_vote
         and _confirm_or_vote_unmatched already use (see class docstring), so
@@ -1698,14 +1708,12 @@ class IdentifyView(APIView):
         UnmatchedAttempt rows - reusing the exact same VOTE_WINDOW_SIZE/
         VOTE_REQUIRED_AGREEMENT/VOTE_WINDOW_SECONDS settings a face match/
         non-match already votes with."""
-        SpoofAttempt.objects.create(gate_location=gate_location, embedding=embedding, liveness_score=liveness_score)
+        SpoofAttempt.objects.create(
+            gate_location=gate_location, embedding=embedding, liveness_score=liveness_score, track_id=track_id,
+        )
 
         query = np.array(embedding, dtype=np.float32)
-        window_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("decision_window_seconds"))
-        recent_attempts = list(
-            SpoofAttempt.objects.filter(gate_location=gate_location, timestamp__gte=window_cutoff)
-            .order_by("-timestamp")[: system_settings.get("frames_considered")]
-        )
+        recent_attempts = self._recent_attempts(SpoofAttempt, gate_location, track_id)
         agreement = sum(
             1
             for attempt in recent_attempts

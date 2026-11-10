@@ -13,12 +13,12 @@ const ALL_LINKS = [
   { to: "/cameras", label: "Cameras", icon: "video-camera", roles: ["admin"] },
   { to: "/logs", label: "Logs", icon: "list-bullets", roles: ["admin", "saso", "security_officer"] },
   { to: "/users", label: "User Management", icon: "users", roles: ["admin", "saso"] },
-  { to: "/semester", label: "Semester", icon: "graduation-cap", roles: ["admin", "saso"] },
   { to: "/reports", label: "Reports", icon: "chart-bar", roles: ["admin", "saso"] },
   { to: "/audit-log", label: "Audit Log", icon: "clipboard-text", roles: ["admin", "saso"] },
   { to: "/forms", label: "Printable forms", icon: "printer", roles: ["admin", "saso"] },
   { to: "/accounts", label: "Accounts", icon: "user-gear", roles: ["admin"] },
-  { to: "/settings", label: "Settings", icon: "gear-six", roles: ["admin"] },
+  // SASO sees only Settings > Semester Enrollment's enrolled list.
+  { to: "/settings", label: "Settings", icon: "gear-six", roles: ["admin", "saso"] },
 ];
 
 const ROLE_LABELS = {

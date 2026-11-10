@@ -193,7 +193,10 @@ def _build_recognition(direction, result, api_client, photo_cache):
     # other the way a single shared flag would risk.
     occlusion_suspected = bool(result.get("occlusion_suspected"))
     occlusion_seen = bool(result.get("occlusion_detected"))
-    photo_url = result.get("person_photo") if success else result.get("captured_photo")
+    # Recognized, but refused: not on this semester's enrolled list (Settings >
+    # Semester Enrollment: "Refuse entry") - still their name and photo.
+    refused_not_enrolled = result.get("refused") == "not_enrolled"
+    photo_url = result.get("person_photo") if success or refused_not_enrolled else result.get("captured_photo")
     return {
         "box": box,
         "matched": success,
@@ -205,9 +208,10 @@ def _build_recognition(direction, result, api_client, photo_cache):
         "spoof_suspected": spoof_suspected,
         "occlusion_suspected": occlusion_suspected,
         "occlusion_seen": occlusion_seen,
+        "refused_not_enrolled": refused_not_enrolled,
         "name": (
             result.get("person_name")
-            if success
+            if success or refused_not_enrolled
             else "Please uncover your face" if occlusion_suspected
             else "Possible spoof" if spoof_suspected
             else "Unknown"

@@ -442,6 +442,9 @@ LOG_KINDS = {
     "after_hours": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "moon", "word": "AFTER HOURS", "sec": True},
     # A student let in who isn't on this semester's enrolled list (dashboard: Semester).
     "not_enrolled": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "warning", "word": "NOT ENROLLED", "sec": True},
+    # ...or refused for it (Settings > Semester Enrollment: "Refuse entry").
+    "not_enrolled_refused": {"color": DANGER, "tint": DANGER_TINT, "icon": "warning-octagon",
+                             "word": "NOT ENROLLED · REFUSED", "sec": True},
 }
 
 # The alarm banner docked at the top of the video panel - only for the two
@@ -1942,6 +1945,10 @@ class GateMonitorWindow:
                 # come with a log_id (see IdentifyView._occlusion_prompt), so
                 # the face's own "PLEASE UNCOVER YOUR FACE" label is all they get.
                 self.stats["occlusion"] += 1
+            elif item.get("refused_not_enrolled"):
+                # A known student refused (not enrolled this semester) - not an
+                # Unknown, so no Unknown alarm; the red box and log row show it.
+                pass
             elif item["matched"]:
                 self.stats["entries"] += 1
             else:
@@ -2072,6 +2079,12 @@ class GateMonitorWindow:
             self._push_log_row(
                 kind="covered", name="Face covered", id_text="Mouth/nose covered", time=timestamp,
                 feature_word="PLEASE UNCOVER YOUR FACE", photo_bytes=item.get("photo_bytes"),
+            )
+        elif item.get("refused_not_enrolled"):
+            self._push_log_row(
+                kind="not_enrolled_refused", name=item["name"], id_text=item.get("student_id") or "—",
+                time=timestamp, feature_word="NOT ENROLLED · REFUSED", conf=item.get("confidence"),
+                photo_bytes=item.get("photo_bytes"), initials_seed=item["name"], extra=extra,
             )
         elif item["matched"]:
             # Settings > Scheduling: "Show at the gate" for someone whose face
@@ -2513,6 +2526,9 @@ class GateMonitorWindow:
             # confused with someone similar (see users.models.ConfusablePair).
             label = "TAP CARD · LOOKALIKE CHECK" if item.get("confusable_pair") else "TAP CARD TO CONFIRM"
             return PROMPT, "identification-card", label
+        if item.get("refused_not_enrolled"):
+            # Recognized, but refused: not on this semester's enrolled list.
+            return DANGER, "warning-octagon", f"{item['name']} · NOT ENROLLED"
         if item["matched"]:
             label = item["name"]
             if item.get("confidence") is not None:

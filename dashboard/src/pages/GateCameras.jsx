@@ -19,6 +19,8 @@ const BOX_COLORS = {
   card: "#1D5FA8",
   covered: "#1D5FA8",
   checking: "#4B5157",
+  not_enrolled: "#9A5B00", // let in, not on this semester's list
+  refused: "#C62828", // refused - not enrolled this semester
 };
 
 function readSavedShowBoxes() {

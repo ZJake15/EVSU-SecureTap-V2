@@ -92,12 +92,16 @@ def _face(item, width, height):
         kind, label = "checking", item.get("hint") or "Checking…"
     elif item.get("tiebreak_required"):
         kind, label = "card", "TAP CARD · LOOKALIKE CHECK" if item.get("confusable_pair") else "TAP CARD TO CONFIRM"
+    elif item.get("refused") == "not_enrolled":
+        kind, label = "refused", f"{item.get('person_name') or 'Student'} · NOT ENROLLED"
     elif item.get("success"):
         similarity = item.get("similarity")
-        kind = "match"
+        kind = "not_enrolled" if item.get("not_enrolled") else "match"
         label = item.get("person_name") or "Match"
         if similarity is not None:
             label = f"{label} · {max(0, round(similarity * 100))}%"
+        if item.get("not_enrolled"):
+            label += " · NOT ENROLLED"
     else:
         kind, label = "unknown", "UNKNOWN"
     return {

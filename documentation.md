@@ -993,15 +993,32 @@ the page's main action beside it. See §8.1 for the visual design system.
     sign-in again. A hidden browser tab disconnects, so the gates stop sending.
   - **Audit Log:** "Viewed gate cameras", with the gates shown — at most once
     per half hour per Admin.
-- **Semester** (Admin and SASO) — who is enrolled this semester. Students
-  re-enroll every semester and some don't in time: a registered student who
-  isn't on the current semester's list is still recognized and **let in**, but
-  the entry is flagged **NOT ENROLLED** — on the gate monitor (the face box and
-  live-log row turn caution, the card says "NOT ENROLLED this semester"), in
-  **Logs** (a tag beside Success, a "Not enrolled (let in)" status filter and
-  an export column) and on **Live Monitoring** (a tag, a "Not enrolled" count,
-  and a card under Needs attention). Staff are never flagged; until the first
-  semester is started, nobody is.
+- **Settings › Semester Enrollment** — who is enrolled this semester (Admin;
+  SASO sees only this group's list, not its switches; the old `/semester`
+  address opens it). Students re-enroll every semester and some don't in time:
+  a registered student who isn't on the current semester's list is recognized,
+  and then — as the switches say:
+  - **Check semester enrollment** (on): off keeps the list but flags nobody.
+  - **A student who isn't enrolled**: *Let in, flagged NOT ENROLLED* (default)
+    — a successful entry with the flag — or *Refuse entry* — logged as
+    **Not enrolled (refused)** (`EntryLog.Status.NOT_ENROLLED`), the gate shows
+    a red "NAME · NOT ENROLLED" box and a "NOT ENROLLED · REFUSED" log row (no
+    Unknown alarm), a card tap is refused with "Not enrolled this semester",
+    and the student display tells them to see the guard. A guard's manual
+    override is never refused (only flagged). Repeat frames and taps reuse the
+    same entry within the repeat-entry cooldown, as a normal entry does.
+  - **Show NOT ENROLLED on the gate monitor** (on): off keeps a let-in student's
+    flag to the dashboard; a refusal is always shown.
+  - **Grace period** (0 days): for that many days after a semester is started,
+    nobody is flagged.
+
+  Where it shows: on the gate monitor (caution box, live-log row and card note
+  for a let-in student), in **Logs** (a NOT ENROLLED tag beside Success, a
+  "Not enrolled · refused" status, the filters "Not enrolled (let in)" and
+  "Not enrolled (refused)", an export column), on **Live Monitoring** (a tag, a
+  "Not enrolled" count, a card under Needs attention) and on the Cameras page's
+  face boxes. Staff are never flagged; until the first semester is started,
+  nobody is. Under the switches, the group's list:
   - **Start new semester:** a name (e.g. "1st Semester 2026-2027") and the
     registrar's list — CSV in any encoding or separator, or Excel, any columns.
     The page shows the first rows and suggests the student ID column (the one

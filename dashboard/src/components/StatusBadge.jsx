@@ -11,6 +11,9 @@ const STATUS_STYLES = {
   // face was ever compared against anyone, so this was never a genuine
   // non-match. Prompt blue: it's an instruction to the person, not an alarm.
   occlusion_detected: { label: "Face covered", icon: "hand-palm", className: "text-prompt" },
+  // A recognized student refused - not on this semester's enrolled list
+  // (Settings > Semester Enrollment: "Refuse entry").
+  not_enrolled: { label: "Not enrolled · refused", icon: "prohibit", className: "text-danger" },
 };
 
 // Left-edge bar color on a log row - only non-routine rows get one.
@@ -19,6 +22,7 @@ export const STATUS_BAR = {
   failed: "#C62828",
   spoof_suspected: "#C62828",
   occlusion_detected: "#1D5FA8",
+  not_enrolled: "#C62828",
 };
 
 // An entry written outside the gate's opening hours (Settings > Scheduling).

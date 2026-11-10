@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import apiClient from "../api/client";
-import { Field, Icon, Notice, PageHeader, Segmented } from "../components/ui";
+import { Field, Icon, Notice, Segmented } from "./ui";
 
-// Admin and SASO: this semester's enrolled-students list (the registrar's
-// CSV). A registered student who isn't on it is still let in at the gate,
-// flagged NOT ENROLLED on the gate monitor, in Logs and on Live Monitoring.
-// Staff are never flagged. See backend users/semesters.py.
+// Settings > Semester Enrollment: this semester's enrolled-students list (the
+// registrar's file). Admin and SASO. A registered student who isn't on it is
+// flagged NOT ENROLLED, or refused - as the settings above it say. Staff are
+// never flagged. See backend users/semesters.py.
 
 function errorText(error, fallback) {
   return error?.response?.data?.detail || fallback;
@@ -83,13 +83,13 @@ function ListUpload({ purpose, onDone, onCancel }) {
   const matched = preview ? preview.matches[column] || 0 : 0;
 
   return (
-    <div className="card flex flex-col gap-s5 p-s5">
+    <div className="flex flex-col gap-s5 rounded-md border border-line bg-canvas p-s5">
       <div className="flex items-start justify-between gap-s4">
         <div className="flex flex-col gap-s1">
-          <span className="t-section">{starting ? "Start a new semester" : "Upload an updated list"}</span>
+          <span className="text-base font-bold">{starting ? "Start a new semester" : "Upload an updated list"}</span>
           <span className="text-sm text-ink-600">
             {starting
-              ? "The registrar's list of students enrolled this semester (CSV or Excel). From now on, a registered student who isn't on it is flagged NOT ENROLLED at the gate (still let in). The last semester's list stops counting."
+              ? "The registrar's list of students enrolled this semester (CSV or Excel). The last semester's list stops counting."
               : "A newer list from the registrar - for students who enrolled late."}
           </span>
         </div>
@@ -131,7 +131,7 @@ function ListUpload({ purpose, onDone, onCancel }) {
             </select>
           </Field>
 
-          <div className="overflow-x-auto rounded-sm border border-line">
+          <div className="overflow-x-auto rounded-sm border border-line bg-surface">
             <table className="min-w-full text-left text-sm">
               <thead className="table-head bg-canvas">
                 <tr>
@@ -201,7 +201,7 @@ function ListUpload({ purpose, onDone, onCancel }) {
 }
 
 // Registered students not on the list - tick the late enrollees.
-function NotOnList({ refreshKey, onChanged }) {
+function NotOnList({ refreshKey, onChanged, refusing }) {
   const [search, setSearch] = useState("");
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -242,9 +242,10 @@ function NotOnList({ refreshKey, onChanged }) {
     <div className="flex flex-col gap-s3">
       <div className="flex flex-wrap items-end justify-between gap-s3">
         <div className="flex flex-col gap-s1">
-          <span className="t-section">Registered, not on the list</span>
+          <span className="text-base font-bold">Registered, not on the list</span>
           <span className="text-sm text-ink-600">
-            These students are flagged NOT ENROLLED at the gate. Enrolled late? Mark them enrolled.
+            These students are {refusing ? "refused" : "flagged NOT ENROLLED"} at the gate. Enrolled late? Mark them
+            enrolled.
           </span>
         </div>
         <span className="relative block w-full max-w-[300px]">
@@ -258,7 +259,7 @@ function NotOnList({ refreshKey, onChanged }) {
         </span>
       </div>
       {error && <Notice tone="danger">{error}</Notice>}
-      <div className="card overflow-hidden">
+      <div className="overflow-hidden rounded-md border border-line">
         {data?.results.length ? (
           data.results.map((student) => (
             <div key={student.id} className="flex min-h-11 items-center gap-s4 border-b border-line px-s4 py-s2 text-sm last:border-b-0">
@@ -291,7 +292,26 @@ function NotOnList({ refreshKey, onChanged }) {
   );
 }
 
-export default function Semester() {
+// What the settings above make of the list right now, in one line.
+function EffectNotice({ current }) {
+  if (!current.check_enabled) {
+    return (
+      <Notice tone="neutral">
+        <b>Check semester enrollment</b> is switched off, so nobody is flagged. The list is kept.
+      </Notice>
+    );
+  }
+  if (current.grace_until && new Date(current.grace_until) > new Date()) {
+    return (
+      <Notice tone="prompt">
+        Grace period: nobody is flagged until <b>{dateTime(current.grace_until)}</b>.
+      </Notice>
+    );
+  }
+  return null;
+}
+
+export default function SemesterPanel() {
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
   const [panel, setPanel] = useState(null); // "start" | "update" | null
@@ -326,60 +346,49 @@ export default function Semester() {
   };
 
   return (
-    <div className="flex flex-col">
-      <PageHeader eyebrow="Who is enrolled this semester" title="Semester">
+    <div className="flex flex-col gap-s5 border-t border-line pb-s5 pt-s5">
+      <div className="flex flex-wrap items-end justify-between gap-s3">
+        <h3 className="t-eyebrow text-ink">This semester&apos;s enrolled list</h3>
         {current && !panel && (
-          <>
+          <div className="flex flex-wrap gap-s3">
             <button type="button" className="btn-secondary" onClick={() => setPanel("update")}>
               <Icon name="upload-simple" bold />
               Upload updated list
             </button>
-            <button type="button" className="btn-primary" onClick={() => setPanel("start")}>
+            <button type="button" className="btn-secondary" onClick={() => setPanel("start")}>
               <Icon name="graduation-cap" bold />
               Start new semester
             </button>
-          </>
+          </div>
         )}
-      </PageHeader>
+      </div>
 
-      {error && (
-        <Notice tone="danger" className="mt-s5">
-          {error}
-        </Notice>
-      )}
-      {message && (
-        <Notice tone="verified" className="mt-s5">
-          {message}
-        </Notice>
-      )}
+      {error && <Notice tone="danger">{error}</Notice>}
+      {message && <Notice tone="verified">{message}</Notice>}
 
       {state && !current && (
-        <div className="mt-s6 flex flex-col gap-s5">
+        <>
           <Notice tone="neutral">
-            No semester has been started yet, so nobody is flagged NOT ENROLLED at the gate. Start one with the
-            registrar&apos;s list of enrolled students.
+            No semester has been started yet, so nobody is flagged. Start one with the registrar&apos;s list of enrolled
+            students.
           </Notice>
           <ListUpload purpose="start" onDone={done("start")} />
-        </div>
+        </>
       )}
 
-      {panel && current && (
-        <div className="mt-s6">
-          <ListUpload purpose={panel} onDone={done(panel)} onCancel={() => setPanel(null)} />
-        </div>
-      )}
+      {panel && current && <ListUpload purpose={panel} onDone={done(panel)} onCancel={() => setPanel(null)} />}
 
       {current && (
-        <div className="mt-s6 flex flex-col gap-s6">
-          <div className="card flex flex-col gap-s5 p-s5">
+        <>
+          <div className="flex flex-col gap-s4">
             <div className="flex flex-col gap-s1">
-              <span className="t-eyebrow">Current semester</span>
-              <span className="font-display stretch-semi text-[28px] font-extrabold leading-tight">{current.name}</span>
+              <span className="font-display stretch-semi text-[24px] font-extrabold leading-tight">{current.name}</span>
               <span className="text-sm text-ink-600">
                 Started {dateTime(current.started_at)}
                 {current.started_by ? ` by ${current.started_by}` : ""} · list last changed {dateTime(current.updated_at)}
               </span>
             </div>
+            <EffectNotice current={current} />
             <div className="-ml-s5 flex flex-wrap gap-y-s4">
               <Stat
                 label="On the list"
@@ -392,9 +401,9 @@ export default function Semester() {
                 tone="text-verified"
               />
               <Stat
-                label="Flagged not enrolled"
+                label={current.action === "refuse" ? "Refused at the gate" : "Flagged not enrolled"}
                 value={current.registered_not_on_list.toLocaleString()}
-                tone={current.registered_not_on_list ? "text-caution" : ""}
+                tone={current.registered_not_on_list ? (current.action === "refuse" ? "text-danger" : "text-caution") : ""}
                 hint="registered, not on the list"
               />
               <Stat
@@ -411,12 +420,12 @@ export default function Semester() {
             )}
           </div>
 
-          <NotOnList refreshKey={refreshKey} onChanged={refresh} />
+          <NotOnList refreshKey={refreshKey} onChanged={refresh} refusing={current.action === "refuse"} />
 
           {state.past.length > 0 && (
             <div className="flex flex-col gap-s3">
-              <span className="t-section">Earlier semesters</span>
-              <div className="card overflow-hidden">
+              <span className="text-base font-bold">Earlier semesters</span>
+              <div className="overflow-hidden rounded-md border border-line">
                 {state.past.map((item) => (
                   <div key={item.id} className="flex items-center gap-s4 border-b border-line px-s4 py-s3 text-sm last:border-b-0">
                     <span className="flex-1 font-bold">{item.name}</span>
@@ -427,7 +436,7 @@ export default function Semester() {
               </div>
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

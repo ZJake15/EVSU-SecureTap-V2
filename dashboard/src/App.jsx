@@ -12,7 +12,6 @@ import AccountManagement from "./pages/AccountManagement";
 import AuditLog from "./pages/AuditLog";
 import PrintableForms from "./pages/PrintableForms";
 import GateCameras from "./pages/GateCameras";
-import Semester from "./pages/Semester";
 
 export default function App() {
   const { user } = useAuth();
@@ -45,14 +44,8 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="semester"
-          element={
-            <ProtectedRoute roles={["admin", "saso"]}>
-              <Semester />
-            </ProtectedRoute>
-          }
-        />
+        {/* The semester list moved into Settings > Semester Enrollment. */}
+        <Route path="semester" element={<Navigate to="/settings#semester" replace />} />
         <Route
           path="reports"
           element={
@@ -88,7 +81,8 @@ export default function App() {
         <Route
           path="settings"
           element={
-            <ProtectedRoute roles={["admin"]}>
+            // SASO: only the Semester Enrollment list (see SystemSettings).
+            <ProtectedRoute roles={["admin", "saso"]}>
               <SystemSettings />
             </ProtectedRoute>
           }

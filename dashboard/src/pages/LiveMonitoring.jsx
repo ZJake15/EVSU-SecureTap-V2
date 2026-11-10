@@ -55,6 +55,10 @@ function passMethod(event) {
 // Everything that isn't a clean pass gets pinned to "Needs attention", with
 // its own word, icon and status color.
 function attentionKind(event) {
+  if (event.status === "not_enrolled") {
+    // Refused - not on this semester's enrolled list (Settings > Semester Enrollment).
+    return { word: "Not enrolled · refused", icon: "prohibit", color: "#C62828", className: "text-danger" };
+  }
   if (event.status === "success" && event.not_enrolled) {
     // Let in, but not on this semester's enrolled list (Semester page).
     return { word: "Not enrolled", icon: "warning", color: "#9A5B00", className: "text-caution" };
@@ -168,11 +172,17 @@ function PassRow({ event }) {
 function AttentionCard({ event }) {
   const kind = attentionKind(event);
   const isLookalike = event.status !== "spoof_suspected" && event.verification_method === "confusable_pair_tiebreak";
-  const notEnrolled = event.status === "success" && event.not_enrolled;
+  const notEnrolled = event.not_enrolled && (event.status === "success" || event.status === "not_enrolled");
   const photo = event.captured_photo || (notEnrolled ? event.person_photo : null);
   const meta = [
     event.student_or_employee_id || "No ID on file",
-    notEnrolled ? "Let in · not on this semester's list" : isLookalike ? "Lookalike unresolved" : event.failure_reason,
+    notEnrolled
+      ? event.status === "success"
+        ? "Let in · not on this semester's list"
+        : "Refused · not on this semester's list"
+      : isLookalike
+        ? "Lookalike unresolved"
+        : event.failure_reason,
     event.gate_location,
   ]
     .filter(Boolean)
@@ -370,7 +380,8 @@ export default function LiveMonitoring() {
   const passes = events.filter((event) => event.status === "success");
   // A not-enrolled student was let in (a pass), and is also pinned for checking.
   const attention = events.filter((event) => event.status !== "success" || event.not_enrolled);
-  const notEnrolledCount = events.filter((event) => event.status === "success" && event.not_enrolled).length;
+  // Let in flagged, or refused (Settings > Semester Enrollment).
+  const notEnrolledCount = events.filter((event) => event.not_enrolled).length;
   const unknownCount = events.filter((event) => event.status === "failed").length;
   const spoofCount = events.filter((event) => event.status === "spoof_suspected").length;
   const occludedCount = events.filter((event) => event.status === "occlusion_detected").length;

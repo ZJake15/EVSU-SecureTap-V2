@@ -99,10 +99,23 @@ def person_payload(person, request):
         # Settings > Scheduling > "Show at the gate": the guard sees "Photos
         # due for update" for someone whose face photos should be retaken.
         "photos_due": bool(system_settings.get("reenroll_show_at_gate") and reenrollment.photos_due(person)),
-        # A student who isn't on the current semester's enrolled list (the
-        # Semester page) - let in, but the guard sees "Not enrolled".
-        "not_enrolled": semesters.not_enrolled(person),
+        # A student who isn't on the current semester's enrolled list
+        # (Settings > Semester Enrollment) - shown to the guard unless that
+        # says to keep it to the dashboard (a refusal is always shown).
+        "not_enrolled": semesters.shown_at_gate() and semesters.not_enrolled(person),
     }
+
+
+LET_IN_STATUSES = (EntryLog.Status.SUCCESS, EntryLog.Status.NOT_ENROLLED)
+
+
+def _refused_if_not_enrolled(log, payload):
+    """A match's answer, turned into a refusal when its entry was (Settings >
+    Semester Enrollment: "Refuse entry" - decided in EntryLog.save)."""
+    if log.status != EntryLog.Status.NOT_ENROLLED:
+        return payload
+    return {**payload, "success": False, "refused": "not_enrolled", "not_enrolled": True,
+            "reason": log.failure_reason or "Not enrolled this semester", "reason_code": "not_enrolled"}
 
 
 class HealthView(APIView):
@@ -575,7 +588,7 @@ class VerifyView(APIView):
                 EntryLog.objects.filter(
                     person=person,
                     verification_method=EntryLog.VerificationMethod.NFC_ONLY,
-                    status=EntryLog.Status.SUCCESS,
+                    status__in=LET_IN_STATUSES,
                     timestamp__gte=cooldown_cutoff,
                 )
                 .order_by("-timestamp")
@@ -583,14 +596,14 @@ class VerifyView(APIView):
             )
             if recent_log:
                 return Response(
-                    {
+                    _refused_if_not_enrolled(recent_log, {
                         "success": True,
                         "reason": None,
                         "reason_code": None,
                         "log_id": recent_log.id,
                         "deduped": True,
                         **person_payload(person, self.request),
-                    },
+                    }),
                     status=http_status.HTTP_200_OK,
                 )
 
@@ -602,13 +615,13 @@ class VerifyView(APIView):
             gate_location=gate_location,
         )
         return Response(
-            {
+            _refused_if_not_enrolled(log, {
                 "success": True,
                 "reason": None,
                 "reason_code": None,
                 "log_id": log.id,
                 **person_payload(person, self.request),
-            },
+            }),
             status=http_status.HTTP_200_OK,
         )
 
@@ -1253,7 +1266,9 @@ class IdentifyView(APIView):
             track = box and tracks.get((box["left"], box["top"], box["right"], box["bottom"]))
             if track is None or result.get("log_id") is None or result.get("retry"):
                 continue
-            if result.get("success"):
+            # Recognized - also when refused as not enrolled this semester: it
+            # was still them, not an Unknown.
+            if result.get("success") or result.get("refused") == "not_enrolled":
                 ids = motion.unknowns_on_track(gate_location, track, self.UNKNOWN_CORRECTION_SECONDS)
                 cutoff = timezone.now() - timezone.timedelta(seconds=self.UNKNOWN_CORRECTION_SECONDS)
                 still_there = EntryLog.objects.filter(
@@ -1316,14 +1331,14 @@ class IdentifyView(APIView):
             EntryLog.objects.filter(
                 person=person,
                 verification_method=EntryLog.VerificationMethod.FACE_ONLY,
-                status=EntryLog.Status.SUCCESS,
+                status__in=LET_IN_STATUSES,
                 timestamp__gte=cooldown_cutoff,
             )
             .order_by("-timestamp")
             .first()
         )
         if recent_log:
-            return {
+            return _refused_if_not_enrolled(recent_log, {
                 "success": True,
                 "retry": False,
                 "reason": None,
@@ -1333,7 +1348,7 @@ class IdentifyView(APIView):
                 "deduped": True,
                 "box": _box_to_dict(box),
                 **person_payload(person, request),
-            }
+            })
 
         # A fresh log row (not a cooldown-reuse) is the one point worth
         # checking whether this encounter involved an occluded frame a
@@ -1351,7 +1366,7 @@ class IdentifyView(APIView):
             liveness_score=liveness_score,
             occlusion_detected=occlusion_seen,
         )
-        return {
+        return _refused_if_not_enrolled(log, {
             "success": True,
             "retry": False,
             "reason": None,
@@ -1361,7 +1376,7 @@ class IdentifyView(APIView):
             "occlusion_detected": occlusion_seen,
             "box": _box_to_dict(box),
             **person_payload(person, request),
-        }
+        })
 
     def _vote_for(self, person, similarity, gate_location, embedding, track_id=None):
         """Tallies this frame for `person`. Returns (agreed, held): agreed

@@ -22,6 +22,9 @@ import time
 
 import pandas as pd
 from django.db import transaction
+from django.utils import timezone
+
+from configuration import store as system_settings
 
 from .models import Person, Semester, SemesterEnrollment
 
@@ -67,16 +70,40 @@ def _current_ids():
             ids = None
         else:
             ids = set(semester.enrollments.values_list("student_id", flat=True))
-        _cache.update(at=now, key=key, ids=ids)
+        _cache.update(at=now, key=key, ids=ids, grace_until=grace_until(semester))
         return ids
 
 
+def enabled():
+    """Settings > Semester Enrollment: "Check semester enrollment"."""
+    return bool(system_settings.get("semester_check_enabled"))
+
+
+def refuses():
+    """Settings: "A student who isn't enrolled" = Refuse entry."""
+    return enabled() and system_settings.get("not_enrolled_action") == "refuse"
+
+
+def shown_at_gate():
+    """Whether the gate monitor shows NOT ENROLLED - always when entry is refused."""
+    return refuses() or bool(system_settings.get("not_enrolled_show_at_gate"))
+
+
+def grace_until(semester):
+    """When the semester's grace period (Settings) ends, or None without one."""
+    days = int(system_settings.get("semester_grace_days") or 0)
+    return semester.started_at + timezone.timedelta(days=days) if semester and days > 0 else None
+
+
 def not_enrolled(person):
-    """True for a student who isn't on the current semester's list."""
-    if person is None or person.role != Person.Role.STUDENT:
+    """True for a student who isn't on the current semester's list - with the
+    check switched on and the semester's grace period over."""
+    if person is None or person.role != Person.Role.STUDENT or not enabled():
         return False
     ids = _current_ids()
     if ids is None:
+        return False
+    if _cache.get("grace_until") and timezone.now() < _cache["grace_until"]:
         return False
     return normalize_id(person.student_or_employee_id) not in ids
 
@@ -239,6 +266,10 @@ def summary(semester):
         # the wrong column was picked.
         "list_not_registered": len(unmatched),
         "list_not_registered_sample": unmatched[:20],
+        # Settings > Semester Enrollment, so the page can say what happens.
+        "check_enabled": enabled(),
+        "action": "refuse" if refuses() else "flag",
+        "grace_until": grace_until(semester),
     }
 
 

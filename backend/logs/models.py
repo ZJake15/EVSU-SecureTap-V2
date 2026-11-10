@@ -59,6 +59,10 @@ class EntryLog(models.Model):
         # at it, so calling it "Unknown" would be wrong. See
         # users/insightface_utils.mouth_visibility_ratio.
         OCCLUSION_DETECTED = "occlusion_detected", "Occlusion detected"
+        # A recognized student refused because they aren't on this semester's
+        # enrolled list (Settings > Semester Enrollment: "Refuse entry") -
+        # not a recognition miss, so not FAILED. Set by save() itself.
+        NOT_ENROLLED = "not_enrolled", "Not enrolled (refused)"
 
     # Nullable: an unrecognized NFC tap (no matching Person) must still be logged.
     person = models.ForeignKey(
@@ -159,6 +163,13 @@ class EntryLog(models.Model):
                 from users import semesters
 
                 self.not_enrolled = semesters.not_enrolled(self.person)
+                # Settings > Semester Enrollment: "Refuse entry" turns the
+                # entry into a refusal - except a guard's manual override,
+                # which is exactly how a refused student is let in.
+                if (self.not_enrolled and semesters.refuses()
+                        and self.verification_method != self.VerificationMethod.MANUAL_OVERRIDE):
+                    self.status = self.Status.NOT_ENROLLED
+                    self.failure_reason = self.failure_reason or "Not enrolled this semester"
             from . import test_mode
 
             if test_mode.active():

@@ -65,6 +65,9 @@ SECTIONS = [
      "computer's speed mode (in the launcher) picks."),
     ("nfc", "NFC Card", "When the system asks for a card tap instead of deciding from the face alone."),
     ("enrollment", "Enrollment", "Registering a new student or staff member."),
+    ("semester", "Semester Enrollment",
+     "Students re-enroll every semester. A registered student who isn't on this semester's enrolled list (the "
+     "registrar's file, uploaded below) is flagged NOT ENROLLED. Staff are never flagged."),
     ("privacy", "Privacy & Data Retention",
      "What's always deleted. How long other records are kept, and when they're deleted, is under Scheduling."),
     ("scheduling", "Scheduling",
@@ -281,6 +284,37 @@ DEFINITIONS = [
         CHOICE, "15", choices=(("5", "5"), ("10", "10"), ("15", "15"), ("20", "20"), ("30", "30")),
         unit="a second",
         note="On a slow gate computer, lower it if face checks get slower while the Cameras page is open.",
+    ),
+    SettingDef(
+        "semester_check_enabled", "semester", "Check semester enrollment",
+        "Flag registered students who aren't on the current semester's enrolled list. Turning it off keeps the "
+        "list - nothing is flagged until it's on again.",
+        BOOL, True,
+        note="Nothing is flagged until a semester is started below, whatever this says.",
+        off_warning="Students who didn't enroll this semester pass the gate without any warning.",
+    ),
+    SettingDef(
+        "not_enrolled_action", "semester", "A student who isn't enrolled",
+        "What the gate does when it recognizes a student who isn't on this semester's list.",
+        CHOICE, "flag",
+        choices=(("flag", "Let in, flagged NOT ENROLLED"), ("refuse", "Refuse entry")),
+        note="Refused: the entry is logged as \"Not enrolled (refused)\" and the student is told to see the guard. "
+             "A guard's manual override still lets them in.",
+        depends_on="semester_check_enabled",
+    ),
+    SettingDef(
+        "not_enrolled_show_at_gate", "semester", "Show NOT ENROLLED on the gate monitor",
+        "Whether the guard's screen shows the warning. Off: it only appears on the dashboard (Logs and Live "
+        "Monitoring). A refused entry is always shown at the gate.",
+        BOOL, True,
+        depends_on="semester_check_enabled",
+    ),
+    SettingDef(
+        "semester_grace_days", "semester", "Grace period",
+        "For this many days after a new semester is started, nobody is flagged yet - time for late enrollment.",
+        INT, 0, 0, 60, 1, unit="days",
+        note="0 = flag from the moment the semester is started.",
+        depends_on="semester_check_enabled",
     ),
     SettingDef(
         "monitor_size", "camera", "Cameras page picture width",

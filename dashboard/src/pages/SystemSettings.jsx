@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBlocker } from "react-router-dom";
 import apiClient from "../api/client";
+import { useAuth } from "../auth/AuthContext";
+import SemesterPanel from "../components/SemesterPanel";
 import { Icon, Notice, PageHeader, Segmented } from "../components/ui";
 
 // The dashboard's Settings page. Every setting - its label, plain-English
@@ -234,6 +236,7 @@ const SECTION_ICONS = {
   camera: "video-camera",
   nfc: "identification-card",
   enrollment: "user-plus",
+  semester: "graduation-cap",
   privacy: "lock-key",
   scheduling: "calendar-blank",
   security: "shield-check",
@@ -270,8 +273,15 @@ export function SettingsContent({
   onDiscard = () => {},
   saving = false,
   notice = null,
+  // Section key -> something drawn under that group's settings (the
+  // Semester Enrollment group's enrolled-students list).
+  extras = {},
 }) {
-  const [activeKey, setActiveKey] = useState(data.sections[0]?.key);
+  // A link to /settings#semester opens that group.
+  const [activeKey, setActiveKey] = useState(() => {
+    const wanted = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
+    return data.sections.some((section) => section.key === wanted) ? wanted : data.sections[0]?.key;
+  });
   const [search, setSearch] = useState("");
   const [moreOpen, setMoreOpen] = useState({});
   const byKey = useMemo(() => Object.fromEntries(data.settings.map((setting) => [setting.key, setting])), [data]);
@@ -341,7 +351,7 @@ export function SettingsContent({
       </PageHeader>
       <p className="mt-s3 max-w-[760px] text-sm leading-snug text-ink-600">
         Changes apply to every gate within a few seconds - nobody has to restart anything. Every change is
-        recorded in the Audit Log. Only Admins can see this page.
+        recorded in the Audit Log. Only Admins can change settings - SASO sees only the Semester Enrollment list.
       </p>
       {notice && (
         <Notice tone={notice.tone} className="mt-s4 max-w-[760px]">
@@ -488,6 +498,7 @@ export function SettingsContent({
                 {moreShown && <div className="-mt-s4">{moreRows.map((row) => renderRow(row, false))}</div>}
               </div>
             )}
+            {extras[active.key]}
           </section>
         )}
       </div>
@@ -531,8 +542,48 @@ function Dialog({ title, children, actions }) {
   );
 }
 
+// SASO: Settings shows only the Semester Enrollment group's enrolled-students
+// list - every setting itself stays Admin only.
+function SasoSettings() {
+  return (
+    <div className="flex flex-col">
+      <PageHeader eyebrow="System configuration" title="Settings" />
+      <p className="mt-s3 max-w-[760px] text-sm leading-snug text-ink-600">
+        As SASO you manage this semester&apos;s enrolled list here. The other settings - including what happens to a
+        student who isn&apos;t enrolled - are changed by an Admin.
+      </p>
+      <section className="card mt-s5 min-w-0 px-s5 pt-s5" aria-labelledby="settings-semester">
+        <div className="flex items-start gap-s4 pb-s4">
+          <span className="flex h-11 w-11 flex-none items-center justify-center rounded-md bg-maroon text-white">
+            <Icon name="graduation-cap" bold size={22} />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-s1">
+            <h2 id="settings-semester" className="t-section">
+              Semester Enrollment
+            </h2>
+            <p className="text-sm text-ink-600">
+              Students re-enroll every semester. A registered student who isn&apos;t on this semester&apos;s enrolled
+              list is flagged NOT ENROLLED (or refused, if an Admin set it so). Staff are never flagged.
+            </p>
+          </div>
+        </div>
+        <SemesterPanel />
+      </section>
+    </div>
+  );
+}
+
 export default function SystemSettings() {
+  const { user } = useAuth();
+  if (user?.role === "saso") return <SasoSettings />;
+  return <AdminSettings />;
+}
+
+function AdminSettings() {
   const [data, setData] = useState(null);
+  // Bumped on every save, so the semester list below its settings re-reads
+  // what they now mean (flagged or refused, grace period).
+  const [saves, setSaves] = useState(0);
   const [draft, setDraft] = useState({});
   const [loadError, setLoadError] = useState("");
   const [serverErrors, setServerErrors] = useState({});
@@ -595,6 +646,7 @@ export default function SystemSettings() {
       const values = Object.fromEntries(changes.map(({ setting, parsed }) => [setting.key, parsed.value]));
       const { data: payload } = await apiClient.patch("/settings", { values, confirmed: Boolean(confirmed) });
       applyData(payload);
+      setSaves((count) => count + 1);
       setNotice({ tone: "verified", text: "Saved. The gates use the new values within a few seconds." });
     } catch (err) {
       const status = err.response?.status;
@@ -667,6 +719,7 @@ export default function SystemSettings() {
         }}
         onDiscard={() => applyData(data)}
         onSave={() => save(false)}
+        extras={{ semester: <SemesterPanel key={saves} /> }}
       />
 
       {confirmResetAll && (

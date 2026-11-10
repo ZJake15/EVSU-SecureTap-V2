@@ -63,6 +63,9 @@ class AuditLogEntry(models.Model):
         UNKNOWN_CORRECTED = "unknown_corrected", "Unknown corrected"
         # The capstone test mode's "delete all test data" (logs/test_mode.py).
         TEST_DATA_DELETED = "test_data_deleted", "Test data deleted"
+        # An Admin opening the dashboard's Cameras page (live gate cameras) -
+        # at most once per half hour per Admin (logs.views.GateCameraStreamView).
+        CAMERAS_VIEWED = "cameras_viewed", "Viewed gate cameras"
 
     # Nullable only in case a user account is later deleted out from under an
     # old entry (SET_NULL, not CASCADE) - the row (and its description of what

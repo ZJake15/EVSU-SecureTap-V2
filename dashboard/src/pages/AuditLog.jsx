@@ -18,6 +18,7 @@ const ACTIONS = {
   data_purged: { label: "Old data deleted", icon: "broom" },
   data_backed_up: { label: "Data backed up", icon: "floppy-disk" },
   unknown_corrected: { label: "Unknown corrected", icon: "user-check" },
+  cameras_viewed: { label: "Viewed gate cameras", icon: "video-camera" },
   account_locked: { label: "Account locked", icon: "lock-simple", danger: true },
 };
 

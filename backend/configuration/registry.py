@@ -274,6 +274,20 @@ DEFINITIONS = [
         note="Auto = 15 Fast, 10 Standard, 6 Light.",
     ),
     SettingDef(
+        "monitor_fps", "camera", "Cameras page smoothness",
+        "How many pictures a second each gate sends to the dashboard's Cameras page while an Admin has it open. "
+        "Higher is smoother, but the gate computer works harder and more goes over the network. Nothing is "
+        "sent while nobody is watching.",
+        CHOICE, "15", choices=(("5", "5"), ("10", "10"), ("15", "15"), ("20", "20"), ("30", "30")),
+        unit="a second",
+        note="On a slow gate computer, lower it if face checks get slower while the Cameras page is open.",
+    ),
+    SettingDef(
+        "monitor_size", "camera", "Cameras page picture width",
+        "How wide each gate's picture is on the Cameras page. Wider is sharper, but uses more network.",
+        CHOICE, "960", choices=(("640", "640 px"), ("960", "960 px"), ("1280", "1280 px")),
+    ),
+    SettingDef(
         "camera_exposure", "camera", "Exposure (shutter speed)",
         "A faster shutter freezes people walking - less motion blur - but makes the picture darker. Use it only "
         "where the gate is well lit.",

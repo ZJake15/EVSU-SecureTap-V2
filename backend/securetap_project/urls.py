@@ -8,7 +8,10 @@ from audit.views import AuditLogViewSet
 from logs.views import (
     EntryLogViewSet,
     GateCameraReportView,
+    GateCamerasView,
+    GateCameraStreamView,
     GateDutyView,
+    GateMonitorFrameView,
     TestModeDeleteView,
     TestModeSnapshotView,
     GateSignInView,
@@ -53,6 +56,11 @@ urlpatterns = [
     path("api/gate-duty", GateDutyView.as_view(), name="gate-duty"),
     # What each gate's camera actually runs at - Settings > Camera shows it.
     path("api/gate/camera-report", GateCameraReportView.as_view(), name="gate-camera-report"),
+    # The dashboard's Cameras page (Admin only): each gate's live picture,
+    # sent only while someone watches - see logs/camera_monitor.py.
+    path("api/gate/monitor-frame", GateMonitorFrameView.as_view(), name="gate-monitor-frame"),
+    path("api/gate-cameras", GateCamerasView.as_view(), name="gate-cameras"),
+    path("api/gate-cameras/stream", GateCameraStreamView.as_view(), name="gate-cameras-stream"),
     # The capstone speed/accuracy test mode (logs/test_mode.py) - gate monitor only.
     path("api/test-mode/snapshot", TestModeSnapshotView.as_view(), name="test-mode-snapshot"),
     path("api/test-mode/delete", TestModeDeleteView.as_view(), name="test-mode-delete"),

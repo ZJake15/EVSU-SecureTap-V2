@@ -14,6 +14,7 @@ from api_client import ApiClient
 from camera import Camera, list_available_cameras
 from config import data_file, load_config
 from offline_queue import OfflineQueue
+from monitor_stream import monitor_stream_loop
 from ui import GateMonitorWindow, set_app_user_model_id
 
 # The pause between face checks is config.scan_pause_seconds (0.2 s unless
@@ -643,6 +644,11 @@ def main():
 
     threading.Thread(
         target=scan_loop, args=(config, api_client, camera, monitor, stop_event, test_run, live), daemon=True
+    ).start()
+    # The dashboard's Cameras page: this gate's live picture, sent only while
+    # an Admin is watching it (monitor_stream.py).
+    threading.Thread(
+        target=monitor_stream_loop, args=(config.gate_location, api_client, camera, stop_event), daemon=True
     ).start()
 
     status_busy = threading.Event()

@@ -10,6 +10,7 @@ import { Icon } from "./ui";
 // matrix, and each API view's permission_classes for the real gate).
 const ALL_LINKS = [
   { to: "/", label: "Live Monitoring", icon: "broadcast", roles: ["admin", "saso", "security_officer"] },
+  { to: "/cameras", label: "Cameras", icon: "video-camera", roles: ["admin"] },
   { to: "/logs", label: "Logs", icon: "list-bullets", roles: ["admin", "saso", "security_officer"] },
   { to: "/users", label: "User Management", icon: "users", roles: ["admin", "saso"] },
   { to: "/reports", label: "Reports", icon: "chart-bar", roles: ["admin", "saso"] },

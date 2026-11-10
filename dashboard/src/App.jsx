@@ -11,6 +11,7 @@ import SystemSettings from "./pages/SystemSettings";
 import AccountManagement from "./pages/AccountManagement";
 import AuditLog from "./pages/AuditLog";
 import PrintableForms from "./pages/PrintableForms";
+import GateCameras from "./pages/GateCameras";
 
 export default function App() {
   const { user } = useAuth();
@@ -27,6 +28,14 @@ export default function App() {
       >
         <Route index element={<LiveMonitoring />} />
         <Route path="logs" element={<Logs />} />
+        <Route
+          path="cameras"
+          element={
+            <ProtectedRoute roles={["admin"]}>
+              <GateCameras />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="users"
           element={

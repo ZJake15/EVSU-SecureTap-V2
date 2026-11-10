@@ -965,6 +965,34 @@ the page's main action beside it. See §8.1 for the visual design system.
   — or, in caution colour, "Nobody signed in" and who was last on duty until
   when — plus today's entries, how many were Unattended, and the assigned
   officers. With guard sign-in switched off it says so instead (§13.4).
+- **Cameras** (Admin only) — every gate's camera live, like a CCTV monitor: one
+  tile per gate whose gate monitor reported its camera in the last week
+  (`/api/gate-cameras`), each with LIVE and its frames a second, "Connecting",
+  or "No signal" with when the gate was last seen. **Enlarge** shows one gate
+  alone (and streams only that one), the corner button goes full screen, and
+  **Show face boxes** draws the gate's own face-check results on the picture —
+  the same labels and colours as the gate monitor (name and confidence, UNKNOWN,
+  SPOOF, CHECKING, TAP CARD, PLEASE UNCOVER), from the gate's latest
+  `/api/identify` answer, so a moment behind the picture.
+  - **Live only, nothing recorded.** The backend keeps just each gate's newest
+    picture in memory (`backend/logs/camera_monitor.py`) and drops it when no
+    page shows that gate any more.
+  - **A gate sends only while someone watches.** The gate monitor's
+    `monitor_stream.py` asks `POST /api/gate/monitor-frame` once a second with
+    an empty body; once a Cameras page shows that gate, it sends its newest
+    picture (the same view the face checks use, zoom included) as a JPEG, as
+    often and as wide as Settings › Camera › **Cameras page smoothness** (default
+    15 a second) and **Cameras page picture width** (default 960 px) say. It
+    runs on its own thread and connection, so it never delays a face check.
+    Measured: about 2.5 ms of the gate computer's time per picture (roughly 4% of
+    one core at 15 a second).
+  - **One connection for all the gates** (`GET /api/gate-cameras/stream?gate=…`):
+    a long response of messages — a 4-byte length, JSON, then the JPEG — so a
+    browser's ~6-connections-per-address limit is never reached. Each stream
+    ends after 5 minutes and the page reconnects by itself, which checks the
+    sign-in again. A hidden browser tab disconnects, so the gates stop sending.
+  - **Audit Log:** "Viewed gate cameras", with the gates shown — at most once
+    per half hour per Admin.
 - **Logs** — paginated (25/page), filterable by date/name/gate/status (including
   Spoof suspected and Face covered), with a "hide unknown" toggle and a
   **client-side CSV export** (built in-browser from loaded rows; there's no

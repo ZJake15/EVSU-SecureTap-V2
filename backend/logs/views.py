@@ -4,6 +4,7 @@ import numpy as np
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.core.files.base import ContentFile
+from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django_filters.rest_framework import DjangoFilterBackend
@@ -16,12 +17,14 @@ from accounts import lockout
 from accounts.models import AdminProfile
 from accounts.permissions import (
     HasServiceToken,
+    IsAdmin,
     IsAdminOrSaso,
     IsAnyDashboardRole,
     IsSecurityOfficer,
     get_assigned_gate,
     get_role,
 )
+from audit.models import AuditLogEntry
 from audit.utils import log_action
 from securetap_project.media_auth import build_signed_media_url
 from configuration import schedule
@@ -32,10 +35,11 @@ from users import flatness, insightface_utils, liveness_utils, occlusion_utils, 
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
-from . import camera_status, gate_shifts, motion, test_mode
+from . import camera_monitor, camera_status, gate_shifts, motion, test_mode
 from .filters import EntryLogFilter
 from .models import (
     EntryLog,
+    GateCamera,
     GateShift,
     OcclusionAttempt,
     PendingTiebreak,
@@ -278,6 +282,80 @@ class GateCameraReportView(APIView):
         if not gate_location:
             return Response({"detail": "gate_location is required."}, status=http_status.HTTP_400_BAD_REQUEST)
         return Response({"saved": camera_status.save(gate_location, request.data.get("report") or {})})
+
+
+def _monitor_settings():
+    """Settings > Camera: how often and how wide each gate sends its picture
+    to the Cameras page."""
+    return {"fps": int(system_settings.get("monitor_fps")), "width": int(system_settings.get("monitor_size"))}
+
+
+class GateMonitorFrameView(APIView):
+    """A gate monitor's live picture for the dashboard's Cameras page (see
+    logs/camera_monitor.py), as the raw JPEG body. An empty body only asks
+    whether anyone is watching; the answer also says how often and how wide
+    to send (entry-agent/monitor_stream.py)."""
+
+    permission_classes = [HasServiceToken]
+
+    def post(self, request):
+        gate_location = str(request.query_params.get("gate_location") or "").strip()[:100]
+        if not gate_location:
+            return Response({"detail": "gate_location is required."}, status=http_status.HTTP_400_BAD_REQUEST)
+        if request.body:
+            camera_monitor.put_frame(gate_location, request.body)
+        return Response({"watched": camera_monitor.watched(gate_location), **_monitor_settings()})
+
+
+class GateCamerasView(APIView):
+    """The gates the Cameras page shows: every gate whose monitor reported
+    its camera in the last week (logs/camera_status.py), and whether it is
+    open now. Admin only."""
+
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        now = timezone.now()
+        gates = [
+            {
+                "gate_location": gate.gate_location,
+                "online": now - gate.updated_at <= camera_status.FRESH_FOR,
+                "last_seen": gate.updated_at,
+                "resolution": (gate.report or {}).get("resolution"),
+                "zoom": (gate.report or {}).get("zoom"),
+            }
+            for gate in GateCamera.objects.filter(updated_at__gte=now - camera_status.SHOW_FOR).order_by(
+                "gate_location")
+        ]
+        return Response({"gates": gates, **_monitor_settings()})
+
+
+# One "Viewed gate cameras" audit entry per Admin per this long - the page
+# reconnects every few minutes and on every enlarge, which would flood it.
+CAMERAS_AUDIT_EVERY = timezone.timedelta(minutes=30)
+
+
+class GateCameraStreamView(APIView):
+    """The Cameras page's live feed: every gate asked for (?gate=...&gate=...)
+    over one long response - see logs/camera_monitor.py for its format. Live
+    only; nothing is recorded. Admin only, and written to the Audit Log."""
+
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        gates = [gate.strip()[:100] for gate in request.query_params.getlist("gate") if gate.strip()]
+        if not gates:
+            return Response({"detail": "Name at least one gate."}, status=http_status.HTTP_400_BAD_REQUEST)
+        if not AuditLogEntry.objects.filter(
+            actor=request.user, action=AuditLogEntry.Action.CAMERAS_VIEWED,
+            timestamp__gte=timezone.now() - CAMERAS_AUDIT_EVERY,
+        ).exists():
+            log_action(request.user, AuditLogEntry.Action.CAMERAS_VIEWED,
+                       target_description=", ".join(gates)[:255])
+        response = StreamingHttpResponse(camera_monitor.stream(gates), content_type="application/octet-stream")
+        response["Cache-Control"] = "no-store"
+        response["X-Accel-Buffering"] = "no"
+        return response
 
 
 class GateDutyView(APIView):
@@ -648,6 +726,9 @@ class IdentifyView(APIView):
                     "server_ms": round((time.perf_counter() - started) * 1000, 1),
                     **{key: round(value, 1) for key, value in self._timing.items()},
                 }
+            # The dashboard's Cameras page draws these faces on the gate's
+            # live picture - only while an Admin is watching this gate.
+            camera_monitor.note_results(data["gate_location"], response.data)
             return response
 
     def _add_time(self, key, since):

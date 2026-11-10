@@ -941,9 +941,10 @@ the page's main action beside it. See §8.1 for the visual design system.
   logout if refresh fails). A split screen: the EVSU seal and wordmark on a maroon
   panel, the sign-in form beside it, with an inline error notice on a failed
   sign-in.
-- **Live Monitoring** — polls every second. Across the top, one large "passes
-  today" number followed by enrolled matches, unknown attempts, spoof suspected,
-  face covered and average confidence (a count only takes its status color once
+- **Live Monitoring** — polls every second. Across the top, one large "scans
+  today" number (every scan logged today, whatever its outcome) followed by
+  enrolled matches, unknown attempts, spoof suspected, face covered, not
+  enrolled and average confidence (a count only takes its status color once
   it's non-zero). Below, two columns: the **latest pass** as a large card (photo,
   name, ID, time, method, confidence), then a table of today's successful passes
   (name, ID, time, method — Face / Face + card / Lookalike + card / Manual /
@@ -1129,8 +1130,11 @@ the page's main action beside it. See §8.1 for the visual design system.
 - **Reports** *(admin/SASO — no access for Security Officer, §13)* — a
   Today / Last 7 days / Last 30 days toggle (up to 90d via API); entries today
   as the large number, beside failed verifications and the busiest hour; an
-  entries-by-method bar (Face / Face + card / Failed / **Face covered**, its own
-  segment rather than folded into Failed) with CSV export; and four charts —
+  entries-by-method bar with a segment for every outcome, so it adds up to all
+  that was logged — entries by how they were confirmed (Face / Face + card —
+  ambiguous or lookalike — / Card / Manual override) and each refusal (Failed /
+  Spoof suspected / **Face covered** / Not enrolled (refused)), each its own
+  segment rather than folded into Failed — with CSV export; and four charts —
   busiest hours (peak hour highlighted), entries per day for the last week
   (today highlighted), the confidence histogram, and the FAR/FRR curve with its
   "preliminary estimate" caveat and, for an Admin, a marker at the match

@@ -29,6 +29,9 @@ const C = {
   ink4: "#8A9097",
   line: "#D9DCDF",
   maroon: "#7B1113",
+  maroonDeep: "#4A0A0C",
+  brass: "#C89B3C",
+  caution: "#9A5B00",
   danger: "#C62828",
   prompt: "#1D5FA8",
 };
@@ -44,16 +47,22 @@ const TOOLTIP = {
   cursor: { fill: "#EEF0F2" },
 };
 
+// Every outcome the gates log - entries by how they were confirmed, then each
+// kind of refusal - so the bar adds up to everything (reports/views.py).
 const METHODS = [
   { key: "face", label: "Face", color: C.maroon },
   { key: "face_nfc", label: "Face + card", color: C.ink6 },
+  { key: "card", label: "Card", color: C.ink4 },
+  { key: "manual", label: "Manual override", color: C.brass },
   { key: "failed", label: "Failed", color: C.danger },
+  { key: "spoof", label: "Spoof suspected", color: C.maroonDeep },
   { key: "occluded", label: "Face covered", color: C.prompt },
+  { key: "not_enrolled", label: "Not enrolled (refused)", color: C.caution },
 ];
 
 function exportMethodCsv(entriesByMethod) {
-  const header = ["Date", "Face", "Face + NFC", "Failed", "Occluded"];
-  const rows = entriesByMethod.map((row) => [row.date, row.face, row.face_nfc, row.failed, row.occluded]);
+  const header = ["Date", ...METHODS.map((method) => method.label)];
+  const rows = entriesByMethod.map((row) => [row.date, ...METHODS.map((method) => row[method.key] ?? 0)]);
   const csv = [header, ...rows]
     .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
     .join("\n");

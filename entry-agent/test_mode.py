@@ -301,6 +301,10 @@ def _outcome(item):
         return "Match"
     if item.get("spoof_suspected"):
         return "Spoof"
+    if item.get("refused") == "not_enrolled":
+        # Recognized, but refused: not on this semester's enrolled list
+        # (Settings > Semester Enrollment: "Refuse entry") - not an Unknown.
+        return "Not enrolled"
     return "Unknown"
 
 

@@ -52,7 +52,8 @@ CATEGORY_COLOR = {"enrolled": "#2e7d32", "spoof": "#c62828", "unknown": "#ef6c00
 CATEGORY_OFFSET = {"enrolled": -0.06, "spoof": 0.0, "unknown": 0.06}
 # Per-trial speed columns (test_mode.py): the summary gives their middle value.
 SPEED_COLUMNS = ("answer_ms_median", "server_ms_median", "face_ai_ms_median")
-RESULT_ORDER = ["Match", "Spoof", "Unknown", "Tiebreak requested", "Occluded", "No decision", "Not detected"]
+RESULT_ORDER = ["Match", "Spoof", "Unknown", "Not enrolled", "Tiebreak requested", "Occluded", "No decision",
+                "Not detected"]
 
 
 def wilson_interval(successes, trials, z=1.96):

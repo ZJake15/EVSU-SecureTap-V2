@@ -103,18 +103,32 @@ class SummaryView(APIView):
         "failed" - silently doing that would mean this chart quietly
         disagreed with the dashboard's own status filter/badge, which treats
         it as a distinct outcome (see EntryLog.Status.OCCLUSION_DETECTED)."""
+        # Every outcome has a bucket, so the chart adds up to everything the
+        # gates logged: successful entries by how they were confirmed (face,
+        # face + card - an ambiguous match or a lookalike resolved by a tap -
+        # card alone, a guard's manual override), then each kind of refusal.
+        success_bucket = {
+            EntryLog.VerificationMethod.FACE_ONLY: "face",
+            EntryLog.VerificationMethod.FACE_AND_CARD_TIEBREAK: "face_nfc",
+            EntryLog.VerificationMethod.CONFUSABLE_PAIR_TIEBREAK: "face_nfc",
+            EntryLog.VerificationMethod.MANUAL_OVERRIDE: "manual",
+        }
+        status_bucket = {
+            EntryLog.Status.OCCLUSION_DETECTED: "occluded",
+            EntryLog.Status.FAILED: "failed",
+            EntryLog.Status.SPOOF_SUSPECTED: "spoof",
+            EntryLog.Status.NOT_ENROLLED: "not_enrolled",
+        }
+        empty = {"face": 0, "face_nfc": 0, "card": 0, "manual": 0, "failed": 0, "spoof": 0, "occluded": 0,
+                 "not_enrolled": 0}
         by_date = {}
         for ts, method, status in range_logs.values_list("timestamp", "verification_method", "status"):
             date_key = timezone.localtime(ts).strftime("%Y-%m-%d")
-            bucket = by_date.setdefault(date_key, {"face": 0, "face_nfc": 0, "failed": 0, "occluded": 0})
-            if status == EntryLog.Status.OCCLUSION_DETECTED:
-                bucket["occluded"] += 1
-            elif status == EntryLog.Status.FAILED:
-                bucket["failed"] += 1
-            elif status == EntryLog.Status.SUCCESS and method == EntryLog.VerificationMethod.FACE_ONLY:
-                bucket["face"] += 1
-            elif status == EntryLog.Status.SUCCESS and method == EntryLog.VerificationMethod.FACE_AND_CARD_TIEBREAK:
-                bucket["face_nfc"] += 1
+            bucket = by_date.setdefault(date_key, dict(empty))
+            if status == EntryLog.Status.SUCCESS:
+                bucket[success_bucket.get(method, "card")] += 1  # NFC only, or an old NFC + face row
+            elif status in status_bucket:
+                bucket[status_bucket[status]] += 1
         return [{"date": date_key, **counts} for date_key, counts in sorted(by_date.items())]
 
     @staticmethod

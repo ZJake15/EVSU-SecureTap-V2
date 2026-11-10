@@ -57,6 +57,10 @@ FACE_STYLES = {
     "uncover": (PROMPT, "hand-palm", "Please uncover your face"),
     "tap": (PROMPT, "identification-card", "Tap your ID card"),
     "checking": (INK_600, "circle-notch", "Checking…"),
+    # Recognized, but refused: not on this semester's enrolled list (Settings >
+    # Semester Enrollment: "Refuse entry"). A student who is let in but only
+    # flagged just gets "Welcome" - this screen is public.
+    "not_enrolled": (CAUTION, "hand", "Please see the guard"),
 }
 
 # The message bar: (background, text color, icon, title, subtitle).
@@ -76,11 +80,13 @@ MESSAGES = {
                    "The card could not be read."),
     "nocam": (PROMPT, SURFACE, "identification-card", "Tap your ID card on the reader",
               "Hold it flat against the reader until it beeps."),
+    "not_enrolled": (CAUTION, SURFACE, "hand", "Please see the guard",
+                     "Your enrollment this semester isn't on record."),
 }
 
 # When several faces are in frame, the message bar speaks to the one that
 # most needs something done - highest first.
-MESSAGE_PRIORITY = ("spoof", "guard", "tap", "uncover", "welcome")
+MESSAGE_PRIORITY = ("spoof", "guard", "not_enrolled", "tap", "uncover", "welcome")
 
 
 def first_name(full_name):
@@ -104,12 +110,15 @@ def face_kind(item):
         return "checking"
     if item.get("tiebreak"):
         return "tap"
+    if item.get("refused_not_enrolled"):
+        return "not_enrolled"
     if item.get("matched"):
         return "entry"
     return "unknown"
 
 
-FACE_MESSAGE = {"spoof": "spoof", "unknown": "guard", "tap": "tap", "uncover": "uncover", "entry": "welcome"}
+FACE_MESSAGE = {"spoof": "spoof", "unknown": "guard", "tap": "tap", "uncover": "uncover", "entry": "welcome",
+                "not_enrolled": "not_enrolled"}
 
 
 def _secondary_monitor():
@@ -247,7 +256,8 @@ class StudentDisplayWindow:
         """outcome: "accepted", "queued" (offline, will sync), "rejected"
         (not registered), "deactivated", or "error" (misread or a server
         problem - worth tapping again)."""
-        key = {"rejected": "card", "deactivated": "card_inactive", "error": "card_retry"}.get(outcome)
+        key = {"rejected": "card", "deactivated": "card_inactive", "error": "card_retry",
+               "not_enrolled": "not_enrolled"}.get(outcome)
         if key is None:
             key = "welcome"
         self._card_message = (key, time.monotonic())

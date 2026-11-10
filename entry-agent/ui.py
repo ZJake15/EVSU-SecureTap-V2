@@ -563,6 +563,8 @@ class GateMonitorWindow:
     FAILURE_HEADLINES = {
         "not_registered": "Not registered",
         "deactivated": "Deactivated",
+        # Settings > Semester Enrollment: "Refuse entry".
+        "not_enrolled": "Not enrolled this semester",
         "read_error": "Read error",
         "offline": "Offline",
         "server_error": "Server error",
@@ -1887,8 +1889,8 @@ class GateMonitorWindow:
             # A guard's own staff card is none of the student display's
             # business. Only a card the system actually looked up and refused reads as
             # "not registered" - a misread or a server hiccup asks for a retap.
-            outcome = {"offline": "queued", "not_registered": "rejected",
-                       "deactivated": "deactivated"}.get(reason_code, "error")
+            outcome = {"offline": "queued", "not_registered": "rejected", "deactivated": "deactivated",
+                       "not_enrolled": "not_enrolled"}.get(reason_code, "error")
             self._student.show_card_result(outcome)
 
         self._push_log_row(

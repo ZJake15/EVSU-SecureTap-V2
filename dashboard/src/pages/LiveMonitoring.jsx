@@ -417,7 +417,9 @@ export default function LiveMonitoring() {
 
       <div className="mt-s5 flex flex-none flex-wrap items-end gap-y-s4">
         <div className="flex flex-col gap-s1 pr-s6">
-          <span className="t-eyebrow">Passes today</span>
+          {/* Every scan logged today - passes, unknowns, spoofs, covered faces
+              and refusals; the counts beside it break it down. */}
+          <span className="t-eyebrow">Scans today</span>
           <span className="t-hero">{events.length}</span>
         </div>
         <SubStat label="Enrolled matches" icon="user-focus" value={passes.length} />

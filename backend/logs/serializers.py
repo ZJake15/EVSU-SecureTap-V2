@@ -37,6 +37,7 @@ class EntryLogSerializer(serializers.ModelSerializer):
             "on_duty_name",
             "unattended",
             "after_hours",
+            "not_enrolled",
         ]
 
     def get_person_name(self, obj):

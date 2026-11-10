@@ -12,6 +12,7 @@ import AccountManagement from "./pages/AccountManagement";
 import AuditLog from "./pages/AuditLog";
 import PrintableForms from "./pages/PrintableForms";
 import GateCameras from "./pages/GateCameras";
+import Semester from "./pages/Semester";
 
 export default function App() {
   const { user } = useAuth();
@@ -41,6 +42,14 @@ export default function App() {
           element={
             <ProtectedRoute roles={["admin", "saso"]}>
               <Users />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="semester"
+          element={
+            <ProtectedRoute roles={["admin", "saso"]}>
+              <Semester />
             </ProtectedRoute>
           }
         />

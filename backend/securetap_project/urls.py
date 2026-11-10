@@ -27,6 +27,14 @@ from reports.views import FarFrrView, SummaryView
 from securetap_project.media_views import protected_media_serve
 from securetap_project.spa_views import dashboard_index
 from configuration.views import SessionPolicyView, SettingsView
+from users.semester_views import (
+    SemesterHandView,
+    SemesterNotOnListView,
+    SemesterPreviewView,
+    SemesterStartView,
+    SemesterUploadView,
+    SemesterView,
+)
 from users.views import (
     BulkImportView,
     ConfusablePairViewSet,
@@ -68,6 +76,13 @@ urlpatterns = [
     path("api/logs/manual-override", ManualOverrideView.as_view(), name="logs-manual-override"),
     path("api/users/bulk-import", BulkImportView.as_view(), name="users-bulk-import"),
     path("api/users/check-photo-quality", PhotoQualityCheckView.as_view(), name="users-check-photo-quality"),
+    # The Semester page: who is on this semester's enrolled list (users/semesters.py).
+    path("api/semester", SemesterView.as_view(), name="semester"),
+    path("api/semester/preview", SemesterPreviewView.as_view(), name="semester-preview"),
+    path("api/semester/start", SemesterStartView.as_view(), name="semester-start"),
+    path("api/semester/upload", SemesterUploadView.as_view(), name="semester-upload"),
+    path("api/semester/not-on-list", SemesterNotOnListView.as_view(), name="semester-not-on-list"),
+    path("api/semester/by-hand", SemesterHandView.as_view(), name="semester-by-hand"),
     path("api/reports/summary", SummaryView.as_view(), name="reports-summary"),
     path("api/reports/far-frr", FarFrrView.as_view(), name="reports-far-frr"),
     path("api/settings", SettingsView.as_view(), name="system-settings"),

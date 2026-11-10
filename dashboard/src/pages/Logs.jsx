@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import apiClient from "../api/client";
-import StatusBadge, { AfterHoursTag, STATUS_BAR } from "../components/StatusBadge";
+import StatusBadge, { AfterHoursTag, NotEnrolledTag, STATUS_BAR } from "../components/StatusBadge";
 import { Checkbox, Field, Icon, Notice, PageHeader } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
 
@@ -146,7 +146,9 @@ export default function Logs() {
     if (filters.date) params.timestamp__date = filters.date;
     if (filters.user) params.person__full_name = filters.user;
     if (filters.gate) params.gate_location = filters.gate;
-    if (filters.status) params.status = filters.status;
+    // "Not enrolled" is a flag on successful entries, not a status of its own.
+    if (filters.status === "not_enrolled") params.not_enrolled = true;
+    else if (filters.status) params.status = filters.status;
 
     apiClient
       .get("/logs/", { params })
@@ -174,7 +176,9 @@ export default function Logs() {
   };
 
   const exportCsv = () => {
-    const header = ["Name", "Timestamp", "Method", "Status", "Confidence", "Reason", "Gate", "On duty", "After hours"];
+    const header = [
+      "Name", "Timestamp", "Method", "Status", "Confidence", "Reason", "Gate", "On duty", "After hours", "Not enrolled",
+    ];
     const rows = visibleLogs.map((log) => [
       log.person_name,
       log.timestamp,
@@ -185,6 +189,7 @@ export default function Logs() {
       log.gate_location,
       log.on_duty_name || (log.unattended ? "Unattended" : ""),
       log.after_hours ? "Yes" : "",
+      log.not_enrolled ? "Yes" : "",
     ]);
     const csv = [header, ...rows]
       .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
@@ -253,6 +258,7 @@ export default function Logs() {
             <option value="failed">Failed</option>
             <option value="spoof_suspected">Spoof suspected</option>
             <option value="occlusion_detected">Face covered</option>
+            <option value="not_enrolled">Not enrolled (let in)</option>
           </select>
         </Field>
         <Checkbox checked={hideUnknown} onChange={(e) => setHideUnknown(e.target.checked)} label="Hide unknown" />
@@ -294,6 +300,8 @@ export default function Logs() {
                       <StatusBadge status={log.status} />
                       {/* Settings > Scheduling > Gate opening hours */}
                       {log.after_hours && <AfterHoursTag />}
+                      {/* Not on this semester's enrolled list (Semester page) */}
+                      {log.not_enrolled && <NotEnrolledTag />}
                     </span>
                     <span className="text-right font-mono font-medium">
                       {log.match_confidence != null ? `${Math.round(log.match_confidence * 100)}%` : "—"}

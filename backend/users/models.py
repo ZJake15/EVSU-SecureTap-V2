@@ -184,3 +184,51 @@ class ConfusablePair(models.Model):
 
     def __str__(self):
         return f"{self.person_a.full_name} <-> {self.person_b.full_name} ({self.source})"
+
+
+class Semester(models.Model):
+    """A school semester and its enrolled-students list (the registrar's CSV) -
+    see users/semesters.py. Students re-enroll every semester; one who is
+    registered in SecureTap but not on the current semester's list is still
+    let in at the gate, flagged "Not enrolled" (EntryLog.not_enrolled). Until
+    the first semester is started, nobody is flagged. Staff never are."""
+
+    name = models.CharField(max_length=100)
+    # Exactly one current semester once any exists - starting a new one ends the last.
+    is_current = models.BooleanField(default=False, db_index=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    started_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="semesters_started",
+    )
+    # Bumped whenever its list changes, so the gate's cached list is refreshed.
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return self.name
+
+
+class SemesterEnrollment(models.Model):
+    """One student ID number on a semester's enrolled list. Kept as the ID
+    number (normalized - see semesters.normalize_id), not a link to Person,
+    so a student registered in SecureTap after the list was uploaded is
+    still found on it."""
+
+    class Source(models.TextChoices):
+        CSV = "csv", "Uploaded list"
+        MANUAL = "manual", "Added by hand"
+
+    semester = models.ForeignKey(Semester, on_delete=models.CASCADE, related_name="enrollments")
+    student_id = models.CharField(max_length=50)
+    source = models.CharField(max_length=10, choices=Source.choices, default=Source.CSV)
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["semester", "student_id"], name="unique_semester_student"),
+        ]
+
+    def __str__(self):
+        return f"{self.student_id} ({self.semester.name})"

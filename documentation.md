@@ -993,6 +993,33 @@ the page's main action beside it. See §8.1 for the visual design system.
     sign-in again. A hidden browser tab disconnects, so the gates stop sending.
   - **Audit Log:** "Viewed gate cameras", with the gates shown — at most once
     per half hour per Admin.
+- **Semester** (Admin and SASO) — who is enrolled this semester. Students
+  re-enroll every semester and some don't in time: a registered student who
+  isn't on the current semester's list is still recognized and **let in**, but
+  the entry is flagged **NOT ENROLLED** — on the gate monitor (the face box and
+  live-log row turn caution, the card says "NOT ENROLLED this semester"), in
+  **Logs** (a tag beside Success, a "Not enrolled (let in)" status filter and
+  an export column) and on **Live Monitoring** (a tag, a "Not enrolled" count,
+  and a card under Needs attention). Staff are never flagged; until the first
+  semester is started, nobody is.
+  - **Start new semester:** a name (e.g. "1st Semester 2026-2027") and the
+    registrar's list — CSV in any encoding or separator, or Excel, any columns.
+    The page shows the first rows and suggests the student ID column (the one
+    whose values match the most registered students, with the count beside
+    each column). The last semester's list stops counting.
+  - **Upload updated list:** *Add to the list* (late enrollees) or *Replace the
+    list* (it becomes exactly the file; students added by hand are kept).
+  - **Registered, not on the list:** the students who would be flagged, with a
+    search and **Mark enrolled** for a late enrollee — takes effect at the gate
+    at once.
+  - Counts: on the list, registered students on it, flagged, and on the list but
+    not registered (students who haven't enrolled their face — many of these
+    usually means the wrong column was picked).
+  - Stored as ID numbers (`users.models.SemesterEnrollment`, compared without
+    spaces and case), so a student registered after the upload is still found.
+    The flag is decided when the entry is written (`EntryLog.not_enrolled`,
+    stamped in `EntryLog.save`), so a later upload never re-labels old entries.
+    `users/semesters.py`; Audit Log: "Semester started", "Semester list updated".
 - **Logs** — paginated (25/page), filterable by date/name/gate/status (including
   Spoof suspected and Face covered), with a "hide unknown" toggle and a
   **client-side CSV export** (built in-browser from loaded rows; there's no

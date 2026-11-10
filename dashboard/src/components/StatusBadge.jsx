@@ -34,6 +34,19 @@ export function AfterHoursTag() {
   );
 }
 
+// A student let in who isn't on the current semester's enrolled list (Semester page).
+export function NotEnrolledTag() {
+  return (
+    <span
+      className="inline-flex items-center gap-s1 whitespace-nowrap rounded-sm bg-caution-tint px-s1 text-xs font-bold uppercase text-caution"
+      title="Not on this semester's enrolled list (Semester page) - let in, flagged for checking"
+    >
+      <Icon name="warning" bold size={12} />
+      Not enrolled
+    </span>
+  );
+}
+
 export default function StatusBadge({ status }) {
   const { label, icon, className } = STATUS_STYLES[status] || STATUS_STYLES.failed;
   return (

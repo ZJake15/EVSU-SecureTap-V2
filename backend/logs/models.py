@@ -125,6 +125,11 @@ class EntryLog(models.Model):
     # opening hours) - decided when the row is written, so changing the hours
     # later never re-labels old entries. Always False with opening hours off.
     after_hours = models.BooleanField(default=False)
+    # A student let in who isn't on the current semester's enrolled list
+    # (users.models.Semester) - still a successful entry, flagged for the
+    # guard and the dashboard. Decided when the row is written, so a later
+    # upload of the list never re-labels old entries. Set by save() itself.
+    not_enrolled = models.BooleanField(default=False)
     # Written while the gate monitor was in the capstone test mode (see
     # logs/test_mode.py) - left out of the dashboard, deleted by "delete all
     # test data". Set by save() itself.
@@ -150,6 +155,10 @@ class EntryLog(models.Model):
                 from configuration.schedule import is_after_hours
 
                 self.after_hours = is_after_hours()
+            if not self.not_enrolled and self.person_id and self.status == self.Status.SUCCESS:
+                from users import semesters
+
+                self.not_enrolled = semesters.not_enrolled(self.person)
             from . import test_mode
 
             if test_mode.active():

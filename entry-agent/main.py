@@ -217,6 +217,8 @@ def _build_recognition(direction, result, api_client, photo_cache):
         "department": result.get("department_or_course"),
         "distinguishing_note": result.get("distinguishing_note"),
         "photos_due": bool(result.get("photos_due")),
+        # A student not on the current semester's enrolled list - let in, flagged.
+        "not_enrolled": bool(result.get("not_enrolled")),
         # Unknown entries this recognition undid (the same face, moments
         # ago - see IdentifyView._correct_recent_unknowns): the live log
         # takes those rows out again.
@@ -260,6 +262,7 @@ def _build_profile(api_client, result, card_id, direction):
         # be resolving a forced tiebreak (see person_payload on the backend).
         "distinguishing_note": result.get("distinguishing_note"),
         "photos_due": bool(result.get("photos_due")),
+        "not_enrolled": bool(result.get("not_enrolled")),
     }
 
 

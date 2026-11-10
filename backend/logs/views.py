@@ -31,7 +31,7 @@ from configuration import schedule
 from configuration import store as system_settings
 from configuration.registry import CAMERA_KEYS
 from securetap_project.code_fingerprint import code_fingerprint
-from users import flatness, insightface_utils, liveness_utils, occlusion_utils, reenrollment
+from users import flatness, insightface_utils, liveness_utils, occlusion_utils, reenrollment, semesters
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
@@ -79,6 +79,7 @@ def person_payload(person, request):
             "department_or_course": None,
             "distinguishing_note": None,
             "photos_due": False,
+            "not_enrolled": False,
         }
     photo_url = None
     if person.photo_reference:
@@ -98,6 +99,9 @@ def person_payload(person, request):
         # Settings > Scheduling > "Show at the gate": the guard sees "Photos
         # due for update" for someone whose face photos should be retaken.
         "photos_due": bool(system_settings.get("reenroll_show_at_gate") and reenrollment.photos_due(person)),
+        # A student who isn't on the current semester's enrolled list (the
+        # Semester page) - let in, but the guard sees "Not enrolled".
+        "not_enrolled": semesters.not_enrolled(person),
     }
 
 

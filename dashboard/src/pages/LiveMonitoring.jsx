@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import apiClient from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { AfterHoursTag } from "../components/StatusBadge";
+import { AfterHoursTag, NotEnrolledTag } from "../components/StatusBadge";
 import { Avatar, Icon, Notice, PageHeader } from "../components/ui";
 
 const POLL_INTERVAL_MS = 1000;
@@ -55,6 +55,10 @@ function passMethod(event) {
 // Everything that isn't a clean pass gets pinned to "Needs attention", with
 // its own word, icon and status color.
 function attentionKind(event) {
+  if (event.status === "success" && event.not_enrolled) {
+    // Let in, but not on this semester's enrolled list (Semester page).
+    return { word: "Not enrolled", icon: "warning", color: "#9A5B00", className: "text-caution" };
+  }
   if (event.status === "spoof_suspected") {
     return { word: "Spoof suspected", icon: "warning-octagon", color: "#C62828", className: "text-danger" };
   }
@@ -102,6 +106,7 @@ function LatestPass({ event }) {
             {method.label}
           </span>
           {event.after_hours && <AfterHoursTag />}
+          {event.not_enrolled && <NotEnrolledTag />}
         </div>
       </div>
       {event.match_confidence != null && (
@@ -132,6 +137,7 @@ function PassRow({ event }) {
       <span className="flex min-w-0 flex-col items-start">
         <span className="max-w-full truncate font-bold">{event.person_name}</span>
         {event.after_hours && <AfterHoursTag />}
+        {event.not_enrolled && <NotEnrolledTag />}
         {note && (
           <span className="flex items-center gap-s1 truncate text-xs text-ink-600" title={note}>
             <Icon name="note" size={12} />
@@ -162,9 +168,11 @@ function PassRow({ event }) {
 function AttentionCard({ event }) {
   const kind = attentionKind(event);
   const isLookalike = event.status !== "spoof_suspected" && event.verification_method === "confusable_pair_tiebreak";
+  const notEnrolled = event.status === "success" && event.not_enrolled;
+  const photo = event.captured_photo || (notEnrolled ? event.person_photo : null);
   const meta = [
     event.student_or_employee_id || "No ID on file",
-    isLookalike ? "Lookalike unresolved" : event.failure_reason,
+    notEnrolled ? "Let in · not on this semester's list" : isLookalike ? "Lookalike unresolved" : event.failure_reason,
     event.gate_location,
   ]
     .filter(Boolean)
@@ -174,8 +182,8 @@ function AttentionCard({ event }) {
       className="flex flex-none gap-s4 rounded-l-sm rounded-r-md border border-l-[3px] border-line bg-surface p-s4"
       style={{ borderLeftColor: kind.color }}
     >
-      {event.captured_photo ? (
-        <img src={event.captured_photo} alt="" className="h-14 w-14 flex-none rounded-sm object-cover" />
+      {photo ? (
+        <img src={photo} alt="" className="h-14 w-14 flex-none rounded-sm object-cover" />
       ) : (
         <span className="flex h-14 w-14 flex-none items-center justify-center rounded-sm bg-ink text-ink-400">
           <Icon name={kind.icon} size={28} />
@@ -360,7 +368,9 @@ export default function LiveMonitoring() {
   }, []);
 
   const passes = events.filter((event) => event.status === "success");
-  const attention = events.filter((event) => event.status !== "success");
+  // A not-enrolled student was let in (a pass), and is also pinned for checking.
+  const attention = events.filter((event) => event.status !== "success" || event.not_enrolled);
+  const notEnrolledCount = events.filter((event) => event.status === "success" && event.not_enrolled).length;
   const unknownCount = events.filter((event) => event.status === "failed").length;
   const spoofCount = events.filter((event) => event.status === "spoof_suspected").length;
   const occludedCount = events.filter((event) => event.status === "occlusion_detected").length;
@@ -376,8 +386,8 @@ export default function LiveMonitoring() {
 
   const attentionEmpty = (
     <span className="border-t border-line pt-s4 text-sm leading-normal text-ink-600">
-      Nothing to review. Spoof attempts, unknown people, covered faces and unresolved lookalikes will be pinned
-      here.
+      Nothing to review. Spoof attempts, unknown people, covered faces, unresolved lookalikes and students not
+      enrolled this semester will be pinned here.
     </span>
   );
 
@@ -403,6 +413,7 @@ export default function LiveMonitoring() {
         <SubStat label="Unknown attempts" icon="user-circle-dashed" value={unknownCount} tone="text-caution" />
         <SubStat label="Spoof suspected" icon="warning-octagon" value={spoofCount} tone="text-danger" />
         <SubStat label="Face covered" icon="hand-palm" value={occludedCount} tone="text-prompt" />
+        <SubStat label="Not enrolled" icon="warning" value={notEnrolledCount} tone="text-caution" />
         <SubStat label="Avg. confidence" icon="gauge" value={avgConfidence} />
       </div>
 

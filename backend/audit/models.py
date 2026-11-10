@@ -66,6 +66,10 @@ class AuditLogEntry(models.Model):
         # An Admin opening the dashboard's Cameras page (live gate cameras) -
         # at most once per half hour per Admin (logs.views.GateCameraStreamView).
         CAMERAS_VIEWED = "cameras_viewed", "Viewed gate cameras"
+        # A new semester's enrolled list, and later changes to it
+        # (users/semesters.py) - who is flagged "Not enrolled" at the gate.
+        SEMESTER_STARTED = "semester_started", "Semester started"
+        SEMESTER_LIST_UPDATED = "semester_list_updated", "Semester list updated"
 
     # Nullable only in case a user account is later deleted out from under an
     # old entry (SET_NULL, not CASCADE) - the row (and its description of what

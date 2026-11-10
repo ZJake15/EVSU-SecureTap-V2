@@ -440,6 +440,8 @@ LOG_KINDS = {
     "card_offline": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "cloud-slash", "word": "QUEUED", "sec": True},
     # A recognized entry or card tap outside the gate's opening hours.
     "after_hours": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "moon", "word": "AFTER HOURS", "sec": True},
+    # A student let in who isn't on this semester's enrolled list (dashboard: Semester).
+    "not_enrolled": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "warning", "word": "NOT ENROLLED", "sec": True},
 }
 
 # The alarm banner docked at the top of the video panel - only for the two
@@ -1807,6 +1809,8 @@ class GateMonitorWindow:
             text=f"{profile.get('student_id') or '—'} · Card {profile.get('card_id') or '—'}", text_color=INK_600
         )
         notes = []
+        if profile.get("not_enrolled"):  # not on this semester's enrolled list (dashboard: Semester)
+            notes.append("NOT ENROLLED this semester")
         if profile.get("distinguishing_note"):
             notes.append(f"Note: {profile['distinguishing_note']}")
         if profile.get("photos_due"):  # Settings > Scheduling > "Show at the gate"
@@ -2074,10 +2078,17 @@ class GateMonitorWindow:
             # photos should be retaken.
             if item.get("photos_due"):
                 extra += " · photos due for update"
+            # Not on this semester's enrolled list - let in, flagged for the guard.
+            if item.get("not_enrolled"):
+                kind = "not_enrolled"
+                word = "NOT ENROLLED · AFTER HOURS" if self._after_hours else "NOT ENROLLED"
+            else:
+                kind = "after_hours" if self._after_hours else "entry"
+                word = "ENTRY · AFTER HOURS" if self._after_hours else None
             self._push_log_row(
-                kind="after_hours" if self._after_hours else "entry", name=item["name"],
+                kind=kind, name=item["name"],
                 id_text=item.get("student_id") or "—", time=timestamp,
-                feature_word="ENTRY · AFTER HOURS" if self._after_hours else None,
+                feature_word=word,
                 conf=item.get("confidence"), photo_bytes=item.get("photo_bytes"),
                 initials_seed=item["name"], extra=extra,
             )
@@ -2506,6 +2517,10 @@ class GateMonitorWindow:
             label = item["name"]
             if item.get("confidence") is not None:
                 label = f"{label} · {item['confidence']}%"
+            if item.get("not_enrolled"):
+                # Let in, but not on this semester's enrolled list - caution,
+                # so the guard can check them.
+                return CAUTION, "warning", f"{label} · NOT ENROLLED"
             return VERIFIED, "sign-in", label
         return CAUTION, "user-circle-dashed", "UNKNOWN"
 

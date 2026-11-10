@@ -19,6 +19,8 @@ const ACTIONS = {
   data_backed_up: { label: "Data backed up", icon: "floppy-disk" },
   unknown_corrected: { label: "Unknown corrected", icon: "user-check" },
   cameras_viewed: { label: "Viewed gate cameras", icon: "video-camera" },
+  semester_started: { label: "Semester started", icon: "graduation-cap" },
+  semester_list_updated: { label: "Semester list updated", icon: "list-checks" },
   account_locked: { label: "Account locked", icon: "lock-simple", danger: true },
 };
 

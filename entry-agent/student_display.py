@@ -30,7 +30,8 @@ from PIL import Image, ImageTk
 from ui import (
     BRASS, CAUTION, COND_HEAVY, DANGER, FONT, FONT_MONO_MEDIUM, ICON_FONT, ICON_FONT_BOLD, ICON_PATH, INK,
     INK_400, INK_600, LINE, MAROON, PROMPT, SEMI_HEAVY, SURFACE, VERIFIED, WIDE_BLACK,
-    _apply_icon, _ellipsize, _icon, _rounded_rect_points, _screen_work_area,
+    _apply_icon, _ellipsize, _icon, _rounded_rect_points, _screen_work_area, claim_secondary_monitor,
+    release_monitor,
 )
 
 DESIGN_W, DESIGN_H = 1920, 1080
@@ -121,31 +122,6 @@ FACE_MESSAGE = {"spoof": "spoof", "unknown": "guard", "tap": "tap", "uncover": "
                 "not_enrolled": "not_enrolled"}
 
 
-def _secondary_monitor():
-    """(left, top, right, bottom) of a monitor other than the main one, in
-    real pixels, or None with a single screen. Windows-only - elsewhere it
-    just reports no second screen."""
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        monitors = []
-        callback_type = ctypes.WINFUNCTYPE(
-            ctypes.c_int, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM
-        )
-
-        def collect(_monitor, _dc, rect, _data):
-            r = rect.contents
-            monitors.append((r.left, r.top, r.right, r.bottom))
-            return 1
-
-        ctypes.windll.user32.EnumDisplayMonitors(None, None, callback_type(collect), 0)
-        # The main monitor is the one whose top-left corner is the origin.
-        return next((m for m in monitors if (m[0], m[1]) != (0, 0)), None)
-    except Exception:
-        return None
-
-
 class StudentDisplayWindow:
     def __init__(self, master, gate_location, direction, get_preview_frame, is_camera_down,
                  on_card_key, on_close, fps=None):
@@ -189,7 +165,8 @@ class StudentDisplayWindow:
     # ---- window placement -------------------------------------------------
 
     def _place(self):
-        monitor = _secondary_monitor()
+        # An extra monitor the exit camera's window isn't already on (ui.py).
+        monitor = self._monitor = claim_secondary_monitor()
         if monitor:
             left, top, right, bottom = monitor
             self.window.geometry(f"{right - left}x{bottom - top}+{left}+{top}")
@@ -217,6 +194,7 @@ class StudentDisplayWindow:
         if self._closed:
             return
         self._closed = True
+        release_monitor(getattr(self, "_monitor", None))
         try:
             self.window.destroy()
         except tk.TclError:

@@ -99,6 +99,26 @@ def _write_last_session_summary(config, monitor):
         pass
 
 
+# How the entrance and exit cameras are shown (ui.GateMonitorWindow.LAYOUTS) -
+# picked in the gate monitor's "Cameras & card readers" window, remembered
+# per computer in the data folder.
+LAYOUT_PATH = Path(data_file("gate_layout.json"))
+
+
+def _load_layout():
+    try:
+        return json.loads(LAYOUT_PATH.read_text(encoding="utf-8")).get("layout") or "side_by_side"
+    except (OSError, ValueError, AttributeError):
+        return "side_by_side"
+
+
+def _save_layout(layout):
+    try:
+        LAYOUT_PATH.write_text(json.dumps({"layout": layout}), encoding="utf-8")
+    except OSError:
+        pass  # a convenience - picking it again next time still works
+
+
 def _extract_image_size(response, fallback):
     """The backend returns image_size as {"width": W, "height": H} (JSON has
     no tuple type), but the UI wants a plain (width, height) pair - falls
@@ -702,6 +722,8 @@ def main():
         on_sign_out=on_sign_out,
         on_exit_camera_change=pick_exit_camera,
         on_reader_setup=reader_setup,
+        layout=_load_layout(),
+        on_layout_change=_save_layout,
     )
     monitor.set_reader_status(readers.status())
     # The exit camera chosen last time, if it's plugged in (and isn't the

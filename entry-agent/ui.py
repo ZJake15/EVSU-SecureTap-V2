@@ -410,6 +410,51 @@ def _screen_work_area(window):
     return round(window.winfo_screenwidth() * dpi), round(window.winfo_screenheight() * dpi)
 
 
+def _secondary_monitors():
+    """[(left, top, right, bottom)] of every monitor but the main one, in real
+    pixels, left to right - [] with one screen (or off Windows)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        monitors = []
+        callback_type = ctypes.WINFUNCTYPE(
+            ctypes.c_int, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM
+        )
+
+        def collect(_monitor, _dc, rect, _data):
+            r = rect.contents
+            monitors.append((r.left, r.top, r.right, r.bottom))
+            return 1
+
+        ctypes.windll.user32.EnumDisplayMonitors(None, None, callback_type(collect), 0)
+        # The main monitor is the one whose top-left corner is the origin.
+        return sorted(m for m in monitors if (m[0], m[1]) != (0, 0))
+    except Exception:
+        return []
+
+
+# The extra monitors in use by our own fullscreen windows (the student display
+# and the exit camera's window), so two of them never land on the same one.
+_CLAIMED_MONITORS = set()
+
+
+def claim_secondary_monitor(last=False):
+    """An extra monitor nobody of ours is using - the first one, or with
+    last=True the last one - marked as taken; None if there's none free. Give
+    it back with release_monitor when the window closes."""
+    free = [m for m in _secondary_monitors() if m not in _CLAIMED_MONITORS]
+    if not free:
+        return None
+    monitor = free[-1] if last else free[0]
+    _CLAIMED_MONITORS.add(monitor)
+    return monitor
+
+
+def release_monitor(monitor):
+    _CLAIMED_MONITORS.discard(monitor)
+
+
 # Everything that can land in the live log, and how it reads there: status
 # color, the tint behind a non-routine row, its icon, and its word. `sec`
 # marks the security-relevant kinds that get a colored bar and tint in the
@@ -528,6 +573,9 @@ class _Feed:
         self.m = monitor
         self.direction = direction
         self.canvas = tk.Canvas(parent, bg=CANVAS, highlightthickness=0)
+        # The small inset of the "Big + small" layout: a thinner top strip, no
+        # caption, smaller box labels (see GateMonitorWindow._layout_feeds).
+        self.compact = False
         self.get_preview_frame = get_preview_frame
         # () -> (width, height) of the camera's own frames, before zoom and
         # before shrinking for the face checks; () -> frames a second it
@@ -553,6 +601,20 @@ class _Feed:
         self._image = None
         self._cutouts_key = None
         self._cutouts = []
+
+    def reparent(self, parent, background=CANVAS):
+        """Moves this feed to another window's frame (the "Separate window"
+        layout and back): a fresh canvas there, drawn from the next frame."""
+        self.canvas.destroy()
+        self.canvas = tk.Canvas(parent, bg=background, highlightthickness=0)
+        self._image = None
+        self._cutouts_key = None
+        self.background = background
+
+    background = CANVAS  # what's behind the panel's rounded corners
+
+    def strip_height(self):
+        return round(self.m._strip_height() * (0.62 if self.compact else 1))
 
     @property
     def alert(self):
@@ -598,7 +660,7 @@ class _Feed:
 
         canvas_w, canvas_h = self.panel_size()
         rect = (0, 0, canvas_w, canvas_h)
-        strip_h = self.m._strip_height()
+        strip_h = self.strip_height()
         feed_w, feed_h = canvas_w, max(1, canvas_h - strip_h)
         self.feed_bounds = (0, strip_h, feed_w, strip_h + feed_h)
         panel = Image.new("RGB", (canvas_w, canvas_h), INK)
@@ -622,7 +684,7 @@ class _Feed:
             visible = cv2.cvtColor(resized[top:bottom, left:right], cv2.COLOR_BGR2RGB)
             panel.paste(Image.fromarray(visible), (max(0, origin_x), max(strip_h, origin_y)))
             placement = (origin_x, origin_y, img_w, img_h)
-        background = ImageColor.getrgb(CANVAS)
+        background = ImageColor.getrgb(self.background)
         for box, cutout in self.corner_cutouts(panel.size, self.m._px(self.m.VIDEO_PANEL_CORNER_RADIUS)):
             panel.paste(background, box, mask=cutout)
         return panel, rect, placement
@@ -669,17 +731,18 @@ class _Feed:
         the banner's appear/disappear timing needs no redraw call of its own."""
         m = self.m
         s = m._s
+        k = 0.62 if self.compact else 1  # the small inset's strip is thinner
         panel_x, panel_y, panel_w, _panel_h = rect
-        strip_h = m._strip_height()
+        strip_h = self.strip_height()
         cy = panel_y + strip_h / 2
-        x = panel_x + m._px(26)
+        x = panel_x + m._px(26 * k)
         alert_state = self.alert
         if alert_state:
             alert = ALERTS[alert_state["kind"]]
             glyph = _icon(alert["icon"])
             if glyph:
-                self.text(x, cy, glyph, ICON_FONT_BOLD, 36 * s["strip"] / 64, "white")
-                x += m._px(36 * s["strip"] / 64 + 16)
+                self.text(x, cy, glyph, ICON_FONT_BOLD, 36 * k * s["strip"] / 64, "white")
+                x += m._px((36 * s["strip"] / 64 + 16) * k)
             # Right side first - the time always shows, the speaker mark when
             # there's room - so the title and subtitle fit into what's left
             # (a half-width panel, with two cameras, has far less).
@@ -693,27 +756,31 @@ class _Feed:
             title = alert["title"] + (" · EXIT" if self.direction == "exit" else "")
             # The title's size steps down until it fits, then is shortened if
             # it still doesn't.
-            title_px = s["banner_title"]
-            while title_px > 14 and m._tkfont(SEMI_HEAVY, title_px).measure(title) > right_x - x - m._px(8):
+            title_px = round(s["banner_title"] * k)
+            while title_px > 12 and m._tkfont(SEMI_HEAVY, title_px).measure(title) > right_x - x - m._px(8):
                 title_px -= 2
             title = _ellipsize(m._tkfont(SEMI_HEAVY, title_px), title, right_x - x - m._px(8))
             title_id = self.text(x, cy, title, SEMI_HEAVY, title_px, "white")
             x = self.canvas.bbox(title_id)[2] + m._px(16)
             sub_font = m._tkfont(FONT, s["banner_sub"])
             sub = _ellipsize(sub_font, alert_state.get("sub") or alert["sub"], right_x - x)
-            if sub and right_x - x > m._px(40):
+            if sub and right_x - x > m._px(40) and not self.compact:
                 self.text(x, cy, sub, FONT, s["banner_sub"], "white")
             return
 
         live = not self.showing_no_camera
-        dot = m._px(10)
+        dot = m._px(10 * k)
+        word_px = 13 if self.compact else 16
         self.canvas.create_rectangle(x, cy - dot / 2, x + dot, cy + dot / 2, fill=BRASS if live else INK_400,
                                      outline="")
-        word_id = self.text(x + dot + m._px(10), cy, "LIVE" if live else "NO SIGNAL", COND_HEAVY, 16, "white")
-        x = self.canvas.bbox(word_id)[2] + m._px(12)
+        word_id = self.text(x + dot + m._px(10 * k), cy, "LIVE" if live else "NO SIGNAL", COND_HEAVY, word_px,
+                            "white")
+        x = self.canvas.bbox(word_id)[2] + m._px(12 * k)
         # Which camera this is - always named, so a guard never has to guess
         # which side of the gate a face is on.
-        lane_id = self.text(x, cy, LANE_LABELS.get(self.direction, ""), COND_HEAVY, 16, BRASS)
+        lane_id = self.text(x, cy, LANE_LABELS.get(self.direction, ""), COND_HEAVY, word_px, BRASS)
+        if self.compact:
+            return  # no room for the caption on the small inset
         caption_x = self.canvas.bbox(lane_id)[2] + m._px(16)
         caption_font = m._tkfont(FONT_MONO, 14)
         caption = _ellipsize(caption_font, self.caption, panel_x + panel_w - m._px(16) - caption_x)
@@ -725,8 +792,14 @@ class _Feed:
         panel, rect, _placement = self.compose_panel(None)
         self.show_panel(panel, rect)
         panel_x, panel_y, panel_w, panel_h = rect
-        strip_h = m._strip_height()
+        strip_h = self.strip_height()
         cx, cy = panel_x + panel_w / 2, panel_y + strip_h + (panel_h - strip_h) / 2
+        index = self.camera_index if self.camera_index is not None else 0
+        if self.compact:
+            self.text(cx, cy, "No camera", SEMI_HEAVY, 16, "white", anchor="center")
+            self.caption = f"Camera {index} · waiting for device"
+            self.draw_overlays(rect)
+            return
         t = (s["strip"] - 52) / 12  # 0 at the narrow profile, 1 at full HD
         glyph = _icon("video-camera-slash", bold=False)
         if glyph:
@@ -795,7 +868,7 @@ class _Feed:
         # The name tab: a solid color tab sitting on the box's top edge,
         # icon + label in white. Flipped inside the box if it would run up
         # into the top strip.
-        tab_px = m._s["tab"]
+        tab_px = round(m._s["tab"] * (0.7 if self.compact else 1))
         text_font = m._tkfont(FONT, tab_px, "bold")
         glyph = _icon(icon_name)
         icon_w = m._px(tab_px + 6) if glyph else 0
@@ -813,6 +886,140 @@ class _Feed:
         if glyph:
             self.text(left + pad_x, cy, glyph, ICON_FONT_BOLD, tab_px, "white")
         self.text(left + pad_x + icon_w, cy, label, FONT, tab_px, "white", weight="bold")
+
+
+class _ExitWindow:
+    """The "Separate window" layout: the exit camera in a window of its own,
+    for a gate with more than one monitor - fullscreen on the last extra
+    monitor (the student display takes the first, ui.claim_secondary_monitor),
+    or a normal window to drag there with just one screen. F11, Escape or a
+    double-click on the feed toggle fullscreen.
+
+    Beside the feed, its own live log of what happened at the exit, and the
+    exit counters in its header; the main window keeps the entrance and its
+    log. Closing it puts the exit camera back beside the entrance (main
+    window, side by side)."""
+
+    LOG_ROWS = 40
+
+    def __init__(self, monitor, on_close):
+        self.m = monitor
+        self._on_close = on_close
+        self._closed = False
+        self._rows = []  # newest first
+        self.window = ctk.CTkToplevel(monitor.window)
+        self.window.title(f"EVSU SecureTap - Exit camera - {monitor.gate_location}")
+        self.window.configure(fg_color=CANVAS)
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.window.after(250, lambda: _apply_icon(self.window))  # CTkToplevel sets its own icon first
+
+        header = ctk.CTkFrame(self.window, fg_color=MAROON, corner_radius=0, height=64)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        monitor._icon_label(header, "sign-out", 26, "white", fg_color=MAROON).pack(side="left", padx=(24, 10))
+        monitor._label(header, f"EXIT · {monitor.gate_location}", (SEMI_HEAVY, 24), "white").pack(side="left")
+        self._counts = monitor._label(header, "", (FONT_MONO_MEDIUM, 16), "white")
+        self._counts.pack(side="right", padx=24)
+        tk.Frame(self.window, bg=BRASS, height=3).pack(fill="x")
+
+        body = ctk.CTkFrame(self.window, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=16, pady=16)
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_rowconfigure(0, weight=1)
+        self.feed_area = ctk.CTkFrame(body, fg_color="transparent")
+        self.feed_area.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
+        self.feed_area.grid_rowconfigure(0, weight=1)
+        self.feed_area.grid_columnconfigure(0, weight=1)
+        log = ctk.CTkFrame(body, fg_color="transparent", width=380)
+        log.grid(row=0, column=1, sticky="ns")
+        log.pack_propagate(False)
+        monitor._label(log, "Exit log", (SEMI_BOLD, 20), INK, anchor="w").pack(fill="x")
+        self._list = ctk.CTkScrollableFrame(
+            log, fg_color=SURFACE, corner_radius=8, border_width=1, border_color=LINE,
+            scrollbar_button_color=SURFACE, scrollbar_button_hover_color=LINE,
+        )
+        self._list.pack(fill="both", expand=True, pady=(8, 0))
+        self._placeholder = monitor._label(self._list, "Exits appear here.", (FONT, 14), INK_400)
+        self._placeholder.pack(anchor="w", padx=14, pady=14)
+
+        # A card tap typed while this window has the keyboard still reaches
+        # the gate monitor's card field (same as the student display).
+        self.window.bind("<Key>", monitor._forward_card_key)
+        self.window.bind("<F11>", lambda _e: self.toggle_fullscreen())
+        self.window.bind("<Escape>", lambda _e: self.set_fullscreen(False))
+        self._monitor = claim_secondary_monitor(last=True)
+        if self._monitor:
+            left, top, right, bottom = self._monitor
+            self.window.geometry(f"{right - left}x{bottom - top}+{left}+{top}")
+            self.window.after(300, lambda: self.set_fullscreen(True))
+        else:
+            work_w, _work_h = _screen_work_area(self.window)
+            width = round(work_w * 0.55 / monitor._scale)
+            self.window.geometry(f"{width}x{round(width * 0.62)}+80+80")
+
+    def set_fullscreen(self, on):
+        if not self._closed:
+            self.window.attributes("-fullscreen", bool(on))
+
+    def toggle_fullscreen(self):
+        if not self._closed:
+            self.set_fullscreen(not self.window.attributes("-fullscreen"))
+
+    def owns(self, widget):
+        return widget is not None and not self._closed and str(widget).startswith(str(self.window))
+
+    def set_counts(self, exits, unknown, spoof):
+        self._counts.configure(text=f"EXITS {exits}  ·  UNKNOWN {unknown}  ·  SPOOF {spoof}")
+
+    def add_row(self, entry):
+        """One exit-camera or exit-reader event, newest at the top."""
+        m = self.m
+        if self._placeholder is not None:
+            self._placeholder.destroy()
+            self._placeholder = None
+        view = LOG_KINDS[entry["kind"]]
+        bg = view.get("tint", SURFACE)
+        box = tk.Frame(self._list, bg=SURFACE)
+        row = ctk.CTkFrame(box, fg_color=bg, corner_radius=0)
+        row.pack(fill="x")
+        row.grid_columnconfigure(1, weight=1)
+        ctk.CTkFrame(row, fg_color=view["color"] if view.get("sec") else bg, width=3, height=1,
+                     corner_radius=0).grid(row=0, column=0, sticky="ns")
+        text = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
+        text.grid(row=0, column=1, sticky="ew", padx=(12, 8), pady=8)
+        name_font = m._tkfont(FONT, 18, "bold")
+        meta_font = m._tkfont(FONT_MONO_MEDIUM, 13)
+        width = m._px(230)
+        m._label(text, _ellipsize(name_font, entry["name"], width), (FONT, 18, "bold"), INK, anchor="w",
+                 fg_color=bg).pack(fill="x")
+        m._label(text, _ellipsize(meta_font, m._meta(entry), width), (FONT_MONO_MEDIUM, 13), INK_600, anchor="w",
+                 fg_color=bg).pack(fill="x")
+        word = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
+        word.grid(row=0, column=2, sticky="e", padx=(4, 12))
+        m._icon_label(word, view["icon"], 15, view["color"], fg_color=bg).pack(side="left", padx=(0, 4))
+        m._label(word, entry["word"].replace("CARD · ", "").replace(" · EXIT", ""), (COND_HEAVY, 15),
+                 view["color"], fg_color=bg).pack(side="left")
+        tk.Frame(box, bg=LINE, height=max(1, m._px(1))).pack(fill="x")
+        if self._rows:
+            box.pack(fill="x", before=self._rows[0])
+        else:
+            box.pack(fill="x")
+        self._rows.insert(0, box)
+        for old in self._rows[self.LOG_ROWS:]:
+            old.destroy()
+        self._rows = self._rows[: self.LOG_ROWS]
+
+    def close(self, notify=True):
+        if self._closed:
+            return
+        self._closed = True
+        release_monitor(self._monitor)
+        try:
+            self.window.destroy()
+        except tk.TclError:
+            pass
+        if notify and self._on_close:
+            self._on_close()
 
 
 class GateMonitorWindow:
@@ -907,7 +1114,16 @@ class GateMonitorWindow:
                  officer_name="", version="", on_close=None,
                  camera_options=None, on_camera_change=None, initial_camera_index=None,
                  video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0,
-                 get_camera_size=None, get_camera_fps=None, on_exit_camera_change=None, on_reader_setup=None):
+                 get_camera_size=None, get_camera_fps=None, on_exit_camera_change=None, on_reader_setup=None,
+                 layout="side_by_side", on_layout_change=None):
+        # How the two cameras are shown once the gate has an exit camera
+        # (LAYOUTS) - picked in "Cameras & card readers", remembered by
+        # main.py through on_layout_change(layout).
+        self._layout = layout if layout in self.LAYOUTS else "side_by_side"
+        self._on_layout_change = on_layout_change
+        self._big = "entry"  # "Big + small": which camera is the big one
+        self._exit_window = None  # the "Separate window" layout's _ExitWindow, while open
+        self.exit_stats = {"unknown": 0, "spoof": 0}  # for the exit window's header
         # The entrance camera's feed - get_preview_frame, its camera zoom (the
         # frames arrive already zoomed; only for the caption), and () -> its
         # frame size / measured frame rate, also for the caption. The exit
@@ -1301,16 +1517,86 @@ class GateMonitorWindow:
         self._feeds["entry"] = _Feed(self, self._video_area, "entry", **self._entry_feed_args)
         self._layout_feeds()
 
+    # How the entrance and exit cameras are shown (once the gate has an exit
+    # camera) - the choice in "Cameras & card readers".
+    LAYOUTS = {
+        "side_by_side": "Side by side",
+        "big_small": "Big + small - click the small one to swap",
+        "separate": "Separate window - the exit camera on another monitor",
+    }
+
     def _layout_feeds(self):
+        """Arranges the feeds for the current layout: one camera fills the
+        area; "side_by_side" halves it; "big_small" shows one large with the
+        other as a small inset in its corner (a click on the inset swaps
+        them); "separate" moves the exit camera into its own window
+        (_ExitWindow) and leaves the entrance here."""
         gap = self._s["col_gap"] // 2
-        two = "exit" in self._feeds
-        for column, direction in enumerate(("entry", "exit")):
-            self._video_area.grid_columnconfigure(column, weight=1 if (column == 0 or two) else 0,
-                                                  uniform="feeds" if two else "")
-            feed = self._feeds.get(direction)
+        entry, exit_ = self._feeds.get("entry"), self._feeds.get("exit")
+        layout = self._layout if exit_ is not None else "single"
+
+        if layout == "separate" and self._exit_window is None:
+            self._exit_window = _ExitWindow(self, on_close=self._exit_window_closed)
+            exit_.reparent(self._exit_window.feed_area)
+            self._refresh_exit_counts()
+        elif layout != "separate" and self._exit_window is not None:
+            self._exit_window.close(notify=False)
+            self._exit_window = None
+        if exit_ is not None and layout != "separate" and exit_.canvas.master is not self._video_area:
+            exit_.reparent(self._video_area)
+
+        for feed in (entry, exit_):
             if feed is not None:
-                pad = (0, gap) if two and column == 0 else (gap, 0) if two else (0, 0)
-                feed.canvas.grid(row=0, column=column, sticky="nsew", padx=pad)
+                feed.canvas.grid_forget()
+                feed.canvas.place_forget()
+                feed.compact = False
+                feed.canvas.bind("<Button-1>", lambda _e, d=feed.direction: self._feed_clicked(d))
+        for column in (0, 1):
+            self._video_area.grid_columnconfigure(column, weight=1 if column == 0 else 0, uniform="")
+
+        if layout == "side_by_side":
+            for column, feed in enumerate((entry, exit_)):
+                self._video_area.grid_columnconfigure(column, weight=1, uniform="feeds")
+                feed.canvas.grid(row=0, column=column, sticky="nsew", padx=(0, gap) if column == 0 else (gap, 0))
+        elif layout == "big_small":
+            big = self._feeds[self._big]
+            small = exit_ if big is entry else entry
+            big.canvas.grid(row=0, column=0, sticky="nsew")
+            small.compact = True
+            pad = self._px(14)
+            small.canvas.place(relx=1.0, rely=1.0, x=-pad, y=-pad, anchor="se", relwidth=0.34, relheight=0.34)
+            small.canvas.tk.call("raise", small.canvas._w)  # above the big one (Canvas.lift raises items)
+        else:  # one camera here: "single", or "separate" with the exit camera in its own window
+            entry.canvas.grid(row=0, column=0, sticky="nsew")
+            if layout == "separate":
+                exit_.canvas.grid(row=0, column=0, sticky="nsew")
+                exit_.canvas.bind("<Double-Button-1>", lambda _e: self._exit_window.toggle_fullscreen())
+
+    def _feed_clicked(self, direction):
+        if self._layout == "big_small" and "exit" in self._feeds and direction != self._big:
+            self._big = direction  # the small inset was clicked - swap
+            self._layout_feeds()
+
+    def _set_layout(self, layout):
+        if layout not in self.LAYOUTS or layout == self._layout:
+            return
+        self._layout = layout
+        self._layout_feeds()
+        if self._on_layout_change:
+            self._on_layout_change(layout)
+
+    def _exit_window_closed(self):
+        """The guard closed the exit camera's window - the exit camera comes
+        back beside the entrance."""
+        self._exit_window = None
+        self._layout = "side_by_side"
+        self._layout_feeds()
+        if self._on_layout_change:
+            self._on_layout_change(self._layout)
+
+    def _refresh_exit_counts(self):
+        if self._exit_window is not None:
+            self._exit_window.set_counts(self.stats["exits"], self.exit_stats["unknown"], self.exit_stats["spoof"])
 
     def show_exit_feed(self, get_preview_frame, get_camera_size=None, get_camera_fps=None, camera_zoom=1.0,
                        camera_index=None):
@@ -1326,6 +1612,9 @@ class GateMonitorWindow:
     def hide_exit_feed(self):
         feed = self._feeds.pop("exit", None)
         self._exit_camera_index = None
+        if self._exit_window is not None:
+            self._exit_window.close(notify=False)
+            self._exit_window = None
         if feed is not None:
             feed.canvas.destroy()
             self._layout_feeds()
@@ -1655,6 +1944,17 @@ class GateMonitorWindow:
             exit_menu.configure(state="disabled")
         camera_note = self._label(body, "", (FONT, 13, "bold"), DANGER, anchor="w", justify="left", wraplength=470)
         camera_note.pack(fill="x", pady=(0, 10))
+
+        # How the two cameras are shown - remembered on this computer.
+        self._label(body, "LAYOUT", (COND_BOLD, 14), INK_600, anchor="w").pack(fill="x")
+        layout_names = {label: key for key, label in self.LAYOUTS.items()}
+        layout_menu = ctk.CTkOptionMenu(body, values=list(layout_names),
+                                        command=lambda label: self._set_layout(layout_names[label]), **menu_style)
+        layout_menu.set(self.LAYOUTS[self._layout])
+        layout_menu.pack(fill="x", pady=(4, 4))
+        self._label(body, "Used once the gate has an exit camera. A separate window opens fullscreen on another "
+                          "monitor when there is one (F11 or a double-click switches fullscreen off).",
+                    (FONT, 13), INK_600, anchor="w", justify="left", wraplength=470).pack(fill="x", pady=(0, 10))
 
         tk.Frame(body, bg=LINE, height=max(1, self._px(1))).pack(fill="x", pady=(4, 14))
         self._label(body, "EXIT CARD READER", (COND_BOLD, 14), INK_600, anchor="w").pack(fill="x")
@@ -2216,7 +2516,10 @@ class GateMonitorWindow:
             focused = self.window.focus_get()
         except (KeyError, tk.TclError):
             focused = None
-        student_has_focus = self._student is not None and self._student.owns(focused)
+        # Same for the exit camera's own window (it forwards taps too) -
+        # pulling focus back would raise the gate monitor over it.
+        student_has_focus = (self._student is not None and self._student.owns(focused)) or (
+            self._exit_window is not None and self._exit_window.owns(focused))
         # The sign-in window takes typing too - and catches a card tap
         # itself (see _KeyBurst).
         dialog_has_focus = (self._sign_in_dialog is not None and focused is not None
@@ -2326,7 +2629,7 @@ class GateMonitorWindow:
         self._push_log_row(
             kind=kind, name=name, id_text=profile.get("student_id") or "—", time=timestamp,
             word=word or strip_word, feature_word=feature_word or strip_word, photo_bytes=profile.get("photo_bytes"),
-            initials_seed=name, extra=extra,
+            initials_seed=name, extra=extra, direction=direction.lower(),
         )
 
     def _render_card_failure(self, reason, reason_code):
@@ -2434,6 +2737,8 @@ class GateMonitorWindow:
                 continue
             self._seen_log_ids.add(log_id)
             item.setdefault("direction", direction)
+            if direction == "exit" and not item["matched"] and not item.get("refused_not_enrolled"):
+                self.exit_stats["spoof" if item.get("spoof_suspected") else "unknown"] += 1
             if item.get("spoof_suspected"):
                 self.stats["spoof"] += 1
                 # Still counted and logged either way - the Settings page's
@@ -2468,6 +2773,7 @@ class GateMonitorWindow:
             self._push_log_entry(item)
 
         self._refresh_stat_labels()
+        self._refresh_exit_counts()
         if self._student is not None and direction == "entry":
             self._student.update_recognitions(recognitions, image_size)
 
@@ -2523,12 +2829,20 @@ class GateMonitorWindow:
     # ---- live log ---------------------------------------------------------
 
     def _push_log_row(self, *, kind, name, id_text, time, word=None, feature_word=None,
-                      conf=None, photo_bytes=None, initials_seed=None, extra="", log_id=None):
+                      conf=None, photo_bytes=None, initials_seed=None, extra="", log_id=None, direction="entry"):
         """The one way anything reaches the live log. Both credentials go
         through here - a face event from the scan loop and an NFC tap render
         as the same kind of row, differing only in their kind - so the log
         is a single chronological record of the gate rather than two
-        half-stories."""
+        half-stories. With the exit camera in its own window ("Separate
+        window" layout), what happens at the exit goes to that window's log."""
+        if direction == "exit" and self._exit_window is not None:
+            self._exit_window.add_row({
+                "kind": kind, "name": name, "id_text": id_text, "time": time, "conf": conf, "extra": extra,
+                "word": word or LOG_KINDS[kind]["word"],
+            })
+            self._refresh_exit_counts()
+            return
         previous = self._log_entries[0] if self._log_entries else None
         self._log_entries.insert(0, {
             "kind": kind,
@@ -2588,7 +2902,7 @@ class GateMonitorWindow:
             self._push_log_row(
                 kind="spoof", name="Possible spoof", id_text="Liveness check failed", time=timestamp,
                 word="SPOOF · EXIT" if leaving else None, feature_word=f"SPOOF SUSPECTED{at_exit}",
-                photo_bytes=item.get("photo_bytes"), extra=extra,
+                photo_bytes=item.get("photo_bytes"), extra=extra, direction=item.get("direction", "entry"),
             )
         elif item.get("occlusion_suspected"):
             self._push_log_row(
@@ -2614,13 +2928,14 @@ class GateMonitorWindow:
                 id_text=item.get("student_id") or "—", time=timestamp,
                 word=word, feature_word=feature_word,
                 conf=item.get("confidence"), photo_bytes=item.get("photo_bytes"),
-                initials_seed=item["name"], extra=extra,
+                initials_seed=item["name"], extra=extra, direction=item.get("direction", "entry"),
             )
         else:
             self._push_log_row(
                 kind="unknown", name="Unknown", id_text="No ID on file", time=timestamp,
                 word="UNKNOWN · EXIT" if leaving else None, feature_word=f"UNKNOWN{at_exit}",
                 photo_bytes=item.get("photo_bytes"), extra=extra, log_id=item.get("log_id"),
+                direction=item.get("direction", "entry"),
             )
 
     def _pass_kind(self, way, not_enrolled, pattern_flag, extra, card=False):
@@ -2848,13 +3163,15 @@ class GateMonitorWindow:
                 # Let in, but not on this semester's enrolled list - caution,
                 # so the guard can check them.
                 return CAUTION, "warning", f"{label} · NOT ENROLLED"
-            return VERIFIED, "sign-in", label
+            return VERIFIED, "sign-out" if item.get("direction") == "exit" else "sign-in", label
         return CAUTION, "user-circle-dashed", "UNKNOWN"
 
     def _handle_close(self):
         self._closed = True
         self._close_sign_in_dialog()
         self._close_setup_dialog()
+        if self._exit_window is not None:
+            self._exit_window.close(notify=False)
         if self._student is not None:
             self._student.close()  # it's a child window - it goes when the monitor does
         if self._on_close:

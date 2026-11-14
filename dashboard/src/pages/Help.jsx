@@ -102,6 +102,7 @@ const GUIDES = [
       "A gate with an exit camera shows ENTRANCE and EXIT side by side. Exits never stop anyone; an unknown or spoof at the exit still sounds its alarm.",
       "NO ENTRY TODAY or NO EXIT YET on a live-log row: the person's day doesn't add up - usually a missed scan. Let them through and ask.",
       "To set up the cameras or the exit card reader: Cameras & card readers in the status bar. For the reader, click Set exit reader, then tap any card on the exit reader.",
+      "Layout (same window): Side by side, Big + small (click the small camera to swap), or Separate window - the exit camera with its own exit log, fullscreen on a second monitor (F11 switches fullscreen; closing it puts the exit camera back side by side).",
       "If the camera fails, students can still tap their school ID card on the reader.",
     ],
   },

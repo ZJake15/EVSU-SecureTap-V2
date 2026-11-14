@@ -441,7 +441,16 @@ is chosen in the gate monitor's **Cameras & card readers** window (status bar);
 until one is, the gate records entries only, exactly as before. The choice is
 remembered by camera name (`camera_choice.json`: `name` and `exit_name`).
 
-- **Gate monitor.** The two feeds sit side by side, each labelled ENTRANCE /
+- **Layout** (same window, remembered per computer in `gate_layout.json`):
+  **Side by side**; **Big + small** - one camera large, the other a small inset
+  in its corner (thinner strip, no caption), a click on the inset swaps them;
+  or **Separate window** - the exit camera in its own window with its own exit
+  log and exit counters (`_ExitWindow`), fullscreen on the last extra monitor
+  (the student display takes the first free one, so with three screens each
+  gets its own; F11 / Escape / double-click toggle fullscreen); exit events
+  then go to that window's log instead of the main one. Closing it puts the
+  exit camera back side by side.
+- **Gate monitor.** The two feeds sit side by side (or as the layout says), each labelled ENTRANCE /
   EXIT in its top strip; the header pill reads ENTRY + EXIT; the stats row has
   an EXITS counter. Each camera has its own scan loop, its own backend
   connection, and its own Cameras-page stream (`entry-agent/main.py`). There is

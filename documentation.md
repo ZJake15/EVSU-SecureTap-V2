@@ -1575,6 +1575,14 @@ owns the Tk root, so closing it ends the process.
     a card tap's result takes it over for 6 seconds — "Entry recorded", "This
     card is not registered", "This card is no longer active" (deactivated), or
     "Please tap your ID card again" for a misread or a server problem. With no camera it shows "Please tap your ID card".
+    **Greeting:** someone just recognized (a new entry, by face or by card)
+    gets their registered photo and **full name** on a white card in the
+    message bar for 3 seconds (`GREETING_SECONDS`) - up to 4 side by side
+    (`GREETING_SLOTS`), anyone after that as soon as a spot frees up; green
+    with "Entry recorded" beside one or two cards. If someone in view needs
+    something done (spoof, unknown, covered, tap, not enrolled), that message
+    keeps its colour and the right side while the cards share the left. A
+    refused (not enrolled) student gets no card.
     It runs no scanning of its own — the gate monitor hands it every
     `/api/identify` result and card tap, so the two screens never disagree. With
     a second monitor connected (a TV at the gate) it opens fullscreen there;

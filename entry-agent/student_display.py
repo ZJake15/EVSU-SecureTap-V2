@@ -30,8 +30,8 @@ from PIL import Image, ImageTk
 from ui import (
     BRASS, CAUTION, COND_HEAVY, DANGER, FONT, FONT_MONO_MEDIUM, ICON_FONT, ICON_FONT_BOLD, ICON_PATH, INK,
     INK_400, INK_600, LINE, MAROON, PROMPT, SEMI_HEAVY, SURFACE, VERIFIED, WIDE_BLACK,
-    _apply_icon, _ellipsize, _icon, _rounded_rect_points, _screen_work_area, claim_secondary_monitor,
-    release_monitor,
+    _apply_icon, _avatar_image, _ellipsize, _icon, _initials_avatar, _round_corners, _rounded_rect_points,
+    _screen_work_area, claim_secondary_monitor, release_monitor,
 )
 
 DESIGN_W, DESIGN_H = 1920, 1080
@@ -89,6 +89,15 @@ MESSAGES = {
 # most needs something done - highest first.
 MESSAGE_PRIORITY = ("spoof", "guard", "not_enrolled", "tap", "uncover", "welcome")
 
+# Someone just recognized (face or card) gets their registered photo and full
+# name in the message bar for this long - up to GREETING_SLOTS people side by
+# side; anyone after that waits for a free spot.
+GREETING_SECONDS = 3.0
+GREETING_SLOTS = 4
+# Messages that still own the bar's colour and right side while greetings
+# show - someone in view needs something done.
+URGENT_MESSAGES = {"spoof", "guard", "not_enrolled", "tap", "uncover", "card", "card_inactive", "card_retry"}
+
 
 def first_name(full_name):
     """First name only, for a screen anyone at the gate can read. Handles
@@ -139,6 +148,12 @@ class StudentDisplayWindow:
         self._message = "ok"
         self._message_at = 0.0
         self._card_message = None  # (key, monotonic time) while a tap's result shows
+        # Photo + name greetings (GREETING_SECONDS each): on screen, waiting
+        # for a free spot, and which recognitions have already had one.
+        self._greetings = []
+        self._waiting = []
+        self._greeted = set()
+        self._photos = {}  # (greeting key, size) -> PhotoImage
         self._fonts = {}
         self._seal_cache = (None, None)  # (size, PhotoImage)
         self._frame_image = None  # keeps the current PhotoImage alive
@@ -220,6 +235,11 @@ class StudentDisplayWindow:
     def update_recognitions(self, recognitions, image_size):
         self._recognitions = recognitions
         self._image_size = image_size
+        for item in recognitions:
+            # A newly recorded entry (the same log_id the gate monitor's live
+            # log goes by) - not every frame the person is still in view.
+            if face_kind(item) == "entry" and item.get("log_id") and not item.get("deduped"):
+                self.greet(f"face-{item['log_id']}", item.get("name"), item.get("photo_bytes"))
         kinds = {FACE_MESSAGE.get(face_kind(item)) for item in recognitions}
         key = next((k for k in MESSAGE_PRIORITY if k in kinds), "ok")
         now = time.monotonic()
@@ -230,15 +250,40 @@ class StudentDisplayWindow:
                 self._message_at = now
             self._message = key
 
-    def show_card_result(self, outcome):
+    def show_card_result(self, outcome, profile=None):
         """outcome: "accepted", "queued" (offline, will sync), "rejected"
         (not registered), "deactivated", or "error" (misread or a server
-        problem - worth tapping again)."""
+        problem - worth tapping again). profile: the accepted card's owner
+        (name, photo_bytes) - greeted like a recognized face."""
         key = {"rejected": "card", "deactivated": "card_inactive", "error": "card_retry",
                "not_enrolled": "not_enrolled"}.get(outcome)
         if key is None:
             key = "welcome"
         self._card_message = (key, time.monotonic())
+        if outcome == "accepted" and profile and profile.get("name"):
+            self.greet(f"card-{time.monotonic()}", profile["name"], profile.get("photo_bytes"))
+
+    def greet(self, key, name, photo_bytes):
+        """Shows `name` and their photo in the message bar for GREETING_SECONDS
+        (or as soon as one of the GREETING_SLOTS spots is free)."""
+        if key in self._greeted or not name:
+            return
+        self._greeted.add(key)
+        if len(self._greeted) > 500:
+            self._greeted = {key}
+        greeting = {"key": key, "name": name, "photo_bytes": photo_bytes, "until": None}
+        self._waiting.append(greeting)
+        self._advance_greetings()
+
+    def _advance_greetings(self, now=None):
+        now = time.monotonic() if now is None else now
+        self._greetings = [g for g in self._greetings if g["until"] > now]
+        while self._waiting and len(self._greetings) < GREETING_SLOTS:
+            greeting = self._waiting.pop(0)
+            greeting["until"] = now + GREETING_SECONDS
+            self._greetings.append(greeting)
+        live = {g["key"] for g in self._greetings}
+        self._photos = {k: v for k, v in self._photos.items() if k[0] in live}
 
     # ---- drawing --------------------------------------------------------
 
@@ -430,7 +475,12 @@ class StudentDisplayWindow:
 
     def _draw_message_bar(self, camera_down):
         k = self._k
-        bg, fg, icon_name, title, sub = MESSAGES[self._current_message(camera_down)]
+        message = self._current_message(camera_down)
+        self._advance_greetings()
+        if self._greetings:
+            self._draw_greetings(message)
+            return
+        bg, fg, icon_name, title, sub = MESSAGES[message]
         self.canvas.create_rectangle(self._x(0), self._y(VIDEO_BOTTOM), self._x(DESIGN_W), self._y(DESIGN_H),
                                      fill=bg, outline="")
         mid = self._y(VIDEO_BOTTOM + BAR_H / 2)
@@ -442,3 +492,52 @@ class StudentDisplayWindow:
         room = self._x(DESIGN_W - PAD) - text_x
         self._text(text_x, mid - 17 * k, _ellipsize(self._font(SEMI_HEAVY, 48), title, room), SEMI_HEAVY, 48, fg)
         self._text(text_x, mid + 25 * k, _ellipsize(self._font(FONT, 24), sub, room), FONT, 24, fg)
+
+    def _draw_greetings(self, message):
+        """The message bar while someone was just recognized: a white card per
+        person (up to GREETING_SLOTS) with their registered photo and full
+        name. With nothing urgent it's green with "Entry recorded" beside the
+        cards; if someone in view needs something done (a spoof, an Unknown,
+        a covered face...), that message keeps its colour and the right side."""
+        k = self._k
+        urgent = message in URGENT_MESSAGES
+        bg, fg, _icon_name, title, sub = MESSAGES[message] if urgent else MESSAGES["welcome"]
+        c = self.canvas
+        c.create_rectangle(self._x(0), self._y(VIDEO_BOTTOM), self._x(DESIGN_W), self._y(DESIGN_H), fill=bg,
+                           outline="")
+        count = len(self._greetings)
+        gap, card_h = 18, BAR_H - 24
+        text_room = 720 if urgent else (420 if count <= 2 else 0)
+        cards_w = DESIGN_W - 2 * PAD - (text_room + gap if text_room else 0)
+        card_w = min(620, (cards_w - gap * (count - 1)) / count)
+        top = VIDEO_BOTTOM + 12
+        photo_px = card_h - 16
+        x = PAD
+        for greeting in self._greetings:
+            c.create_polygon(_rounded_rect_points(self._x(x), self._y(top), self._x(x + card_w), self._y(top + card_h),
+                                                  10 * k), fill=SURFACE, outline="")
+            photo = self._greeting_photo(greeting, max(1, round(photo_px * k)))
+            if photo is not None:
+                c.create_image(self._x(x + 8), self._y(top + 8), image=photo, anchor="nw")
+            text_x = x + 8 + photo_px + 18
+            room = (x + card_w - 16 - text_x) * k
+            self._text(self._x(text_x), self._y(top + card_h / 2 - 22), "WELCOME", COND_HEAVY, 20, VERIFIED)
+            self._text(self._x(text_x), self._y(top + card_h / 2 + 14),
+                       _ellipsize(self._font(SEMI_HEAVY, 34), greeting["name"], room), SEMI_HEAVY, 34, INK)
+            x += card_w + gap
+        if text_room:
+            room = (DESIGN_W - PAD - x) * k
+            mid = self._y(VIDEO_BOTTOM + BAR_H / 2)
+            title_px = 34 if urgent else 44  # an urgent message is longer, and must be read whole
+            self._text(self._x(x + 8), mid - 17 * k, _ellipsize(self._font(SEMI_HEAVY, title_px), title, room),
+                       SEMI_HEAVY, title_px, fg)
+            self._text(self._x(x + 8), mid + 25 * k, _ellipsize(self._font(FONT, 24), sub, room), FONT, 24, fg)
+
+    def _greeting_photo(self, greeting, size):
+        """Their registered photo as a square of `size` real pixels (their
+        initials on a tile when there's none) - made once per size."""
+        key = (greeting["key"], size)
+        if key not in self._photos:
+            image = _avatar_image(greeting.get("photo_bytes"), size) or _initials_avatar(greeting["name"], size)
+            self._photos[key] = ImageTk.PhotoImage(_round_corners(image, max(1, round(6 * self._k))))
+        return self._photos[key]

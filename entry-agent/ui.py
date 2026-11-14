@@ -2632,7 +2632,8 @@ class GateMonitorWindow:
         self.card_right.grid()
         self._schedule_card_reset()
         if self._student is not None and direction == "ENTRY":
-            self._student.show_card_result("accepted")
+            # Their photo and full name, briefly, as for a recognized face.
+            self._student.show_card_result("accepted", profile)
 
         self._push_log_row(
             kind=kind, name=name, id_text=profile.get("student_id") or "—", time=timestamp,

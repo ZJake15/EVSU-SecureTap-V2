@@ -488,6 +488,11 @@ def handle_tap(config, api_client, offline_queue, ui, nfc_id, direction=lanes.EN
                 status = result.get("gate_sign_in") or {}
                 ui.set_gate_sign_in(status)
                 ui.show_staff_signed_in((status.get("on_duty") or {}).get("name") or "Guard")
+            elif result.get("face_needed"):
+                # Settings: "Card, then face" - the sign-in window now asks
+                # for the card owner's face (face_sign_in_loop).
+                ui.show_card_status("")
+                ui.ask_for_face(result.get("name") or "Guard", result.get("pending"))
             else:
                 ui.show_card_failure(result.get("reason") or "Staff ID card.", result.get("reason_code"))
             return
@@ -519,6 +524,43 @@ def handle_sign_in(config, api_client, ui, username, password):
         return
     ui.set_gate_sign_in(status)
     ui.show_sign_in_result(True, None)
+
+
+FACE_SIGN_IN_PACE_SECONDS = 0.7
+
+
+def face_sign_in_loop(config, api_client, camera, ui, stop, pending=None):
+    """The sign-in window's face scan (Settings -> "Sign in with face
+    scan"), off the Tk thread: a frame from the entrance camera goes to the
+    backend about every FACE_SIGN_IN_PACE_SECONDS until it signs the guard
+    in, says to stop, or the window closes (stop is set)."""
+    while not stop.is_set():
+        try:
+            image_bytes, _size = camera.capture_jpeg()
+        except RuntimeError:
+            ui.show_face_sign_in({"reason": "Waiting for the camera…", "reason_code": "no_camera"})
+            stop.wait(1.0)
+            continue
+        try:
+            result = api_client.gate_face_sign_in(config.gate_location, image_bytes, pending)
+        except requests.exceptions.HTTPError as exc:
+            result = {"reason": _describe_http_error(exc.response), "reason_code": "server_error"}
+        except requests.RequestException:
+            result = {"reason": "Can't reach the backend - still trying…", "reason_code": "offline"}
+        except Exception:
+            traceback.print_exc()
+            result = {"reason": "Something went wrong - still trying…", "reason_code": "server_error"}
+        if stop.is_set():
+            return
+        if result.get("success"):
+            status = result.get("gate_sign_in") or {}
+            ui.set_gate_sign_in(status)
+            ui.show_staff_signed_in(result.get("name") or (status.get("on_duty") or {}).get("name") or "Guard")
+            return
+        ui.show_face_sign_in(result)
+        if result.get("reason_code") in ("card_first", "face_off"):
+            return  # a new card tap (or the setting back on) starts it again
+        stop.wait(FACE_SIGN_IN_PACE_SECONDS)
 
 
 def handle_sign_out(config, api_client, ui, shift_id):
@@ -691,6 +733,21 @@ def main():
     def on_sign_out(shift_id):
         threading.Thread(target=handle_sign_out, args=(config, api_client, monitor, shift_id), daemon=True).start()
 
+    # The sign-in window's face scan - one at a time, on its own connection
+    # so it never waits behind the scan loop's frames.
+    face_scan = {"stop": None}
+    face_api = ApiClient(config.api_base_url, config.service_token)
+
+    def on_face_scan(start, pending=None):
+        if face_scan["stop"] is not None:
+            face_scan["stop"].set()
+            face_scan["stop"] = None
+        if start:
+            stop = threading.Event()
+            face_scan["stop"] = stop
+            threading.Thread(target=face_sign_in_loop, args=(config, face_api, camera, monitor, stop, pending),
+                             daemon=True).start()
+
     def on_close():
         # The monitor owns the root window, so closing it ends the process -
         # stop the scan thread and release the camera on the way out.
@@ -728,6 +785,7 @@ def main():
         on_reader_setup=reader_setup,
         layout=_load_layout(),
         on_layout_change=_save_layout,
+        on_face_scan=on_face_scan,
     )
     monitor.set_reader_status(readers.status())
     # The exit camera chosen last time, if it's plugged in (and isn't the

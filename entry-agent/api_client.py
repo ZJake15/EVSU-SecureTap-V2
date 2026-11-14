@@ -80,6 +80,24 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def gate_face_sign_in(self, gate_location, image_bytes, pending=None):
+        """One frame from the sign-in window's face scan. Returns {"success":
+        True, "name", "gate_sign_in"} once the guard is signed in, else
+        {"success": False, "reason", "reason_code"}. pending: the step a
+        staff card tap started ("Card, then face")."""
+        data = {"gate_location": gate_location}
+        if pending:
+            data["pending"] = pending
+        response = self.session.post(
+            f"{self.base_url}/gate/face-sign-in",
+            headers={"X-Service-Token": self.service_token},
+            data=data,
+            files={"image": ("frame.jpg", image_bytes, "image/jpeg")},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def gate_sign_out(self, gate_location, shift_id=None, reason="signed_out", timeout=None):
         """Ends the shift at this gate (shift_id, or whatever is open).
         reason: signed_out, gate_closed or gate_reopened. Returns the new

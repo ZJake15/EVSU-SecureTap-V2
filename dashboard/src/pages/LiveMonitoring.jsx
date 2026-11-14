@@ -8,6 +8,13 @@ const POLL_INTERVAL_MS = 1000;
 // Who's guarding each gate changes rarely - a slower poll than the feed.
 const DUTY_POLL_INTERVAL_MS = 10000;
 const ROLE_LABELS = { security_officer: "Security Officer", saso: "SASO", admin: "Admin" };
+// How the guard on duty signed in at the gate monitor (GateShift.Method).
+const SIGN_IN_METHODS = {
+  password: "password",
+  card: "staff ID card",
+  face: "face scan",
+  card_face: "staff ID card + face",
+};
 const MAX_EVENTS_SHOWN = 500;
 
 const TABLE_COLS = "36px minmax(0,2.4fr) 110px 110px minmax(0,1.5fr) 56px minmax(0,84px)";
@@ -291,7 +298,7 @@ function GateDutyCard({ gate }) {
           <span className="truncate text-lg font-bold leading-tight">{duty.name}</span>
           <span className="text-xs text-ink-600">
             {ROLE_LABELS[duty.role] || "Staff"} &middot; since {shortTime(duty.since)} &middot; signed in with{" "}
-            {duty.method === "card" ? "staff ID card" : "password"}
+            {SIGN_IN_METHODS[duty.method] || "password"}
           </span>
         </div>
       ) : (

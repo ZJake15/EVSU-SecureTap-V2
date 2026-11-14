@@ -9,6 +9,7 @@ const emptyForm = {
   role: "security_officer",
   assigned_gate_location: "",
   staff_card_id: "",
+  staff_record_id: "",
   password: "",
 };
 
@@ -31,6 +32,22 @@ function extractErrorMessage(err) {
   const text = Array.isArray(messages) ? messages[0] : messages;
   if (!text) return "Could not save this account. Check the fields and try again.";
   return field ? `${field}: ${text}` : text;
+}
+
+// The linked staff record, and whether it can sign them in by face yet.
+function StaffRecordLine({ record }) {
+  const ready = record.photos > 0 && record.is_active;
+  const why = !record.is_active ? "record deactivated" : record.photos > 0 ? null : "no face photos yet";
+  return (
+    <p className={`-mt-s2 flex items-center gap-s1 text-sm ${ready ? "text-verified" : "text-caution"}`}>
+      <Icon name={ready ? "check-circle" : "warning"} bold size={14} />
+      <span className="font-bold">{record.name}</span>
+      <span className="text-ink-600">
+        &middot; {record.photos} face photo{record.photos === 1 ? "" : "s"}
+        {why ? ` · ${why}` : ""}
+      </span>
+    </p>
+  );
 }
 
 export default function AccountManagement() {
@@ -105,6 +122,7 @@ export default function AccountManagement() {
       role: account.role,
       assigned_gate_location: account.assigned_gate_location || "",
       staff_card_id: account.staff_card_id || "",
+      staff_record_id: account.staff_record?.id_number || "",
       password: "",
     });
   };
@@ -298,6 +316,22 @@ export default function AccountManagement() {
               className="input font-mono"
             />
           </Field>
+
+          <Field
+            label="Staff record for face sign-in (optional)"
+            hint="Their employee ID in User Management. Its face photos let them sign in at the gate monitor by looking at the camera, when Settings allows it. Leave blank for no face sign-in."
+          >
+            <input
+              value={form.staff_record_id}
+              onChange={handleChange("staff_record_id")}
+              placeholder="Employee ID"
+              autoComplete="off"
+              className="input font-mono"
+            />
+          </Field>
+          {editingAccount?.staff_record && editingAccount.staff_record.id_number === form.staff_record_id.trim() && (
+            <StaffRecordLine record={editingAccount.staff_record} />
+          )}
 
           {formError && <Notice tone="danger">{formError}</Notice>}
 

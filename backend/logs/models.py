@@ -232,6 +232,10 @@ class GateShift(models.Model):
     class Method(models.TextChoices):
         PASSWORD = "password", "Password"
         CARD = "card", "Staff ID card"
+        # Settings -> "Sign in with face scan" (logs/gate_shifts.py): by face
+        # alone, or the card tap then the face.
+        FACE = "face", "Face scan"
+        CARD_FACE = "card_face", "Staff ID card + face"
 
     class EndReason(models.TextChoices):
         SIGNED_OUT = "signed_out", "Signed out"

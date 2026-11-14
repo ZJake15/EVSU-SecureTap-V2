@@ -239,6 +239,13 @@ def update(changes, actor, confirmed=False):
         and merged["frames_must_agree"] > merged["frames_considered"]
     ):
         errors["frames_must_agree"] = "Can't be more than the number of frames counted (Out of the last)."
+    # Guards must still have a way to sign in (logs/gate_shifts.py).
+    sign_in_ways = ("gate_signin_password", "gate_signin_card", "gate_signin_face")
+    if merged["gate_sign_in_enabled"] and not any(merged[key] for key in sign_in_ways):
+        errors[next((key for key in sign_in_ways if key in changes), "gate_signin_password")] = (
+            "Keep at least one way to sign in on - password, staff ID card or face - or switch off "
+            "\"Guards sign in at the gate monitor\"."
+        )
     if errors:
         raise ValidationFailed(errors)
 

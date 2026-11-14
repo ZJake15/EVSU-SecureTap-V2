@@ -546,12 +546,38 @@ DEFINITIONS = [
     ),
     SettingDef(
         "gate_sign_in_enabled", "security", "Guards sign in at the gate monitor",
-        "The guard on duty signs in at the gate monitor - with their password, or by tapping their own staff "
-        "ID card (set on the Accounts page) - so every entry shows who was on duty. The gate keeps scanning "
+        "The guard on duty signs in at the gate monitor - with their password, their own staff ID card or a "
+        "face scan, whichever ways are on below - so every entry shows who was on duty. The gate keeps scanning "
         "when nobody is signed in; those entries are marked Unattended.",
         BOOL, True,
         note="On by default: the gate monitor asks for a guard whenever nobody is on duty. A Security Officer "
              "can sign in only at their assigned gate; an Admin or SASO at any gate.",
+    ),
+    # How a guard may sign in (logs/gate_shifts.py) - at least one stays on
+    # while gate sign-in is on (store.update checks).
+    SettingDef(
+        "gate_signin_password", "security", "Sign in with password",
+        "The guard types their username and password in the gate monitor's sign-in window.",
+        BOOL, True, depends_on="gate_sign_in_enabled",
+    ),
+    SettingDef(
+        "gate_signin_card", "security", "Sign in with staff ID card",
+        "The guard taps their own staff ID card (set on the Accounts page) on the gate's reader.",
+        BOOL, True, depends_on="gate_sign_in_enabled",
+    ),
+    SettingDef(
+        "gate_signin_face", "security", "Sign in with face scan",
+        "The guard looks at the gate's entrance camera in the sign-in window. Needs their account linked to their "
+        "staff record (Accounts page), whose face photos are used - and passes the fake-face check like everyone.",
+        BOOL, False, depends_on="gate_sign_in_enabled",
+    ),
+    SettingDef(
+        "gate_signin_rule", "security", "With both card and face on",
+        "Whether the guard needs both - the card tap, then the face, which must be the card owner's - or either "
+        "one alone.",
+        CHOICE, "both", choices=(("both", "Card, then face"), ("either", "Card or face")),
+        depends_on="gate_signin_face",
+        note="Card, then face stops a borrowed card from signing someone else in.",
     ),
     SettingDef(
         "gate_shift_hours", "security", "End a shift after",

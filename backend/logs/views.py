@@ -204,6 +204,9 @@ class GateSignInView(APIView):
         if not gate_shifts.enabled():
             return Response({"detail": "Gate sign-in is switched off on the Settings page."},
                             status=http_status.HTTP_400_BAD_REQUEST)
+        if not gate_shifts.methods()["password"]:
+            return Response({"detail": "Signing in with a password is switched off on the Settings page."},
+                            status=http_status.HTTP_400_BAD_REQUEST)
 
         profile = AdminProfile.objects.select_related("user").filter(user__username=data["username"]).first()
         message = lockout.locked_message(profile)
@@ -219,6 +222,30 @@ class GateSignInView(APIView):
             return Response({"detail": refusal}, status=http_status.HTTP_403_FORBIDDEN)
         gate_shifts.start_shift(user, gate_location, GateShift.Method.PASSWORD)
         return Response(gate_shifts.status(gate_location))
+
+
+class GateFaceSignInView(APIView):
+    """A guard signing in at the gate monitor by face (Settings -> "Sign in
+    with face scan"): the sign-in window sends a frame from the gate's
+    entrance camera about once a second until this answers success. With
+    "Card, then face", `pending` is the step the staff card tap started
+    (VerifyView._staff_card). See logs/gate_face.py."""
+
+    permission_classes = [HasServiceToken]
+
+    def post(self, request):
+        from . import gate_face
+
+        gate_location = (request.data.get("gate_location") or "").strip()
+        image = request.FILES.get("image")
+        if not gate_location or image is None:
+            return Response({"detail": "gate_location and image are required."},
+                            status=http_status.HTTP_400_BAD_REQUEST)
+        try:
+            bgr_image = insightface_utils.load_bgr_array(image)
+        except Exception:  # noqa: BLE001 - an unreadable upload is just "no face"
+            bgr_image = None
+        return Response(gate_face.sign_in(gate_location, bgr_image, token=request.data.get("pending") or None))
 
 
 class GateSignOutView(APIView):
@@ -691,9 +718,20 @@ class VerifyView(APIView):
         if not gate_shifts.enabled():
             return refused("This is a staff ID card. To sign in with it, switch on \"Guards sign in at the gate "
                            "monitor\" on the Settings page.", "staff_sign_in_off")
+        ways = gate_shifts.methods()
+        if not ways["card"]:
+            return refused("Signing in with a staff ID card is switched off on the Settings page.", "staff_card_off")
         refusal = gate_shifts.refusal(profile.user, gate_location)
         if refusal:
             return refused(refusal, "staff_not_allowed")
+        if ways["card_then_face"]:
+            # Settings: "Card, then face" - the tap alone signs no one in; the
+            # card owner's face at this gate's camera finishes it (gate_face.py).
+            name = profile.user.get_full_name() or profile.user.username
+            return Response({"success": False, "staff_card": True, "face_needed": True,
+                             "pending": gate_shifts.start_card_step(profile.user, gate_location),
+                             "name": name, "reason": f"{name}: now look at the camera.",
+                             "reason_code": "face_needed", **person_payload(None, self.request)})
         gate_shifts.start_shift(profile.user, gate_location, GateShift.Method.CARD)
         return Response({"success": True, "staff_card": True, "reason": None, "reason_code": None,
                          "gate_sign_in": gate_shifts.status(gate_location)})

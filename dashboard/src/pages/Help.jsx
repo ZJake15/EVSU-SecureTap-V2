@@ -81,6 +81,7 @@ const GUIDES = [
     key: "accounts", icon: "user-gear", title: "Accounts", to: "/accounts", roles: ["admin"],
     steps: [
       "Create dashboard accounts for Admins, SASO and Security Officers. A Security Officer needs an assigned gate.",
+      "For signing in at the gate monitor: tap the guard's own staff ID card into Staff ID card, and type their employee ID in Staff record for face sign-in - their face photos in User Management are what the camera checks.",
       "Deactivate an account when someone leaves - they can no longer sign in, and their past actions stay in the Audit Log.",
     ],
   },
@@ -104,6 +105,7 @@ const GUIDES = [
       "To set up the cameras or the exit card reader: Cameras & card readers in the status bar. For the reader, click Set exit reader, then tap any card on the exit reader.",
       "Layout (same window): Side by side, Big + small (click the small camera to swap), or Separate window - the exit camera with its own exit log, fullscreen on a second monitor (F11 switches fullscreen; closing it puts the exit camera back side by side).",
       "If the camera fails, students can still tap their school ID card on the reader.",
+      "Signing in for duty: the sign-in window shows the ways Settings › Security & Accounts allows - password, staff ID card, face scan. With Card, then face, tap your card first, then look at the camera inside the oval until it signs you in.",
     ],
   },
 ];

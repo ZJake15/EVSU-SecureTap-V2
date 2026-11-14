@@ -2192,6 +2192,32 @@ an answer.
   speed (`ui._KeyBurst`): the reader types its whole number within a few
   hundredths of a second, so a burst like that ending in Enter is a card,
   whichever box had focus.
+- **Which ways (Settings → Security & Accounts).** **Sign in with password**
+  (on), **Sign in with staff ID card** (on) and **Sign in with face scan**
+  (off) are separate switches; at least one stays on while gate sign-in is on
+  (`configuration/store.update` refuses the last one). The sign-in window shows
+  only the ways that are on - with no password fields it passes a card tap on
+  itself (`ui._forward_card_key`). The backend refuses a way that's off
+  (`/api/gate/sign-in` → 400; a staff card → `staff_card_off`), so an old gate
+  monitor can't get round it. `gate_shifts.status()` tells the gate monitor the
+  ways (`methods`) with every scan answer, and an open sign-in window rebuilds
+  itself when they change.
+- **Face scan.** The guard's account is linked to their own staff record on the
+  Accounts page (`AdminProfile.staff_person`, by employee ID - a staff record,
+  not a student's, and one account per record); that record's face photos are
+  what's checked. The sign-in window shows the entrance camera with an oval
+  and sends a frame about every 0.7 s (`main.face_sign_in_loop`, its own
+  connection) to `/api/gate/face-sign-in` (`logs/gate_face.py`): the largest
+  face must pass the fake-face check (when Spoof checking is on), match at the
+  usual Match strictness, and do so on **two frames in a row** - never one.
+  Only guards who may sign in at this gate count (a Security Officer only at
+  their assigned gate). The shift's method is `face`.
+- **With both card and face on**, a setting picks the rule: **Card, then
+  face** (default) - the tap alone signs no one in; it answers `face_needed`
+  with a one-time step token (`gate_shifts.start_card_step`, 45 s, in memory)
+  and the window then asks for **that card owner's** face, so a borrowed card
+  can't sign someone else in (method `card_face`). **Card or face** - either
+  one alone signs in.
 - **Who may sign in where.** A Security Officer only at their assigned gate
   (the same exact-name match as §13.3); Admin and SASO at any gate. Wrong
   passwords count toward the failed login lockout, shared with the dashboard

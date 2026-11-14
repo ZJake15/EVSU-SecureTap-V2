@@ -1105,6 +1105,7 @@ class GateMonitorWindow:
         "staff_sign_in_off": "Staff card",
         "staff_not_allowed": "Can't sign in here",
         "staff_replayed": "Staff card",
+        "staff_card_off": "Staff card",
     }
 
     # (key, label, color, icon) - "today" is the hero number, the rest sit
@@ -1129,7 +1130,7 @@ class GateMonitorWindow:
                  camera_options=None, on_camera_change=None, initial_camera_index=None,
                  video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0,
                  get_camera_size=None, get_camera_fps=None, on_exit_camera_change=None, on_reader_setup=None,
-                 layout="side_by_side", on_layout_change=None):
+                 layout="side_by_side", on_layout_change=None, on_face_scan=None):
         # How the two cameras are shown once the gate has an exit camera
         # (LAYOUTS) - picked in "Cameras & card readers", remembered by
         # main.py through on_layout_change(layout).
@@ -1172,6 +1173,18 @@ class GateMonitorWindow:
         self._on_sign_out = on_sign_out
         self._sign_in = {"enabled": False, "on_duty": None}
         self._sign_in_dialog = None
+        # Signing in by face (Settings -> "Sign in with face scan"):
+        # on_face_scan(True, pending) starts main.py sending the entrance
+        # camera's frames to the backend, on_face_scan(False, None) stops it;
+        # each answer comes back through show_face_sign_in(). _face_step is
+        # {"name", "pending"} after a staff card tap with "Card, then face".
+        self._on_face_scan = on_face_scan
+        self._face_step = None
+        self._face_scanning = False
+        self._face_view = None
+        self._face_photo = None
+        self._face_preview_job = None
+        self._dialog_ways = None
         # The pending "ask again" after Not now (see _dismiss_sign_in_dialog).
         self._sign_in_reminder = None
         # From the launcher's speed mode (config.py) - VIDEO_REFRESH_MS when
@@ -2217,8 +2230,18 @@ class GateMonitorWindow:
         self._queue.put(("sign_in_result", (ok, message)))
 
     def show_staff_signed_in(self, name):
-        """A guard's staff ID card tap signed them in."""
+        """A guard's staff ID card tap (or face scan) signed them in."""
         self._queue.put(("staff_signed_in", name))
+
+    def ask_for_face(self, name, pending):
+        """"Card, then face": the staff card tap was the first step - the
+        sign-in window now asks its owner to look at the camera."""
+        self._queue.put(("face_step", (name, pending)))
+
+    def show_face_sign_in(self, result):
+        """One face-scan answer from the backend ({"reason", "reason_code",
+        "name"?}) - shown under the sign-in window's camera view."""
+        self._queue.put(("face_sign_in", result))
 
     def current_shift_id(self):
         """The shift on duty now (for signing out when the window closes) -
@@ -2315,6 +2338,10 @@ class GateMonitorWindow:
             self._render_sign_in_result(ok, message)
         elif kind == "staff_signed_in":
             self._render_staff_signed_in(payload)
+        elif kind == "face_step":
+            self._render_face_step(*payload)
+        elif kind == "face_sign_in":
+            self._render_face_sign_in(payload)
 
     def _set_status(self, icon_label, text_label, ok, ok_text, bad_text, bad_color, bad_icon):
         color = VERIFIED if ok else bad_color
@@ -2363,6 +2390,10 @@ class GateMonitorWindow:
             self._duty_action.configure(text="Sign in")
             # Not while a "Not now" reminder is pending - it asks again then.
             if self._sign_in_reminder is None:
+                # The ways to sign in changed on the Settings page while the
+                # window was open: rebuild it with the new ones.
+                if self._sign_in_dialog is not None and self._dialog_ways != self._sign_in_ways():
+                    self._close_sign_in_dialog()
                 self._open_sign_in_dialog()
 
     def _cancel_sign_in_reminder(self):
@@ -2394,10 +2425,34 @@ class GateMonitorWindow:
         ) and self._on_sign_out:
             self._on_sign_out(on_duty.get("shift_id"))
 
+    # How a guard may sign in (Settings > Security & Accounts) - what an older
+    # backend, which doesn't say, always allowed.
+    DEFAULT_SIGN_IN_WAYS = {"password": True, "card": True, "face": False, "card_then_face": False}
+    FACE_VIEW_SIZE = (380, 214)  # logical px, 16:9
+    FACE_PREVIEW_MS = 80
+
+    def _sign_in_ways(self):
+        return {**self.DEFAULT_SIGN_IN_WAYS, **(self._sign_in.get("methods") or {})}
+
+    def _sign_in_intro(self, ways):
+        """"Nobody is on duty at Main Gate. Tap your staff ID card on the
+        reader, then look at the camera - or type your username and password.\""""
+        if ways["card_then_face"]:
+            steps = "Tap your staff ID card on the reader, then look at the camera"
+            return (f"Nobody is on duty at {self.gate_location}. {steps}"
+                    + (" - or type your username and password." if ways["password"] else "."))
+        parts = [text for key, text in (("card", "tap your staff ID card on the reader"),
+                                        ("face", "look at the camera"),
+                                        ("password", "type your username and password")) if ways[key]]
+        joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " or " + parts[-1]
+        return f"Nobody is on duty at {self.gate_location}. {joined[0].upper()}{joined[1:]}."
+
     def _open_sign_in_dialog(self):
         if self._sign_in_dialog is not None:
             self._sign_in_dialog.lift()
             return
+        ways = self._sign_in_ways()
+        self._dialog_ways = ways
         dialog = ctk.CTkToplevel(self.window)
         dialog.title(f"Sign in for duty - {self.gate_location}")
         dialog.configure(fg_color=SURFACE)
@@ -2409,14 +2464,21 @@ class GateMonitorWindow:
         body = ctk.CTkFrame(dialog, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=28, pady=24)
         self._label(body, "Sign in for duty", (SEMI_HEAVY, 22), INK, anchor="w").pack(fill="x")
-        self._label(body, f"Nobody is on duty at {self.gate_location}. Tap your staff ID card on the reader, or "
-                          "type your username and password.",
+        self._label(body, self._sign_in_intro(ways),
                     (FONT, 14), INK_600, anchor="w", justify="left", wraplength=380).pack(fill="x", pady=(6, 4))
         self._label(body, "The gate keeps scanning meanwhile - its entries are marked Unattended until a guard "
                           "signs in.",
                     (FONT, 13), INK_600, anchor="w", justify="left", wraplength=380).pack(fill="x", pady=(0, 16))
         self._sign_in_fields = {}
-        for key, text, secret in (("username", "Username", False), ("password", "Password", True)):
+        self._sign_in_submit = None
+        self._face_view = None
+        if ways["face"]:
+            self._build_face_section(body, ways)
+        if ways["password"] and ways["face"]:
+            self._label(body, "Or with your password", (FONT, 13, "bold"), INK_600, anchor="w").pack(
+                fill="x", pady=(4, 8))
+        for key, text, secret in ((("username", "Username", False), ("password", "Password", True))
+                                  if ways["password"] else ()):
             self._label(body, text, (FONT, 14, "bold"), INK, anchor="w").pack(fill="x")
             # A light fill and a border of at least one real pixel: this
             # window is scaled with the monitor, and CTk draws nothing for a
@@ -2433,11 +2495,16 @@ class GateMonitorWindow:
         self._sign_in_error.pack(fill="x")
         buttons = ctk.CTkFrame(body, fg_color="transparent")
         buttons.pack(fill="x", pady=(14, 0))
-        self._sign_in_submit = ctk.CTkButton(
-            buttons, text="Sign in", font=(FONT, 14, "bold"), height=42, corner_radius=8, fg_color=MAROON,
-            hover_color=MAROON_DEEP, text_color="white", command=self._submit_sign_in,
-        )
-        self._sign_in_submit.pack(side="right")
+        if ways["password"]:
+            self._sign_in_submit = ctk.CTkButton(
+                buttons, text="Sign in", font=(FONT, 14, "bold"), height=42, corner_radius=8, fg_color=MAROON,
+                hover_color=MAROON_DEEP, text_color="white", command=self._submit_sign_in,
+            )
+            self._sign_in_submit.pack(side="right")
+        else:
+            # No text boxes to catch a card tap (see _KeyBurst) - the window
+            # itself passes the reader's typing on.
+            dialog.bind("<Key>", self._forward_card_key)
         ctk.CTkButton(
             buttons, text="Not now", font=(FONT, 14, "bold"), height=42, corner_radius=8, fg_color=SURFACE,
             hover_color=CANVAS, text_color=INK, border_width=math.ceil(1 / self._scale), border_color=INK_400,
@@ -2450,7 +2517,103 @@ class GateMonitorWindow:
         x = self.window.winfo_rootx() + (self.window.winfo_width() - dialog.winfo_reqwidth()) // 2
         y = self.window.winfo_rooty() + (self.window.winfo_height() - dialog.winfo_reqheight()) // 3
         dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
-        dialog.after(150, lambda: (dialog.lift(), self._sign_in_fields["username"].focus_force()))
+        first = self._sign_in_fields.get("username") or dialog
+        dialog.after(150, lambda: (dialog.lift(), first.focus_force()))
+        if ways["face"]:
+            if not ways["card_then_face"] or self._face_step:
+                self._start_face_scan()
+            self._face_preview_tick()
+
+    def _build_face_section(self, body, ways):
+        """The entrance camera's live view with an oval to put the face in,
+        and a line saying how the face scan is going."""
+        width, height = (self._px(side) for side in self.FACE_VIEW_SIZE)
+        holder = ctk.CTkFrame(body, fg_color=INK, corner_radius=6)
+        holder.pack(fill="x", pady=(0, 8))
+        self._face_view = tk.Canvas(holder, width=width, height=height, bg="#1c1c1c", highlightthickness=0, bd=0)
+        self._face_view.pack(padx=self._px(4), pady=self._px(4))
+        if ways["card_then_face"] and not self._face_step:
+            first = "Tap your staff ID card first."
+        elif self._face_step:
+            first = f"{self._face_step['name']}: now look at the camera."
+        else:
+            first = "Look at the camera."
+        self._face_status = self._label(body, first, (FONT, 14, "bold"), INK_600, anchor="w", justify="left",
+                                        wraplength=380)
+        self._face_status.pack(fill="x", pady=(0, 12))
+
+    def _face_preview_tick(self):
+        self._face_preview_job = None
+        canvas = self._face_view
+        if self._closed or self._sign_in_dialog is None or canvas is None:
+            return
+        width, height = (self._px(side) for side in self.FACE_VIEW_SIZE)
+        feed = self._feeds.get("entry")
+        frame = feed.get_preview_frame() if (feed is not None and self._face_scanning) else None
+        canvas.delete("all")
+        if frame is not None:
+            import cv2  # loaded by the camera already (see _Feed)
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self._face_photo = ImageTk.PhotoImage(ImageOps.fit(Image.fromarray(rgb), (width, height)))
+            canvas.create_image(0, 0, image=self._face_photo, anchor="nw")
+            oval_w, oval_h = width * 0.30, height * 0.78
+            canvas.create_oval(width / 2 - oval_w / 2, height / 2 - oval_h / 2, width / 2 + oval_w / 2,
+                               height / 2 + oval_h / 2, outline="white", width=max(1, self._px(2)), dash=(6, 4))
+        else:
+            words = "Waiting for the camera…" if self._face_scanning else "Tap your staff ID card"
+            canvas.create_text(width // 2, height // 2, text=words, fill="#d0d0d0",
+                               font=self._tkfont(FONT, 15, "bold"))
+        self._face_preview_job = self.window.after(self.FACE_PREVIEW_MS, self._face_preview_tick)
+
+    def _start_face_scan(self):
+        self._stop_face_scan()
+        self._face_scanning = True
+        if self._on_face_scan:
+            self._on_face_scan(True, (self._face_step or {}).get("pending"))
+
+    def _stop_face_scan(self):
+        if self._face_scanning and self._on_face_scan:
+            self._on_face_scan(False, None)
+        self._face_scanning = False
+
+    def _render_face_step(self, name, pending):
+        """A staff card tap with "Card, then face": open (or switch) the
+        sign-in window to its face step for that card's owner."""
+        self._cancel_sign_in_reminder()
+        ways = self._sign_in_ways()
+        if not ways["card_then_face"]:  # the backend says so - this gate's copy was behind
+            self._sign_in = {**self._sign_in, "methods": {**ways, "card": True, "face": True,
+                                                          "card_then_face": True}}
+        if self._sign_in_dialog is not None and self._face_view is not None:
+            self._face_step = {"name": name, "pending": pending}
+            self._face_status.configure(text=f"{name}: now look at the camera.", text_color=INK)
+            self._start_face_scan()
+            self._sign_in_dialog.lift()
+            return
+        self._close_sign_in_dialog()
+        self._face_step = {"name": name, "pending": pending}
+        self._open_sign_in_dialog()
+
+    # How each face-scan answer reads under the camera view.
+    FACE_STATUS_COLORS = {"checking": VERIFIED, "no_face": INK_600, "no_camera": INK_600, "offline": CAUTION,
+                          "server_error": CAUTION}
+
+    def _render_face_sign_in(self, result):
+        if self._sign_in_dialog is None or self._face_view is None:
+            return
+        code = result.get("reason_code")
+        text = result.get("reason") or "Look at the camera."
+        if code == "checking" and result.get("name"):
+            text = f"{result['name']} - hold still…"
+        if code in ("card_first", "face_off"):
+            # The card step ran out (or face sign-in was just switched off):
+            # main.py has stopped sending frames.
+            self._face_scanning = False
+            if code == "card_first" and self._face_step:
+                text = "That took too long - tap your staff ID card again."
+            self._face_step = None
+        self._face_status.configure(text=text, text_color=self.FACE_STATUS_COLORS.get(code, DANGER))
 
     def _sign_in_enter(self, entry, burst):
         """Enter in the sign-in window: a card tap (the reader typed into the
@@ -2472,7 +2635,8 @@ class GateMonitorWindow:
         username = self._sign_in_fields["username"].get().strip()
         password = self._sign_in_fields["password"].get()
         if not username or not password:
-            self._sign_in_error.configure(text="Type your username and password - or tap your staff ID card.")
+            other = " - or tap your staff ID card." if self._sign_in_ways()["card"] else "."
+            self._sign_in_error.configure(text=f"Type your username and password{other}")
             return
         self._sign_in_error.configure(text="")
         self._sign_in_submit.configure(state="disabled", text="Signing in…")
@@ -2485,11 +2649,19 @@ class GateMonitorWindow:
         if ok:
             self._close_sign_in_dialog()
             return
-        self._sign_in_submit.configure(state="normal", text="Sign in")
-        self._sign_in_fields["password"].delete(0, "end")
+        if self._sign_in_submit is not None:
+            self._sign_in_submit.configure(state="normal", text="Sign in")
+        if "password" in self._sign_in_fields:
+            self._sign_in_fields["password"].delete(0, "end")
         self._sign_in_error.configure(text=message or "Couldn't sign in.")
 
     def _close_sign_in_dialog(self):
+        self._stop_face_scan()
+        self._face_step = None
+        if self._face_preview_job is not None:
+            self.window.after_cancel(self._face_preview_job)
+            self._face_preview_job = None
+        self._face_view = None
         if self._sign_in_dialog is not None:
             self._sign_in_dialog.destroy()
             self._sign_in_dialog = None

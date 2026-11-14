@@ -11,6 +11,7 @@ from logs.views import (
     GateCamerasView,
     GateCameraStreamView,
     GateDutyView,
+    GateFaceSignInView,
     GateMonitorFrameView,
     TestModeDeleteView,
     TestModeSnapshotView,
@@ -62,6 +63,7 @@ urlpatterns = [
     path("api/gate-summary", GateSummaryView.as_view(), name="gate-summary"),
     path("api/gate/sign-in", GateSignInView.as_view(), name="gate-sign-in"),
     path("api/gate/sign-out", GateSignOutView.as_view(), name="gate-sign-out"),
+    path("api/gate/face-sign-in", GateFaceSignInView.as_view(), name="gate-face-sign-in"),
     path("api/gate-duty", GateDutyView.as_view(), name="gate-duty"),
     # What each gate's camera actually runs at - Settings > Camera shows it.
     path("api/gate/camera-report", GateCameraReportView.as_view(), name="gate-camera-report"),

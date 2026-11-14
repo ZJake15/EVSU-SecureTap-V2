@@ -59,6 +59,12 @@ class AdminProfile(models.Model):
     # password sign-in only. Never the same number as a student's card -
     # checked in DashboardAccountSerializer and PersonSerializer.
     staff_card_id = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    # Their own staff record in User Management, whose face photos let them
+    # sign in at the gate monitor by face (Settings -> "Sign in with face
+    # scan"). Empty means no face sign-in for this account.
+    staff_person = models.ForeignKey(
+        "users.Person", on_delete=models.SET_NULL, null=True, blank=True, related_name="dashboard_accounts",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     # Failed login lockout (Settings page, off by default): wrong passwords
     # in a row since the last successful sign-in, and when a lock ends.

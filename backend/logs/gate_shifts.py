@@ -12,6 +12,10 @@ Who may sign in: a Security Officer only at their assigned gate (the same
 exact-name match their Logs access uses); an Admin or SASO at any gate.
 """
 
+import secrets
+import threading
+import time
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -24,6 +28,51 @@ from .models import GateShift
 
 def enabled():
     return system_settings.get("gate_sign_in_enabled")
+
+
+def methods():
+    """How a guard may sign in right now (Settings > Security & Accounts):
+    password, staff ID card, face scan - and, with card and face both on and
+    "Card, then face" chosen, whether the card tap must be followed by the
+    card owner's face (logs/gate_face.py)."""
+    card = system_settings.get("gate_signin_card")
+    face = system_settings.get("gate_signin_face")
+    return {
+        "password": system_settings.get("gate_signin_password"),
+        "card": card,
+        "face": face,
+        "card_then_face": bool(card and face and system_settings.get("gate_signin_rule") == "both"),
+    }
+
+
+# "Card, then face": the card tap is the first step - the guard then has this
+# long to show their face at the same gate. In memory: one backend process.
+CARD_STEP_SECONDS = 45
+_card_steps = {}  # gate -> {"token", "user_id", "until"}
+_card_lock = threading.Lock()
+
+
+def start_card_step(user, gate_location):
+    token = secrets.token_urlsafe(16)
+    with _card_lock:
+        _card_steps[gate_location] = {"token": token, "user_id": user.id, "until": time.monotonic() + CARD_STEP_SECONDS}
+    return token
+
+
+def card_step_user(gate_location, token):
+    """The guard whose card was tapped at this gate for this step, or None
+    (no step, another step, or too late)."""
+    with _card_lock:
+        step = _card_steps.get(gate_location)
+        if not step or not token or step["token"] != token or time.monotonic() > step["until"]:
+            return None
+        user_id = step["user_id"]
+    return AdminProfile.objects.select_related("user", "staff_person").filter(user_id=user_id).first()
+
+
+def end_card_step(gate_location):
+    with _card_lock:
+        _card_steps.pop(gate_location, None)
 
 
 def active_shift(gate_location):
@@ -126,7 +175,7 @@ def status(gate_location):
     """What the gate monitor shows: is sign-in on, and who's on duty."""
     if not enabled():
         return {"enabled": False, "on_duty": None}
-    return {"enabled": True, "on_duty": _on_duty(active_shift(gate_location))}
+    return {"enabled": True, "on_duty": _on_duty(active_shift(gate_location)), "methods": methods()}
 
 
 def duty_board():

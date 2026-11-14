@@ -55,14 +55,46 @@ class DashboardAccountSerializer(serializers.ModelSerializer):
     # existing password) - same "leave blank to keep the current one" idea
     # PersonSerializer's profile_picture already uses for a different field.
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # Their own staff record in User Management, by employee ID - its face
+    # photos let them sign in at the gate monitor by face. Blank unlinks it.
+    staff_record_id = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    staff_record = serializers.SerializerMethodField()
 
     class Meta:
         model = AdminProfile
         fields = [
             "id", "username", "first_name", "last_name", "full_name",
-            "role", "assigned_gate_location", "staff_card_id", "is_active", "password", "created_at",
+            "role", "assigned_gate_location", "staff_card_id", "staff_record_id", "staff_record",
+            "is_active", "password", "created_at",
         ]
         read_only_fields = ["id", "created_at"]
+
+    def get_staff_record(self, profile):
+        person = profile.staff_person
+        if person is None:
+            return None
+        return {"id_number": person.student_or_employee_id, "name": person.full_name,
+                "photos": person.face_embeddings.count(), "is_active": person.is_active}
+
+    def validate_staff_record_id(self, value):
+        """The employee ID of a staff record (not a student's), not already
+        linked to another account - one face, one guard."""
+        value = (value or "").strip()
+        if not value:
+            return None
+        from users.models import Person
+
+        person = Person.objects.filter(student_or_employee_id=value).first()
+        if person is None:
+            raise serializers.ValidationError("No one in User Management has this ID.")
+        if person.role != Person.Role.STAFF:
+            raise serializers.ValidationError("This ID belongs to a student - link a staff record.")
+        others = AdminProfile.objects.filter(staff_person=person)
+        if self.instance is not None:
+            others = others.exclude(pk=self.instance.pk)
+        if others.exists():
+            raise serializers.ValidationError("Another account is already linked to this staff record.")
+        return person
 
     def validate_staff_card_id(self, value):
         """A staff ID card signs its owner in at the gate monitor, so it must
@@ -89,6 +121,8 @@ class DashboardAccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"assigned_gate_location": "Only a Security Officer account can have an assigned gate."}
             )
+        if "staff_record_id" in attrs:
+            attrs["staff_person"] = attrs.pop("staff_record_id")
         return attrs
 
     def create(self, validated_data):

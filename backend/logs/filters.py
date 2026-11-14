@@ -14,4 +14,5 @@ class EntryLogFilter(django_filters.FilterSet):
 
     class Meta:
         model = EntryLog
-        fields = ["status", "verification_method"]
+        # direction: entry / exit. pattern_flag: no_entry / no_exit (EntryLog.PatternFlag).
+        fields = ["status", "verification_method", "direction", "pattern_flag"]

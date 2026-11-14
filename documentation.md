@@ -1,8 +1,10 @@
 # EVSU SecureTap — System Documentation
 
-A face-recognition + NFC-card gate entry system for EVSU (entries only - leaving
-campus isn't recorded; earlier versions recorded exits too, and migration
-`logs/0013` deleted those records). A camera watches the
+A face-recognition + NFC-card gate entry system for EVSU. Every gate has an
+entrance camera and card reader, and can have an exit camera and reader beside
+them, so people leaving are recorded too (§2.3; an older version also recorded
+exits, migration `logs/0013` deleted those, and `logs/0020` brought exits back
+with two cameras per gate). A camera watches the
 gate continuously and identifies people by face (1:N, ArcFace embeddings), checks
 that what it's looking at is a real live face (not a photo or screen), and an NFC
 card tap provides a second, independent verification channel that also resolves
@@ -431,6 +433,60 @@ action, not a continuous background process.
    `CARD REJECTED` or `QUEUED` otherwise), so a tap is as visible in the gate's
    running record as a face event.
 
+### 2.3 Entrance and exit (two cameras per gate)
+
+A gate can have two cameras on one computer and one gate monitor window: the
+**entrance camera** (always) and an **exit camera** beside it. The exit camera
+is chosen in the gate monitor's **Cameras & card readers** window (status bar);
+until one is, the gate records entries only, exactly as before. The choice is
+remembered by camera name (`camera_choice.json`: `name` and `exit_name`).
+
+- **Gate monitor.** The two feeds sit side by side, each labelled ENTRANCE /
+  EXIT in its top strip; the header pill reads ENTRY + EXIT; the stats row has
+  an EXITS counter. Each camera has its own scan loop, its own backend
+  connection, and its own Cameras-page stream (`entry-agent/main.py`). There is
+  one live log: an exit reads `EXIT`, an unknown or spoof at the exit reads
+  `UNKNOWN · EXIT` / `SPOOF · EXIT`, and the alarm banner shows on the panel of
+  the camera it's about. The student display stays at the entrance only.
+- **Two card readers.** The readers type like keyboards, so the gate monitor
+  can't tell from the typing which one was tapped; Windows' raw input can
+  (`entry-agent/card_readers.py`): it reports each key press with the device
+  that sent it. In the same window, **Set exit reader** then a tap on the exit
+  reader marks it as the exit's (`card_readers.json`); every other reader is the
+  entrance's. Readers of the same model are told apart by USB port, so each
+  must stay in its port. Without raw input every tap counts as the entrance's.
+- **What happens at the exit.** Nobody is ever kept in. A recognized person is
+  logged `direction = exit`. Unknown and spoof faces are logged and sound their
+  alarms (someone unregistered was inside). A covered face gets the same
+  prompt and soft sound. Semester enrollment applies on the way in only: an
+  exit is never refused or flagged NOT ENROLLED.
+- **Kept apart on the backend** (`backend/logs/lanes.py`). Each camera is a
+  "lane": the entrance lane is the gate's own name, the exit lane is
+  `"<gate> · Exit"`. The frame votes, face tracks, the card-tap wait
+  (`PendingTiebreak`, so an exit-reader tap settles only the exit camera's
+  wait) and the Cameras page / Settings > Camera rows are kept per lane. Entry
+  records always store the real gate name with `direction`. The "same person
+  again" windows (face, card, unknown and spoof cooldowns) are per direction,
+  so walking in and straight back out is two records.
+- **Odd patterns** (`EntryLog.pattern_flag`, set by `EntryLog.save`): an exit
+  with no entry for that person since midnight is flagged **No entry today**;
+  an entry when their last record today was an entry at a gate that records
+  exits (one with an exit in the last 7 days) is flagged **No exit since
+  entry**. Usually a missed scan, sometimes tailgating - nobody is refused and
+  no sound plays; the gate monitor's live log shows `NO ENTRY TODAY` /
+  `NO EXIT YET` with "ask them", and Logs / Live Monitoring tag it.
+- **Dashboard.** Logs: an IN/OUT tag on every record, a Direction filter, the
+  two pattern filters in Status, and on an exit the time the person came in
+  and how long they stayed (`entered_at`); the CSV has Direction, Time in and
+  Pattern. A manual override asks which way. Live Monitoring: IN/OUT and
+  pattern tags, Entries and Exits counters, flagged patterns pinned under Needs
+  attention, and the duty board counts entries and exits apart. Reports:
+  every "entries" figure counts people coming in only; **Entries and exits**
+  adds totals, the average and median stay (an exit paired with the same
+  person's entry before it that day), the busiest exit hour, the pattern
+  counts, unknown/spoof at exits, and an in-and-out-by-hour chart. The Cameras
+  page shows the exit camera as its own tile, beside "<gate> · Entrance".
+
 ---
 
 ## 3. Face-and-card interplay (why there's a second credential)
@@ -845,7 +901,8 @@ that actually tells the two people apart, so the system reaches a *person* inste
 ### `logs` app
 - **EntryLog** — the permanent audit record of every gate event. Fields: `person`
   (nullable FK — stays `Unknown` if the person is later deleted), `timestamp`,
-  `direction` (always `entry` now), `verification_method` (`nfc_only`, `face_only`,
+  `direction` (`entry`, or `exit` from a gate's exit camera or reader - §2.3),
+  `pattern_flag` (`no_entry` / `no_exit` / blank - §2.3), `verification_method` (`nfc_only`, `face_only`,
   `manual_override`, `face_and_card_tiebreak`, `confusable_pair_tiebreak` — see
   §5.8/§2.2 step 4 — plus a legacy `nfc_and_face` value kept only for old rows),
   `status` (`success` / `failed` / `spoof_suspected`, plus `occlusion_detected`,
@@ -870,7 +927,8 @@ that actually tells the two people apart, so the system reaches a *person* inste
   similarity-based grouping, just a raw per-gate count within the vote window —
   grouping by an occluded frame's own embedding would lean on the thing this
   check doesn't trust.
-- **PendingTiebreak** — at most one active "please tap your card" prompt per gate.
+- **PendingTiebreak** — at most one active "please tap your card" prompt per
+  camera (its lane - §2.3; the attempt rows above are kept per lane too).
   Fields include `reason` (`ambiguous_match`/`confusable_pair` — see §2.1 step 9/
   §5.8), which decides the resulting `EntryLog.verification_method` once a tap
   resolves it, or expiry's log wording if none does.
@@ -1534,11 +1592,11 @@ persistent defaults — gate location and officer name can also be set per-launc
 from the system launcher's settings panel (§9.1) without editing this file,
 which then passes them to this process as environment variables
 (`GATE_LOCATION`/`OFFICER_NAME`) that override the `.env` values for that one run
-only. Camera is still chosen independently, via the status-bar dropdown above,
-once the window is already open. **Every gate is an entry gate**: SecureTap
-records people coming in and never people leaving, so there's no direction to
-set (`config.direction` is always `entry`; an old `.env`'s `DIRECTION=exit` is
-ignored, and the backend refuses an exit).
+only. The cameras are chosen once the window is open, in its **Cameras & card
+readers** window: the entrance camera, and the exit camera if the gate has one
+(§2.3). `config.direction` is always `entry` - it's the entrance camera's; the
+exit camera's scan loop sends `exit` itself (an old `.env`'s `DIRECTION=exit`
+is still ignored).
 
 ### 9.1 System launcher (`launcher.py` / `SecureTap.bat`)
 
@@ -1657,7 +1715,8 @@ guard would otherwise only discover once already standing at the gate:
   (`launcher_settings.json`, a per-machine file, not something checked into the
   repo) — see the entry-agent's own **Configuration** paragraph above for exactly
   how these values reach that process without editing `.env`. There's no
-  Entry/Exit choice: every gate is an entry gate.
+  Entry/Exit choice here: a gate's exit camera is chosen in its gate monitor
+  (§2.3).
 - **Camera zoom (per gate)** — a 1.0x–2.0x slider (0.1 steps) in the same
   panel, saved per gate name (`"camera_zoom": {"Main Gate": 1.5}`), passed to
   the gate monitor as `CAMERA_ZOOM` by the Admin launcher and the Gate icon
@@ -1885,8 +1944,13 @@ knowing before extending the system:
   reader is unplugged mid-shift.
 - Only HID-keyboard-emulation NFC readers are supported; genuine PC/SC smart-card
   readers would need reintroducing the `pyscard` library.
-- One entry-agent instance = one camera; no multi-camera per gate. Entries only
-  - leaving campus isn't recorded at all.
+- One gate monitor runs at most two cameras (entrance and exit) on one computer,
+  each with its own face checks - about twice the work of one, so a slow laptop
+  may need the Light speed mode with both on. Telling two card readers apart
+  needs Windows raw input and each reader kept in the same USB port (§2.3).
+  The "No exit since entry" flag can't know about a gate without an exit
+  camera: someone who leaves through one and comes back in through a gate that
+  has one is flagged.
 
 ---
 

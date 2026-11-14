@@ -1095,8 +1095,8 @@ class LauncherWindow:
         self.gate_entry.insert(0, self.settings.get("gate_location", DEFAULT_GATE_LOCATION))
         self.gate_entry.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         self.gate_entry.bind("<FocusOut>", lambda _e: self._save_current_settings())
-        # No Entry/Exit choice: every gate checks people coming in - SecureTap
-        # doesn't record exits.
+        # No Entry/Exit choice here: a gate's exit camera (and exit card reader)
+        # is chosen in its gate monitor's "Cameras & card readers" window.
 
         guard_label = ctk.CTkFrame(grid, fg_color="transparent")
         guard_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(16, 0))
@@ -2000,7 +2000,8 @@ class LauncherWindow:
 
     def _save_current_settings(self):
         # Merged, so what else is remembered here (the last backup) stays -
-        # except the direction older versions saved (exits aren't recorded).
+        # except the direction older versions saved (the gate monitor now runs
+        # the entrance and exit cameras itself).
         self.settings = {**self.settings, **self._current_entry_agent_settings()}
         self.settings.pop("direction", None)
         _save_settings(self.settings)

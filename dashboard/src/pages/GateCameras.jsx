@@ -214,7 +214,7 @@ function CameraTile({ gate, live, register, focused, onFocus, onUnfocus }) {
     <div ref={tileRef} className="card flex min-w-0 flex-col overflow-hidden bg-surface">
       <div className="flex h-11 flex-none items-center gap-s3 border-b border-line px-s4">
         <Icon name="video-camera" bold size={18} className="text-ink-600" />
-        <span className="min-w-0 flex-1 truncate font-bold">{gate.gate_location}</span>
+        <span className="min-w-0 flex-1 truncate font-bold">{gate.label || gate.gate_location}</span>
         {badge}
         {focused ? (
           <button type="button" className="btn btn-ghost btn-sm" onClick={onUnfocus} title="Back to all cameras">
@@ -273,7 +273,17 @@ export default function GateCameras() {
       try {
         const { data } = await apiClient.get("/gate-cameras");
         if (cancelled) return;
-        setGates(data.gates || []);
+        // A gate's exit camera is listed as "<gate> · Exit" (backend
+        // logs/lanes.py); its entrance camera, the plain gate name, is then
+        // labelled "· Entrance" so the two read as a pair - side by side,
+        // since the list is sorted by name.
+        const names = new Set((data.gates || []).map((gate) => gate.gate_location));
+        setGates(
+          (data.gates || []).map((gate) => ({
+            ...gate,
+            label: names.has(`${gate.gate_location} · Exit`) ? `${gate.gate_location} · Entrance` : gate.gate_location,
+          })),
+        );
         setSettings({ fps: data.fps, width: data.width });
         setListError("");
       } catch {

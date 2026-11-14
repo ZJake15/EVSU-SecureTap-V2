@@ -35,7 +35,7 @@ from users import flatness, insightface_utils, liveness_utils, occlusion_utils, 
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
-from . import camera_monitor, camera_status, gate_shifts, motion, test_mode
+from . import camera_monitor, camera_status, gate_shifts, lanes, motion, test_mode
 from .filters import EntryLogFilter
 from .models import (
     EntryLog,
@@ -165,6 +165,7 @@ class GateSummaryView(APIView):
         entries_today = logs.filter(
             direction=EntryLog.Direction.ENTRY, status=EntryLog.Status.SUCCESS
         ).count()
+        exits_today = logs.filter(direction=EntryLog.Direction.EXIT, status=EntryLog.Status.SUCCESS).count()
         unknown_today = logs.filter(status=EntryLog.Status.FAILED).count()
         spoof_today = logs.filter(status=EntryLog.Status.SPOOF_SUSPECTED).count()
         occlusion_today = logs.filter(status=EntryLog.Status.OCCLUSION_DETECTED).count()
@@ -172,6 +173,7 @@ class GateSummaryView(APIView):
         return Response(
             {
                 "entries_today": entries_today,
+                "exits_today": exits_today,
                 "unknown_today": unknown_today,
                 "spoof_today": spoof_today,
                 "occlusion_today": occlusion_today,
@@ -558,16 +560,25 @@ class VerifyView(APIView):
                 reason="This ID has been deactivated.", reason_code="deactivated",
             )
 
+        response = self._resolve_tap(person, direction, gate_location)
+        if direction == EntryLog.Direction.EXIT and isinstance(response.data, dict):
+            response.data["not_enrolled"] = False  # see IdentifyView._scan - never on the way out
+        return response
+
+    def _resolve_tap(self, person, direction, gate_location):
         verification_method = EntryLog.VerificationMethod.NFC_ONLY
+        # The card-tap wait of the camera on this reader's side of the gate
+        # (an exit reader settles the exit camera's - see logs/lanes.py).
+        lane = lanes.lane(gate_location, direction)
         # An expired tiebreak gets its "not resolved in time" row first -
         # this used to delete it here, before IdentifyView's sweep ever saw
         # it, so a tap after the timeout silently erased that record.
-        IdentifyView._expire_stale_tiebreak(gate_location)
+        IdentifyView._expire_stale_tiebreak(lane)
         # Whatever is left is still live. Any successful tap resolves it,
         # whoever tapped - the tap itself, not a check against the
         # tiebreak's candidate list, is what's trusted (see documentation.md
         # §2.2 step 4).
-        tiebreak = PendingTiebreak.objects.filter(gate_location=gate_location).first()
+        tiebreak = PendingTiebreak.objects.filter(gate_location=lane).first()
         if tiebreak is not None:
             direction = tiebreak.direction
             verification_method = (
@@ -590,6 +601,7 @@ class VerifyView(APIView):
             recent_log = (
                 EntryLog.objects.filter(
                     person=person,
+                    direction=direction,  # an entry tap never swallows the exit tap after it
                     verification_method=EntryLog.VerificationMethod.NFC_ONLY,
                     status__in=LET_IN_STATUSES,
                     timestamp__gte=cooldown_cutoff,
@@ -605,6 +617,7 @@ class VerifyView(APIView):
                         "reason_code": None,
                         "log_id": recent_log.id,
                         "deduped": True,
+                        "pattern_flag": recent_log.pattern_flag,
                         **person_payload(person, self.request),
                     }),
                     status=http_status.HTTP_200_OK,
@@ -623,6 +636,8 @@ class VerifyView(APIView):
                 "reason": None,
                 "reason_code": None,
                 "log_id": log.id,
+                # An odd pattern (EntryLog.PatternFlag) - the gate monitor tags the row.
+                "pattern_flag": log.pattern_flag,
                 **person_payload(person, self.request),
             }),
             status=http_status.HTTP_200_OK,
@@ -747,8 +762,8 @@ class IdentifyView(APIView):
                     **{key: round(value, 1) for key, value in self._timing.items()},
                 }
             # The dashboard's Cameras page draws these faces on the gate's
-            # live picture - only while an Admin is watching this gate.
-            camera_monitor.note_results(data["gate_location"], response.data)
+            # live picture - only while an Admin is watching this camera.
+            camera_monitor.note_results(lanes.lane(data["gate_location"], data["direction"]), response.data)
             return response
 
     def _add_time(self, key, since):
@@ -758,7 +773,12 @@ class IdentifyView(APIView):
 
     def _scan(self, request, data):
         direction = data["direction"]
-        gate_location = data["gate_location"]
+        # This camera's lane (logs/lanes.py): the gate's own name for its
+        # entrance camera, "<gate> · Exit" for its exit camera. Everything
+        # below keeps its working state (votes, face tracks, the card-tap
+        # wait) under it, so a gate's two cameras never mix; entry records
+        # get the real gate name back (lanes.gate_of) with their direction.
+        gate_location = lanes.lane(data["gate_location"], direction)
         image_file = data["image"]
 
         self._expire_stale_tiebreak(gate_location)
@@ -898,6 +918,12 @@ class IdentifyView(APIView):
                 )
             )
         self._follow_unknowns_by_track(results, tracks, gate_location)
+        if direction == EntryLog.Direction.EXIT:
+            # Semester enrollment is about letting students in - nobody leaving
+            # is shown NOT ENROLLED (EntryLog.save doesn't flag exits either).
+            for result in results:
+                if result.get("not_enrolled"):
+                    result["not_enrolled"] = False
         # Settings page (Advanced): "Show distance on face boxes" - for
         # checking the distance estimate against a measured spot.
         show_distance = system_settings.get("show_face_distance")
@@ -946,7 +972,7 @@ class IdentifyView(APIView):
                 "covered_sound": system_settings.get("alert_covered_sound"),
                 "not_enrolled_sound": system_settings.get("alert_not_enrolled_sound"),
             },
-            "gate_sign_in": gate_shifts.status(gate_location),
+            "gate_sign_in": gate_shifts.status(lanes.gate_of(gate_location)),
             # Settings > Scheduling > Gate opening hours: the gate monitor
             # alerts the guard and tags its live log while this is true.
             "after_hours": schedule.is_after_hours(),
@@ -1225,7 +1251,8 @@ class IdentifyView(APIView):
         is left alone."""
         cutoff = timezone.now() - timezone.timedelta(seconds=self.UNKNOWN_CORRECTION_SECONDS)
         recent = EntryLog.objects.filter(
-            gate_location=gate_location,
+            gate_location=lanes.gate_of(gate_location),
+            direction=lanes.direction_of(gate_location),  # this same camera's Unknowns only
             verification_method=EntryLog.VerificationMethod.FACE_ONLY,
             status=EntryLog.Status.FAILED,
             timestamp__gte=cutoff,
@@ -1281,7 +1308,8 @@ class IdentifyView(APIView):
                 ids = motion.unknowns_on_track(gate_location, track, self.UNKNOWN_CORRECTION_SECONDS)
                 cutoff = timezone.now() - timezone.timedelta(seconds=self.UNKNOWN_CORRECTION_SECONDS)
                 still_there = EntryLog.objects.filter(
-                    id__in=ids, gate_location=gate_location, status=EntryLog.Status.FAILED, timestamp__gte=cutoff,
+                    id__in=ids, gate_location=lanes.gate_of(gate_location), status=EntryLog.Status.FAILED,
+                    timestamp__gte=cutoff,
                 )
                 who = f"{result.get('person_name')} ({result.get('student_or_employee_id')})"
                 undone = self._undo_unknowns(still_there, who, gate_location)
@@ -1339,6 +1367,8 @@ class IdentifyView(APIView):
         recent_log = (
             EntryLog.objects.filter(
                 person=person,
+                # The same way only: walking in and straight back out is two records.
+                direction=direction,
                 verification_method=EntryLog.VerificationMethod.FACE_ONLY,
                 status__in=LET_IN_STATUSES,
                 timestamp__gte=cooldown_cutoff,
@@ -1355,6 +1385,7 @@ class IdentifyView(APIView):
                 "similarity": similarity,
                 "liveness_score": liveness_score,
                 "deduped": True,
+                "pattern_flag": recent_log.pattern_flag,
                 "box": _box_to_dict(box),
                 **person_payload(person, request),
             })
@@ -1370,7 +1401,7 @@ class IdentifyView(APIView):
             direction=direction,
             verification_method=EntryLog.VerificationMethod.FACE_ONLY,
             status=EntryLog.Status.SUCCESS,
-            gate_location=gate_location,
+            gate_location=lanes.gate_of(gate_location),
             match_confidence=similarity,
             liveness_score=liveness_score,
             occlusion_detected=occlusion_seen,
@@ -1383,6 +1414,8 @@ class IdentifyView(APIView):
             "similarity": similarity,
             "liveness_score": liveness_score,
             "occlusion_detected": occlusion_seen,
+            # An odd pattern (EntryLog.PatternFlag) - the gate monitor tags the row.
+            "pattern_flag": log.pattern_flag,
             "box": _box_to_dict(box),
             **person_payload(person, request),
         })
@@ -1517,7 +1550,7 @@ class IdentifyView(APIView):
                 else EntryLog.VerificationMethod.FACE_ONLY
             ),
             status=EntryLog.Status.FAILED,
-            gate_location=gate_location,
+            gate_location=lanes.gate_of(gate_location),
             failure_reason=failure_reason,
         )
         stale.delete()
@@ -1624,6 +1657,7 @@ class IdentifyView(APIView):
         reason = "Not enrolled - no matching student/staff record."
         cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("unknown_cooldown_seconds"))
         recent_unmatched = EntryLog.objects.filter(
+            direction=direction,  # a stranger seen coming in, then going out, is two records
             verification_method=EntryLog.VerificationMethod.FACE_ONLY,
             status=EntryLog.Status.FAILED,
             timestamp__gte=cooldown_cutoff,
@@ -1674,7 +1708,7 @@ class IdentifyView(APIView):
         (Settings page) are this same face - this one included."""
         cutoff = timezone.now() - timezone.timedelta(minutes=system_settings.get("repeated_unknown_minutes"))
         recent = EntryLog.objects.filter(
-            gate_location=gate_location,
+            gate_location=lanes.gate_of(gate_location),  # coming in or going out
             person__isnull=True,
             status=EntryLog.Status.FAILED,
             verification_method=EntryLog.VerificationMethod.FACE_ONLY,
@@ -1696,7 +1730,7 @@ class IdentifyView(APIView):
             direction=direction,
             verification_method=EntryLog.VerificationMethod.FACE_ONLY,
             status=EntryLog.Status.FAILED,
-            gate_location=gate_location,
+            gate_location=lanes.gate_of(gate_location),
             failure_reason=reason,
             liveness_score=liveness_score,
             occlusion_detected=occlusion_seen,
@@ -1865,7 +1899,7 @@ class IdentifyView(APIView):
         reason = "Possible spoof detected - photo, screen, or printout, not a live face."
         cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("spoof_cooldown_seconds"))
         recent_spoof = EntryLog.objects.filter(
-            status=EntryLog.Status.SPOOF_SUSPECTED, timestamp__gte=cooldown_cutoff
+            status=EntryLog.Status.SPOOF_SUSPECTED, direction=direction, timestamp__gte=cooldown_cutoff
         ).exclude(unmatched_encoding__isnull=True)
 
         query = np.array(embedding, dtype=np.float32)
@@ -1899,7 +1933,7 @@ class IdentifyView(APIView):
             direction=direction,
             verification_method=EntryLog.VerificationMethod.FACE_ONLY,
             status=EntryLog.Status.SPOOF_SUSPECTED,
-            gate_location=gate_location,
+            gate_location=lanes.gate_of(gate_location),
             failure_reason=reason,
             liveness_score=liveness_score,
             unmatched_encoding=list(embedding),

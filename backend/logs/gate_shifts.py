@@ -170,7 +170,10 @@ def duty_board():
             "on_duty": on_duty,
             "last_on_duty": last_on_duty,
             "assigned_officers": sorted(officers.get(gate, [])),
-            "entries_today": today_logs.count(),
+            # Everything its entrance camera and reader logged; its exit
+            # camera's records (a gate with one) are counted on their own.
+            "entries_today": today_logs.filter(direction=EntryLog.Direction.ENTRY).count(),
+            "exits_today": today_logs.filter(direction=EntryLog.Direction.EXIT).count(),
             "unattended_today": today_logs.filter(unattended=True).count(),
         })
     return {"enabled": sign_in_on, "gates": board}

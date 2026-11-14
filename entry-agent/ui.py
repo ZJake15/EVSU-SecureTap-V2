@@ -14,6 +14,7 @@ import customtkinter as ctk
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps, ImageTk
 
 from alert_sounds import AlertSounds, CoveredFaces
+from lanes import LABELS as LANE_LABELS
 
 # ---------------------------------------------------------------------------
 # Design tokens - the redesign's whole palette is these 17 colors (see
@@ -415,7 +416,14 @@ def _screen_work_area(window):
 # list - a routine pass stays plain white.
 LOG_KINDS = {
     "entry": {"color": VERIFIED, "icon": "sign-in", "word": "ENTRY"},
+    # Someone recognized at the gate's exit camera (lanes.py) - leaving, so
+    # plain ink rather than the entrance's green.
+    "exit": {"color": INK_600, "icon": "sign-out", "word": "EXIT"},
     "card": {"color": VERIFIED, "icon": "identification-card", "word": "CARD"},
+    # An odd entry/exit pattern (backend EntryLog.PatternFlag): leaving with no
+    # entry today, or entering again with no exit since - usually a missed
+    # scan, worth a question. Let in either way, no sound.
+    "pattern": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "warning", "word": "CHECK", "sec": True},
     "unknown": {"color": CAUTION, "tint": CAUTION_TINT, "icon": "user-circle-dashed", "word": "UNKNOWN", "sec": True},
     "spoof": {"color": DANGER, "tint": DANGER_TINT, "icon": "warning-octagon", "word": "SPOOF", "sec": True},
     "covered": {"color": PROMPT, "tint": PROMPT_TINT, "icon": "hand-palm", "word": "COVERED", "sec": True},
@@ -485,6 +493,326 @@ class _KeyBurst:
         card = text[self._start:].strip()
         self._entry.delete(self._start, "end")
         return card or None
+
+
+# The odd entry/exit patterns (backend EntryLog.PatternFlag) on a live-log
+# row: (the row's word, the line under the name).
+PATTERN_WORDS = {
+    "no_entry": ("NO ENTRY TODAY", "no entry recorded today - ask them"),
+    "no_exit": ("NO EXIT YET", "no exit since their last entry - ask them"),
+}
+
+
+class _Feed:
+    """One camera's video panel on the gate monitor: the entrance camera's,
+    and beside it the exit camera's when the gate has one (lanes.py). Each
+    keeps its own picture, face boxes and caption; the alarm banner shows on
+    the panel of the camera it's about. Sizes, fonts and the banner state
+    come from the window (`monitor`).
+
+    The canvas paints the whole panel itself - dark rounded body, the top
+    strip (LIVE row or alarm banner) and the feed - as ONE composited image
+    each frame, its corners rounded off in the canvas color (see
+    compose_panel). Overlay text is drawn straight onto the canvas on top of
+    that, never as CTkLabel widgets: a widget can't show the live video
+    behind it, so any label over the feed would sit in its own flat box."""
+
+    # How much of the camera frame may be trimmed off (per axis) so the feed
+    # fills the panel edge to edge. Past this - a very tall or very wide
+    # window - the whole frame is shown with bars instead, so nobody standing
+    # near the edge of the picture can be cropped out of view.
+    MAX_FEED_CROP = 0.35
+
+    def __init__(self, monitor, parent, direction, get_preview_frame, get_camera_size=None, get_camera_fps=None,
+                 camera_zoom=1.0, camera_index=None):
+        self.m = monitor
+        self.direction = direction
+        self.canvas = tk.Canvas(parent, bg=CANVAS, highlightthickness=0)
+        self.get_preview_frame = get_preview_frame
+        # () -> (width, height) of the camera's own frames, before zoom and
+        # before shrinking for the face checks; () -> frames a second it
+        # really delivers, or None - both only for the caption.
+        self.get_camera_size = get_camera_size
+        self.get_camera_fps = get_camera_fps
+        # The frames arrive already zoomed; this is only for the caption.
+        self.camera_zoom = camera_zoom or 1.0
+        self.camera_index = camera_index
+        self.recognitions = []
+        self.image_size = (1, 1)
+        # Drives the "No camera connected" placeholder - a timestamp rather
+        # than a sticky boolean, so the same logic covers never connected,
+        # disconnected mid-session and reconnected. Starts now, not at zero,
+        # so a camera's normal startup delay doesn't read as silent too long.
+        self.last_frame_at = time.monotonic()
+        self.showing_no_camera = False
+        # The visible feed area on the canvas, (x0, y0, x1, y1) - face boxes
+        # are clipped to it.
+        self.feed_bounds = (0, 0, 1, 1)
+        self.caption = "Starting camera…"
+        self.draw_times = deque(maxlen=30)
+        self._image = None
+        self._cutouts_key = None
+        self._cutouts = []
+
+    @property
+    def alert(self):
+        """The alarm banner, if it's about this camera."""
+        alert = self.m._alert
+        return alert if alert and alert.get("direction", "entry") == self.direction else None
+
+    def refresh(self):
+        frame = self.get_preview_frame()
+        if frame is not None:
+            self.last_frame_at = time.monotonic()
+            self.showing_no_camera = False
+            self.draw_frame(frame)
+        elif time.monotonic() - self.last_frame_at >= self.m.CAMERA_GRACE_SECONDS:
+            # No frame for a while now - either no camera ever connected, or
+            # one did and then stopped (unplugged, driver crash - see
+            # Camera._close_after_failure). Camera's own background loop
+            # keeps retrying for as long as the app runs, so the moment a
+            # frame arrives again the branch above takes back over.
+            if not self.showing_no_camera:
+                self.showing_no_camera = True
+                self.m._refresh_in_frame()
+            self.draw_no_camera_placeholder()
+
+    def panel_size(self):
+        return (self.canvas.winfo_width() or self.m.MIN_VIDEO_SIZE[0],
+                self.canvas.winfo_height() or self.m.MIN_VIDEO_SIZE[1])
+
+    def compose_panel(self, frame=None):
+        """The whole video panel as one image, filling the canvas: dark body,
+        the top strip (filled with the alarm color while a banner shows), and
+        the live frame (OpenCV BGR) filling the area below it (cropped a
+        little if its shape differs from the panel's - see MAX_FEED_CROP) -
+        then the corners rounded off. Returns (image, panel rect, frame
+        placement): the rect is (x, y, w, h) on the canvas; the placement is
+        where the full, uncropped frame would sit, for mapping face boxes,
+        which draw_box then clips to the visible feed.
+
+        Shrunk with OpenCV and turned RGB only after shrinking, and the
+        corners painted in the canvas color instead of an alpha mask over the
+        whole panel: measured at 1037x530, 5 ms a frame instead of 21."""
+        import cv2  # already loaded by the camera; here so the launcher's `from ui import` doesn't load it
+
+        canvas_w, canvas_h = self.panel_size()
+        rect = (0, 0, canvas_w, canvas_h)
+        strip_h = self.m._strip_height()
+        feed_w, feed_h = canvas_w, max(1, canvas_h - strip_h)
+        self.feed_bounds = (0, strip_h, feed_w, strip_h + feed_h)
+        panel = Image.new("RGB", (canvas_w, canvas_h), INK)
+        if self.alert:
+            ImageDraw.Draw(panel).rectangle((0, 0, canvas_w, strip_h), fill=ALERTS[self.alert["kind"]]["color"])
+        placement = None
+        if frame is not None:
+            src_h, src_w = frame.shape[:2]
+            cover = max(feed_w / src_w, feed_h / src_h)
+            crop = 1 - min(feed_w / (src_w * cover), feed_h / (src_h * cover))
+            scale = cover if crop <= self.MAX_FEED_CROP else min(feed_w / src_w, feed_h / src_h)
+            img_w, img_h = max(1, round(src_w * scale)), max(1, round(src_h * scale))
+            origin_x, origin_y = (feed_w - img_w) // 2, strip_h + (feed_h - img_h) // 2
+            # Bilinear, not Lanczos: on a moving video frame the difference
+            # isn't visible, and it's several times cheaper every frame.
+            resized = cv2.resize(frame, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
+            # Paste only the part inside the feed area, so a cropped frame
+            # can't spill up into the strip.
+            left, top = max(0, -origin_x), max(0, strip_h - origin_y)
+            right, bottom = min(img_w, feed_w - origin_x), min(img_h, strip_h + feed_h - origin_y)
+            visible = cv2.cvtColor(resized[top:bottom, left:right], cv2.COLOR_BGR2RGB)
+            panel.paste(Image.fromarray(visible), (max(0, origin_x), max(strip_h, origin_y)))
+            placement = (origin_x, origin_y, img_w, img_h)
+        background = ImageColor.getrgb(CANVAS)
+        for box, cutout in self.corner_cutouts(panel.size, self.m._px(self.m.VIDEO_PANEL_CORNER_RADIUS)):
+            panel.paste(background, box, mask=cutout)
+        return panel, rect, placement
+
+    def corner_cutouts(self, size, radius):
+        """The four corners outside the rounded panel, as (box, mask) - built
+        once per panel size and painted each frame."""
+        key = (size, radius)
+        if self._cutouts_key != key:
+            mask = Image.new("L", size, 0)
+            ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, fill=255)
+            outside = ImageOps.invert(mask)
+            width, height = size
+            r = max(1, min(radius, width, height))
+            boxes = ((0, 0, r, r), (width - r, 0, width, r), (0, height - r, r, height),
+                     (width - r, height - r, width, height))
+            self._cutouts_key = key
+            self._cutouts = [(box, outside.crop(box)) for box in boxes]
+        return self._cutouts
+
+    def show_panel(self, panel, rect):
+        # Kept as self._image (not a local) - Tk drops a PhotoImage with no
+        # surviving reference, which would blank the canvas. Reused (pasted
+        # into) while the panel keeps its size.
+        image = self._image
+        if image is not None and (image.width(), image.height()) == panel.size:
+            image.paste(panel)
+        else:
+            self._image = ImageTk.PhotoImage(panel)
+        self.canvas.delete("all")
+        self.canvas.create_image(rect[0], rect[1], image=self._image, anchor="nw")
+
+    def text(self, x, y, text, family, px, color, anchor="w", weight="normal", width=None):
+        kwargs = {"width": width} if width else {}
+        return self.canvas.create_text(
+            x, y, text=text, font=self.m._tkfont(family, px, weight), fill=color, anchor=anchor, **kwargs
+        )
+
+    def draw_overlays(self, rect):
+        """The top strip's contents - either the LIVE row (a square status
+        dot, LIVE / NO SIGNAL, which camera, and the caption) or the alarm
+        banner's icon, title, subtitle, speaker mark and time - drawn straight
+        onto the canvas over the composited panel. Runs on every redraw, so
+        the banner's appear/disappear timing needs no redraw call of its own."""
+        m = self.m
+        s = m._s
+        panel_x, panel_y, panel_w, _panel_h = rect
+        strip_h = m._strip_height()
+        cy = panel_y + strip_h / 2
+        x = panel_x + m._px(26)
+        alert_state = self.alert
+        if alert_state:
+            alert = ALERTS[alert_state["kind"]]
+            glyph = _icon(alert["icon"])
+            if glyph:
+                self.text(x, cy, glyph, ICON_FONT_BOLD, 36 * s["strip"] / 64, "white")
+                x += m._px(36 * s["strip"] / 64 + 16)
+            # Right side first - the time always shows, the speaker mark when
+            # there's room - so the title and subtitle fit into what's left
+            # (a half-width panel, with two cameras, has far less).
+            right_x = panel_x + panel_w - m._px(26)
+            time_id = self.text(right_x, cy, alert_state["time"], FONT_MONO_MEDIUM, 16, "white", anchor="e")
+            right_x = self.canvas.bbox(time_id)[0] - m._px(12)
+            speaker = _icon("speaker-high")
+            if speaker and right_x - x > m._px(520):
+                speaker_id = self.text(right_x, cy, speaker, ICON_FONT_BOLD, 28 * s["strip"] / 64, "white", anchor="e")
+                right_x = self.canvas.bbox(speaker_id)[0] - m._px(16)
+            title = alert["title"] + (" · EXIT" if self.direction == "exit" else "")
+            # The title's size steps down until it fits, then is shortened if
+            # it still doesn't.
+            title_px = s["banner_title"]
+            while title_px > 14 and m._tkfont(SEMI_HEAVY, title_px).measure(title) > right_x - x - m._px(8):
+                title_px -= 2
+            title = _ellipsize(m._tkfont(SEMI_HEAVY, title_px), title, right_x - x - m._px(8))
+            title_id = self.text(x, cy, title, SEMI_HEAVY, title_px, "white")
+            x = self.canvas.bbox(title_id)[2] + m._px(16)
+            sub_font = m._tkfont(FONT, s["banner_sub"])
+            sub = _ellipsize(sub_font, alert_state.get("sub") or alert["sub"], right_x - x)
+            if sub and right_x - x > m._px(40):
+                self.text(x, cy, sub, FONT, s["banner_sub"], "white")
+            return
+
+        live = not self.showing_no_camera
+        dot = m._px(10)
+        self.canvas.create_rectangle(x, cy - dot / 2, x + dot, cy + dot / 2, fill=BRASS if live else INK_400,
+                                     outline="")
+        word_id = self.text(x + dot + m._px(10), cy, "LIVE" if live else "NO SIGNAL", COND_HEAVY, 16, "white")
+        x = self.canvas.bbox(word_id)[2] + m._px(12)
+        # Which camera this is - always named, so a guard never has to guess
+        # which side of the gate a face is on.
+        lane_id = self.text(x, cy, LANE_LABELS.get(self.direction, ""), COND_HEAVY, 16, BRASS)
+        caption_x = self.canvas.bbox(lane_id)[2] + m._px(16)
+        caption_font = m._tkfont(FONT_MONO, 14)
+        caption = _ellipsize(caption_font, self.caption, panel_x + panel_w - m._px(16) - caption_x)
+        self.text(caption_x, cy, caption, FONT_MONO, 14, INK_400)
+
+    def draw_no_camera_placeholder(self):
+        m = self.m
+        s = m._s
+        panel, rect, _placement = self.compose_panel(None)
+        self.show_panel(panel, rect)
+        panel_x, panel_y, panel_w, panel_h = rect
+        strip_h = m._strip_height()
+        cx, cy = panel_x + panel_w / 2, panel_y + strip_h + (panel_h - strip_h) / 2
+        t = (s["strip"] - 52) / 12  # 0 at the narrow profile, 1 at full HD
+        glyph = _icon("video-camera-slash", bold=False)
+        if glyph:
+            self.text(cx, cy - m._px(48), glyph, ICON_FONT, 44 + 12 * t, BRASS, anchor="s")
+        wrap = min(panel_w - m._px(52), m._px(620))
+        self.text(cx, cy - m._px(28), "No camera connected — card taps still work.", SEMI_HEAVY, 22 + 6 * t,
+                  "white", anchor="n", width=wrap)
+        self.text(cx, cy + m._px(28 + 14 * t), "Connecting a camera resumes automatically.", FONT, 16 + 4 * t,
+                  LINE, anchor="n", width=wrap)
+        index = self.camera_index if self.camera_index is not None else 0
+        self.caption = f"Camera {index} · waiting for device"
+        self.draw_overlays(rect)
+
+    def draw_frame(self, frame):
+        panel, rect, placement = self.compose_panel(frame)
+        self.show_panel(panel, rect)
+
+        src_w, src_h = self.image_size
+        if src_w > 0 and src_h > 0 and placement:
+            origin_x, origin_y, img_w, img_h = placement
+            for item in self.recognitions:
+                self.draw_box(item, origin_x, origin_y, img_w, img_h, src_w, src_h)
+
+        count = len(self.recognitions)
+        zoom = f" · zoom {self.camera_zoom:.1f}x" if self.camera_zoom > 1.0 else ""
+        # Two sizes, so 1440p doesn't look like it isn't working: what the
+        # camera takes, and what the face checks get (zoomed, then shrunk to
+        # Settings > Camera > "Detail sent for face checks").
+        camera_size = self.get_camera_size() if self.get_camera_size else None
+        camera_fps = self.get_camera_fps() if self.get_camera_fps else None
+        camera = (f"camera {camera_size[0]}×{camera_size[1]}" + (f" {camera_fps:.0f} fps" if camera_fps else "")
+                  + " · ") if camera_size else ""
+        checked = f"checked {src_w}×{src_h}" if src_w > 1 and src_h > 1 else "checked –"
+        # How smooth the video really is: redraws a second (each shows the
+        # camera's latest picture, so it can't look smoother than the camera).
+        self.draw_times.append(time.monotonic())
+        times = self.draw_times
+        screen = (f" · screen {(len(times) - 1) / (times[-1] - times[0]):.0f} fps"
+                  if len(times) >= 10 and times[-1] > times[0] else "")
+        self.caption = f"{camera}{checked}{zoom}{screen} · {count} face{'s' if count != 1 else ''} tracked"
+        self.draw_overlays(rect)
+
+    def draw_box(self, item, origin_x, origin_y, img_w, img_h, src_w, src_h):
+        m = self.m
+        box = item.get("box")
+        if not box:
+            return
+        x0 = origin_x + (box["left"] / src_w) * img_w
+        y0 = origin_y + (box["top"] / src_h) * img_h
+        x1 = origin_x + (box["right"] / src_w) * img_w
+        y1 = origin_y + (box["bottom"] / src_h) * img_h
+        # Clipped to the visible feed - the frame may be cropped a little to
+        # fill the panel (see compose_panel), and a face in the trimmed
+        # margin shouldn't draw its box over the strip or off the panel.
+        feed_x0, feed_y0, feed_x1, feed_y1 = self.feed_bounds
+        x0, y0 = max(x0, feed_x0), max(y0, feed_y0)
+        x1, y1 = min(x1, feed_x1 - 1), min(y1, feed_y1 - 1)
+        if x1 - x0 < m._px(8) or y1 - y0 < m._px(8):
+            return  # face is (almost) entirely in the cropped-off margin
+        color, icon_name, label = GateMonitorWindow._box_style(item)
+        if item.get("distance_m") is not None:
+            label = f"{label} · {item['distance_m']:.1f} m"
+
+        self.canvas.create_rectangle(x0, y0, x1, y1, outline=color, width=m._px(2))
+
+        # The name tab: a solid color tab sitting on the box's top edge,
+        # icon + label in white. Flipped inside the box if it would run up
+        # into the top strip.
+        tab_px = m._s["tab"]
+        text_font = m._tkfont(FONT, tab_px, "bold")
+        glyph = _icon(icon_name)
+        icon_w = m._px(tab_px + 6) if glyph else 0
+        pad_x, pad_y = m._px(10), m._px(6)
+        tab_h = text_font.metrics("linespace") + 2 * pad_y
+        tab_w = icon_w + text_font.measure(label) + 2 * pad_x
+        top = y0 - tab_h
+        if top < feed_y0 + m._px(4):
+            top = y0
+        # Kept inside the feed - a face near the right edge would otherwise
+        # push its tab off the side of the panel.
+        left = max(feed_x0, min(x0 - m._px(1), feed_x1 - tab_w - m._px(4)))
+        self.canvas.create_rectangle(left, top, left + tab_w, top + tab_h, fill=color, outline="")
+        cy = top + tab_h / 2
+        if glyph:
+            self.text(left + pad_x, cy, glyph, ICON_FONT_BOLD, tab_px, "white")
+        self.text(left + pad_x + icon_w, cy, label, FONT, tab_px, "white", weight="bold")
 
 
 class GateMonitorWindow:
@@ -564,6 +892,8 @@ class GateMonitorWindow:
     # no counter on screen.
     STAT_SPECS = (
         ("entries", "ENTRIES", INK, "sign-in"),
+        # People recognized at the exit camera (lanes.py) - 0 at a gate without one.
+        ("exits", "EXITS", INK_600, "sign-out"),
         ("unknown", "UNKNOWN", CAUTION, "user-circle-dashed"),
         ("spoof", "SPOOF", DANGER, "warning-octagon"),
         ("in_frame", "IN FRAME", INK_600, "users"),
@@ -577,19 +907,25 @@ class GateMonitorWindow:
                  officer_name="", version="", on_close=None,
                  camera_options=None, on_camera_change=None, initial_camera_index=None,
                  video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0,
-                 get_camera_size=None, get_camera_fps=None):
-        self._get_preview_frame = get_preview_frame
-        # This gate's camera zoom (launcher's Entry Agent settings) - the frames
-        # arrive already zoomed; this is only for the video caption.
-        self._camera_zoom = camera_zoom or 1.0
-        # () -> (width, height) of the camera's own frames, before zoom and
-        # before shrinking for the face checks - also only for the caption.
-        self._get_camera_size = get_camera_size
-        # () -> frames a second the camera really delivers, or None; and when
-        # this window drew its last frames - both shown in the caption, so
-        # "it doesn't feel like 60" can be read off the screen.
-        self._get_camera_fps = get_camera_fps
-        self._draw_times = deque(maxlen=30)
+                 get_camera_size=None, get_camera_fps=None, on_exit_camera_change=None, on_reader_setup=None):
+        # The entrance camera's feed - get_preview_frame, its camera zoom (the
+        # frames arrive already zoomed; only for the caption), and () -> its
+        # frame size / measured frame rate, also for the caption. The exit
+        # camera's feed is added later by show_exit_feed (see _Feed).
+        self._entry_feed_args = dict(get_preview_frame=get_preview_frame, get_camera_size=get_camera_size,
+                                     get_camera_fps=get_camera_fps, camera_zoom=camera_zoom,
+                                     camera_index=initial_camera_index)
+        self._feeds = {}
+        # on_exit_camera_change(index or None): the guard chose the exit
+        # camera (or "none") in the "Cameras & card readers" window - main.py
+        # opens it and calls show_exit_feed / hide_exit_feed.
+        self._on_exit_camera_change = on_exit_camera_change
+        self._exit_camera_index = None
+        # on_reader_setup("set_exit" | "clear"): the same window's exit card
+        # reader buttons (card_readers.py); set_reader_status() answers.
+        self._on_reader_setup = on_reader_setup
+        self._readers = {"available": False, "exit_reader": None, "waiting": False}
+        self._setup_dialog = None
         # Outside the gate's opening hours (Settings > Scheduling), as the
         # backend says with every scan answer - see set_after_hours().
         self._after_hours = False
@@ -622,34 +958,18 @@ class GateMonitorWindow:
         # camera_options: [(index, label), ...] from camera.list_available_
         # cameras() - a laptop with more than one camera (or a webcam that
         # isn't at index 0) otherwise has no way to tell the entry-agent
-        # which one to actually use; see _build_status_bar/_handle_camera_
-        # picked. on_camera_change(index) is main.py's Camera.set_index,
-        # called when the dropdown selection changes.
+        # which one to actually use; see _open_setup_dialog.
+        # on_camera_change(index) is main.py's, for the entrance camera.
         self._camera_options = camera_options or []
         self._on_camera_change = on_camera_change
-        self._initial_camera_index = initial_camera_index
-        self._camera_choices = {}  # display string -> index, filled in below
 
-        self._video_image = None
-        self._latest_recognitions = []
-        self._latest_image_size = (1, 1)
-        # Drives the "No camera connected" placeholder in _update_video -
-        # tracked as a timestamp rather than a sticky boolean so the same
-        # logic covers never connected, disconnected mid-session, and
-        # reconnected. Starts at window-creation time, not zero, so a real
-        # camera's normal brief startup delay doesn't immediately read as
-        # "already been silent too long".
-        self._last_frame_at = time.monotonic()
-        self._showing_no_camera = False
-        # The visible feed area on the video canvas, (x0, y0, x1, y1) - set
-        # by _compose_panel each frame; face boxes are clipped to it.
-        self._feed_bounds = (0, 0, 1, 1)
-        self._panel_bounds = None
         self._seen_log_ids = set()
         self._log_entries = []  # newest first; each keeps its own row widgets and thumbnails (_add_log_row)
         self._log_placeholder = None  # "Earlier events appear here." while the list is empty
-        self.stats = {"entries": 0, "unknown": 0, "spoof": 0, "occlusion": 0}
-        self._alert = None  # {"kind": ..., "time": ..., "sub": ...} while the alarm banner shows
+        self.stats = {"entries": 0, "exits": 0, "unknown": 0, "spoof": 0, "occlusion": 0}
+        # {"kind": ..., "time": ..., "sub": ..., "direction": ...} while the
+        # alarm banner shows - on the panel of the camera it's about.
+        self._alert = None
         # Settings page: "Alert on suspected fake face" - on until the
         # backend says otherwise (see set_alert_settings).
         self._alert_spoof = True
@@ -657,7 +977,9 @@ class GateMonitorWindow:
         # not-enrolled (refused) - all on until the backend says otherwise.
         self._sound_on = {"unknown": True, "covered": True, "not_enrolled": True}
         self._sounds = AlertSounds()  # a different sound per event (alert_sounds.py)
-        self._covered_faces = CoveredFaces()
+        # Once per covered person - kept per camera (their boxes are in
+        # different pictures).
+        self._covered_faces = {"entry": CoveredFaces(), "exit": CoveredFaces()}
         self._alert_hide_job = None
         self._card_reset_job = None
         self._card_images = {}
@@ -714,8 +1036,7 @@ class GateMonitorWindow:
         # set inline gets clobbered by that. Windows-only state, so a
         # TclError elsewhere just leaves the restore geometry in place.
         self.window.after(300, self._maximize)
-        if self._get_preview_frame:
-            self.window.after(self._video_refresh_ms, self._update_video)
+        self.window.after(self._video_refresh_ms, self._update_video)
 
     def _fit_design_to_screen(self):
         """Scales every CTk widget so the 1920x1080 design fills the screen
@@ -820,10 +1141,10 @@ class GateMonitorWindow:
         # divider used to be missing.
         tk.Frame(header, bg=BRASS, width=max(1, self._px(1))).pack(side="left", fill="y", pady=26)
 
-        # Right side packs right-to-left: the ENTRY pill (every gate checks
-        # people coming in - exits aren't recorded), then the clock.
-        # Turns into a caution "AFTER HOURS" pill outside the gate's opening
-        # hours - see _render_after_hours.
+        # Right side packs right-to-left: the ENTRY pill ("ENTRY + EXIT" once
+        # the gate has an exit camera), then the clock. Turns into a caution
+        # "AFTER HOURS" pill outside the gate's opening hours - see
+        # _render_mode_badge.
         badge = ctk.CTkFrame(header, fg_color=SURFACE, corner_radius=round(s["badge"] * 1.1))
         badge.pack(side="right", padx=(26, s["pad"]))
         self._mode_icon = self._icon_label(badge, "sign-in", round(s["badge"] * 1.0), MAROON_DEEP)
@@ -971,16 +1292,52 @@ class GateMonitorWindow:
         left.bind("<Configure>", self._on_left_configure)
 
     def _build_video_panel(self, parent):
-        # The canvas fills its cell edge-to-edge and paints the whole panel
-        # itself - dark rounded body, the top strip (LIVE row or alarm
-        # banner) and the feed - as ONE composited image each frame, its
-        # corners rounded off in the canvas color (see _compose_panel). Overlay text is
-        # drawn straight onto the canvas on top of that, never as CTkLabel
-        # widgets: a widget can't show the live video behind it, so any
-        # label over the feed would sit in its own flat-colored box.
-        self.video_canvas = tk.Canvas(parent, bg=CANVAS, highlightthickness=0)
-        self.video_canvas.grid(row=1, column=0, sticky="nsew")
-        self._caption_text = "Starting camera…"
+        """The camera feeds (_Feed): the entrance camera's, and the exit
+        camera's beside it once one is chosen (show_exit_feed) - side by side,
+        halves of the same space."""
+        self._video_area = ctk.CTkFrame(parent, fg_color="transparent")
+        self._video_area.grid(row=1, column=0, sticky="nsew")
+        self._video_area.grid_rowconfigure(0, weight=1)
+        self._feeds["entry"] = _Feed(self, self._video_area, "entry", **self._entry_feed_args)
+        self._layout_feeds()
+
+    def _layout_feeds(self):
+        gap = self._s["col_gap"] // 2
+        two = "exit" in self._feeds
+        for column, direction in enumerate(("entry", "exit")):
+            self._video_area.grid_columnconfigure(column, weight=1 if (column == 0 or two) else 0,
+                                                  uniform="feeds" if two else "")
+            feed = self._feeds.get(direction)
+            if feed is not None:
+                pad = (0, gap) if two and column == 0 else (gap, 0) if two else (0, 0)
+                feed.canvas.grid(row=0, column=column, sticky="nsew", padx=pad)
+
+    def show_exit_feed(self, get_preview_frame, get_camera_size=None, get_camera_fps=None, camera_zoom=1.0,
+                       camera_index=None):
+        """Shows the exit camera's feed beside the entrance one (Tk thread -
+        main.py calls it from the camera choice, or at startup)."""
+        self.hide_exit_feed()
+        self._feeds["exit"] = _Feed(self, self._video_area, "exit", get_preview_frame, get_camera_size,
+                                    get_camera_fps, camera_zoom, camera_index)
+        self._exit_camera_index = camera_index
+        self._layout_feeds()
+        self._render_mode_badge()
+
+    def hide_exit_feed(self):
+        feed = self._feeds.pop("exit", None)
+        self._exit_camera_index = None
+        if feed is not None:
+            feed.canvas.destroy()
+            self._layout_feeds()
+            self._refresh_in_frame()
+            self._render_mode_badge()
+
+    def _refresh_in_frame(self):
+        """IN FRAME: faces in view across the cameras - "—" with none working."""
+        working = [feed for feed in self._feeds.values() if not feed.showing_no_camera]
+        self.stat_tiles["in_frame"].configure(
+            text=str(sum(len(feed.recognitions) for feed in working)) if working else "—"
+        )
 
     def _build_card_panel(self, parent):
         """The compact card-scanner strip under the feed: a status bar on its
@@ -1194,7 +1551,7 @@ class GateMonitorWindow:
         self.camera_icon.pack(side="left", padx=(0, 6))
         self.camera_label = self._label(camera, "Camera OK", (FONT, 14, "bold"), VERIFIED)
         self.camera_label.pack(side="left")
-        self._build_camera_picker(inner)
+        self._build_setup_button(inner)
         self._build_student_toggle(inner)
 
         identity = " · ".join(part for part in (self.officer_name, self.version) if part)
@@ -1232,45 +1589,171 @@ class GateMonitorWindow:
         self.backend_label = self._label(backend, "Backend OK", (FONT, 14, "bold"), VERIFIED)
         self.backend_label.pack(side="left")
 
-    def _build_camera_picker(self, bar):
-        """A laptop with more than one camera (or a desktop where the
-        webcam just isn't at index 0) has no other way to tell the
-        entry-agent which one to actually use - without this, the video
-        panel can show "No camera connected" even though a perfectly good
-        camera IS plugged in, just not the one Camera happened to try first.
-        Values are "index: label" strings (e.g. "0: Logitech BRIO") so the
-        index survives round-tripping through CTkOptionMenu's plain-string
-        API - self._camera_choices maps each value back to its index."""
-        display_values = [f"{index}: {label}" for index, label in self._camera_options]
-        if not display_values:
-            display_values = ["No camera found"]
-        self._camera_choices = {
-            value: index for value, (index, _label) in zip(display_values, self._camera_options)
-        }
+    def _build_setup_button(self, bar):
+        """"Cameras & card readers" - opens the window where the guard picks
+        the entrance camera, the exit camera (or none - an entrance-only
+        gate), and which card reader is the exit's (_open_setup_dialog). A
+        laptop with more than one camera has no other way to tell the gate
+        monitor which one to use."""
+        button = ctk.CTkFrame(bar, corner_radius=8, border_width=math.ceil(1 / self._scale), height=34,
+                              fg_color=SURFACE, border_color=MAROON, cursor="hand2")
+        button.pack(side="left", padx=(12, 0))
+        icon = self._icon_label(button, "video-camera", 16, MAROON, height=20)
+        icon.pack(side="left", padx=(12, 8), pady=6)
+        label = self._label(button, "Cameras & card readers", (FONT, 14, "bold"), MAROON, height=20)
+        label.pack(side="left", padx=(0, 12), pady=6)
+        for widget in (button, icon, label):
+            widget.bind("<Button-1>", lambda _e: self._open_setup_dialog())
+            widget.configure(cursor="hand2")
 
-        default_value = next(
-            (value for value, (index, _label) in zip(display_values, self._camera_options)
-             if index == self._initial_camera_index),
-            display_values[0],
+    # Values are "index: label" strings (e.g. "0: Logitech BRIO") so the
+    # index survives CTkOptionMenu's plain-string API.
+    NO_EXIT_CAMERA = "None - this gate records entries only"
+
+    def _camera_values(self):
+        return {f"{index}: {label}": index for index, label in self._camera_options}
+
+    def _open_setup_dialog(self):
+        """The "Cameras & card readers" window: the entrance camera, the exit
+        camera, and the exit card reader. Changes take effect at once and are
+        remembered for next time (main.py)."""
+        if self._setup_dialog is not None:
+            self._setup_dialog.lift()
+            return
+        dialog = ctk.CTkToplevel(self.window)
+        dialog.title("Cameras & card readers")
+        dialog.configure(fg_color=SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self.window)
+        dialog.protocol("WM_DELETE_WINDOW", self._close_setup_dialog)
+        body = ctk.CTkFrame(dialog, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=28, pady=24)
+        self._label(body, "Cameras & card readers", (SEMI_BOLD, 22), INK, anchor="w").pack(fill="x")
+        self._label(body, f"{self.gate_location} - one camera and one card reader for each side of the gate.",
+                    (FONT, 14), INK_600, anchor="w", justify="left", wraplength=470).pack(fill="x", pady=(4, 14))
+
+        values = self._camera_values()
+        names = list(values) or ["No camera found"]
+        menu_style = dict(width=470, height=34, corner_radius=3, font=(FONT_MONO, 13), dropdown_font=(FONT_MONO, 13),
+                          fg_color=CANVAS, text_color=INK, button_color=CANVAS, button_hover_color=LINE,
+                          dropdown_fg_color=SURFACE, dropdown_hover_color=CANVAS, dropdown_text_color=INK)
+
+        def current(index):
+            return next((name for name, value in values.items() if value == index), None)
+
+        self._label(body, "ENTRANCE CAMERA", (COND_BOLD, 14), INK_600, anchor="w").pack(fill="x")
+        entry_menu = ctk.CTkOptionMenu(body, values=names, command=self._entry_camera_picked, **menu_style)
+        entry_menu.set(current(self._feeds["entry"].camera_index) or names[0])
+        entry_menu.pack(fill="x", pady=(4, 12))
+        self._label(body, "EXIT CAMERA", (COND_BOLD, 14), INK_600, anchor="w").pack(fill="x")
+        exit_menu = ctk.CTkOptionMenu(body, values=[self.NO_EXIT_CAMERA, *values], command=self._exit_camera_picked,
+                                      **menu_style)
+        exit_menu.set(current(self._exit_camera_index) or self.NO_EXIT_CAMERA)
+        exit_menu.pack(fill="x", pady=(4, 4))
+        if not values:
+            entry_menu.configure(state="disabled")
+            exit_menu.configure(state="disabled")
+        camera_note = self._label(body, "", (FONT, 13, "bold"), DANGER, anchor="w", justify="left", wraplength=470)
+        camera_note.pack(fill="x", pady=(0, 10))
+
+        tk.Frame(body, bg=LINE, height=max(1, self._px(1))).pack(fill="x", pady=(4, 14))
+        self._label(body, "EXIT CARD READER", (COND_BOLD, 14), INK_600, anchor="w").pack(fill="x")
+        reader_text = self._label(body, "", (FONT, 14), INK, anchor="w", justify="left", wraplength=470)
+        reader_text.pack(fill="x", pady=(4, 10))
+        buttons = ctk.CTkFrame(body, fg_color="transparent")
+        buttons.pack(fill="x")
+        button_style = dict(font=(FONT, 14, "bold"), height=38, corner_radius=8)
+        set_button = ctk.CTkButton(buttons, text="Set exit reader", fg_color=MAROON, hover_color=MAROON_DEEP,
+                                   text_color="white", command=lambda: self._reader_action("set_exit"), **button_style)
+        set_button.pack(side="left")
+        clear_button = ctk.CTkButton(
+            buttons, text="Clear", fg_color=SURFACE, hover_color=CANVAS, text_color=INK,
+            border_width=math.ceil(1 / self._scale), border_color=INK_400,
+            command=lambda: self._reader_action("clear"), **button_style,
         )
+        clear_button.pack(side="left", padx=(10, 0))
+        ctk.CTkButton(
+            body, text="Close", fg_color=SURFACE, hover_color=CANVAS, text_color=INK,
+            border_width=math.ceil(1 / self._scale), border_color=INK_400, command=self._close_setup_dialog,
+            **button_style,
+        ).pack(anchor="e", pady=(22, 0))
 
-        self.camera_picker = ctk.CTkOptionMenu(
-            bar, values=display_values, command=self._handle_camera_picked,
-            width=210, height=30, corner_radius=3, font=(FONT_MONO, 13), dropdown_font=(FONT_MONO, 13),
-            fg_color=CANVAS, text_color=INK, button_color=CANVAS, button_hover_color=LINE,
-            dropdown_fg_color=SURFACE, dropdown_hover_color=CANVAS, dropdown_text_color=INK,
-        )
-        self.camera_picker.set(default_value)
-        self.camera_picker.pack(side="left", padx=(12, 0))
-        if not self._camera_options:
-            # Nothing to switch to - still shown (so it's obvious the app
-            # looked and found none), just not interactive.
-            self.camera_picker.configure(state="disabled")
+        self._setup_dialog = dialog
+        self._setup_widgets = {"entry": entry_menu, "exit": exit_menu, "camera_note": camera_note,
+                               "reader_text": reader_text, "set": set_button, "clear": clear_button}
+        self._render_reader_status()
+        dialog.update_idletasks()
+        x = self.window.winfo_rootx() + (self.window.winfo_width() - dialog.winfo_reqwidth()) // 2
+        y = self.window.winfo_rooty() + (self.window.winfo_height() - dialog.winfo_reqheight()) // 3
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.after(150, dialog.lift)
 
-    def _handle_camera_picked(self, selected_value):
-        index = self._camera_choices.get(selected_value)
-        if index is not None and self._on_camera_change:
+    def _close_setup_dialog(self):
+        if self._readers.get("waiting") and self._on_reader_setup:
+            self._on_reader_setup("cancel")
+        if self._setup_dialog is not None:
+            self._setup_dialog.destroy()
+            self._setup_dialog = None
+
+    def _entry_camera_picked(self, value):
+        index = self._camera_values().get(value)
+        widgets = self._setup_widgets
+        if index is None:
+            return
+        if index == self._exit_camera_index:
+            widgets["camera_note"].configure(text="That camera is the exit camera - each side needs its own.")
+            widgets["entry"].set(next((name for name, i in self._camera_values().items()
+                                       if i == self._feeds["entry"].camera_index), value))
+            return
+        widgets["camera_note"].configure(text="")
+        self._feeds["entry"].camera_index = index
+        if self._on_camera_change:
             self._on_camera_change(index)
+
+    def _exit_camera_picked(self, value):
+        index = self._camera_values().get(value)  # None: "no exit camera"
+        widgets = self._setup_widgets
+        if index is not None and index == self._feeds["entry"].camera_index:
+            widgets["camera_note"].configure(text="That camera is the entrance camera - each side needs its own.")
+            widgets["exit"].set(next((name for name, i in self._camera_values().items()
+                                      if i == self._exit_camera_index), self.NO_EXIT_CAMERA))
+            return
+        widgets["camera_note"].configure(text="")
+        if self._on_exit_camera_change:
+            self._on_exit_camera_change(index)
+
+    def _reader_action(self, action):
+        if self._on_reader_setup:
+            self._on_reader_setup(action)
+
+    def set_reader_status(self, status):
+        """status from card_readers.CardReaders.status(), plus an optional
+        "message" - the exit reader as set, or "waiting for a tap"."""
+        self._queue.put(("reader_status", status))
+
+    def _render_reader_status(self):
+        status = self._readers
+        exit_reader = status.get("exit_reader")
+        self.reader_label.configure(text="Entrance + exit readers" if exit_reader else "Reader ready")
+        if self._setup_dialog is None:
+            return
+        widgets = self._setup_widgets
+        if not status.get("available"):
+            text, color = ("This computer can't tell card readers apart, so every tap counts as the entrance's.",
+                           CAUTION)
+        elif status.get("waiting"):
+            text, color = "Tap any card on the reader at the EXIT now…", PROMPT
+        elif exit_reader:
+            text, color = (f"Set: {exit_reader}. Every other reader is the entrance's. Keep each reader in its "
+                           "USB port - they're told apart by port.", INK)
+        else:
+            text, color = "Not set - every reader counts as the entrance's.", INK_600
+        if status.get("message"):
+            text = f"{status['message']} {text}"
+        widgets["reader_text"].configure(text=text, text_color=color)
+        widgets["set"].configure(state="normal" if status.get("available") and not status.get("waiting")
+                                 else "disabled")
+        widgets["clear"].configure(state="normal" if exit_reader or status.get("waiting") else "disabled")
 
     def _build_student_toggle(self, bar):
         """"Open student display" / "Student display open · Close" - opens
@@ -1309,14 +1792,17 @@ class GateMonitorWindow:
         # Imported here, not at the top: student_display imports this module.
         from student_display import StudentDisplayWindow
 
+        # The student display faces the entrance - it shows the entrance
+        # camera only, whether or not the gate has an exit camera.
+        entrance = self._feeds["entry"]
         self._student = StudentDisplayWindow(
-            self.window, self.gate_location, self.direction, self._get_preview_frame,
-            is_camera_down=lambda: self._showing_no_camera,
+            self.window, self.gate_location, self.direction, entrance.get_preview_frame,
+            is_camera_down=lambda: entrance.showing_no_camera,
             on_card_key=self._forward_card_key,
             on_close=self._student_closed,
             fps=self._student_display_fps,
         )
-        self._student.update_recognitions(self._latest_recognitions, self._latest_image_size)
+        self._student.update_recognitions(entrance.recognitions, entrance.image_size)
         self._refresh_student_toggle()
 
     def _student_closed(self):
@@ -1335,18 +1821,19 @@ class GateMonitorWindow:
 
     # ---- public API: camera side ------------------------------------------
 
-    def show_recognitions(self, recognitions, image_size):
+    def show_recognitions(self, recognitions, image_size, direction="entry"):
         """recognitions: list of dicts with box/matched/name/student_id/
         department/confidence/log_id/deduped, one per face in the latest
-        scanned frame. image_size: (width, height) of that frame, so boxes
-        (in that frame's pixel coordinates) can be scaled onto the preview."""
-        self._queue.put(("recognitions", (recognitions, image_size)))
+        scanned frame of the `direction` camera (entrance or exit).
+        image_size: (width, height) of that frame, so boxes (in that frame's
+        pixel coordinates) can be scaled onto the preview."""
+        self._queue.put(("recognitions", (recognitions, image_size, direction)))
 
     def show_offline(self, offline):
         self._queue.put(("offline", offline))
 
-    def seed_stats(self, entries_today, unknown_today, spoof_today=0, occlusion_today=0):
-        self._queue.put(("seed", (entries_today, unknown_today, spoof_today, occlusion_today)))
+    def seed_stats(self, entries_today, unknown_today, spoof_today=0, occlusion_today=0, exits_today=0):
+        self._queue.put(("seed", (entries_today, unknown_today, spoof_today, occlusion_today, exits_today)))
 
     def set_threshold(self, threshold):
         self._queue.put(("threshold", threshold))
@@ -1419,8 +1906,8 @@ class GateMonitorWindow:
     def set_backend_ok(self, ok):
         self._queue.put(("backend_ok", ok))
 
-    def set_camera_ok(self, ok):
-        self._queue.put(("camera_ok", ok))
+    def set_camera_ok(self, ok, bad_text="Camera not connected"):
+        self._queue.put(("camera_ok", (ok, bad_text)))
 
     def is_closed(self):
         """True once the window is gone - lets main.py's status poll stop
@@ -1453,16 +1940,19 @@ class GateMonitorWindow:
 
     def _handle_queue_item(self, kind, payload):
         if kind == "recognitions":
-            recognitions, image_size = payload
-            self._render_recognitions(recognitions, image_size)
+            recognitions, image_size, direction = payload
+            self._render_recognitions(recognitions, image_size, direction)
         elif kind == "offline":
             self._render_offline(payload)
         elif kind == "seed":
-            entries, unknown, spoof, occlusion = payload
-            self.stats["entries"] = entries
+            entries, unknown, spoof, occlusion, exits = payload
+            self.stats["entries"], self.stats["exits"] = entries, exits
             self.stats["unknown"], self.stats["spoof"] = unknown, spoof
             self.stats["occlusion"] = occlusion
             self._refresh_stat_labels()
+        elif kind == "reader_status":
+            self._readers = payload
+            self._render_reader_status()
         elif kind == "threshold":
             self.threshold_label.configure(text=f"{payload:.2f}")
         elif kind == "after_hours":
@@ -1492,8 +1982,9 @@ class GateMonitorWindow:
             self._set_status(self.backend_icon, self.backend_label, payload,
                              "Backend OK", "Backend not OK", DANGER, "x-circle")
         elif kind == "camera_ok":
-            self._set_status(self.camera_icon, self.camera_label, payload,
-                             "Camera OK", "Camera not connected", CAUTION, "warning")
+            ok, bad_text = payload if isinstance(payload, tuple) else (payload, "Camera not connected")
+            self._set_status(self.camera_icon, self.camera_label, ok,
+                             "Cameras OK" if "exit" in self._feeds else "Camera OK", bad_text, CAUTION, "warning")
         elif kind == "gate_sign_in":
             self._render_gate_sign_in(payload)
         elif kind == "sign_in_result":
@@ -1816,23 +2307,26 @@ class GateMonitorWindow:
             self._pack_card_lines(self.card_title, self.card_sub, self.card_ids, self.card_note)
         else:
             self._pack_card_lines(self.card_title, self.card_sub, self.card_ids)
-        word = "CARD · AFTER HOURS" if self._after_hours else f"CARD · {direction}"
-        word_color = CAUTION if self._after_hours else VERIFIED
+        kind, word, feature_word, extra = self._pass_kind(
+            direction.lower(), profile.get("not_enrolled"), profile.get("pattern_flag"), "", card=True,
+        )
+        strip_word = "CARD · AFTER HOURS" if self._after_hours else f"CARD · {direction}"
+        word_color = CAUTION if self._after_hours or kind == "pattern" else VERIFIED
         self.card_word_icon.configure(
             text=_icon("moon" if self._after_hours else "identification-card"), text_color=word_color
         )
-        self.card_word.configure(text=word, text_color=word_color)
+        self.card_word.configure(text=strip_word, text_color=word_color)
         self.card_time.configure(text=timestamp)
         self.card_time.pack(anchor="e")
         self.card_right.grid()
         self._schedule_card_reset()
-        if self._student is not None:
+        if self._student is not None and direction == "ENTRY":
             self._student.show_card_result("accepted")
 
         self._push_log_row(
-            kind="after_hours" if self._after_hours else "card", name=name,
-            id_text=profile.get("student_id") or "—", time=timestamp,
-            word=word, photo_bytes=profile.get("photo_bytes"), initials_seed=name,
+            kind=kind, name=name, id_text=profile.get("student_id") or "—", time=timestamp,
+            word=word or strip_word, feature_word=feature_word or strip_word, photo_bytes=profile.get("photo_bytes"),
+            initials_seed=name, extra=extra,
         )
 
     def _render_card_failure(self, reason, reason_code):
@@ -1912,10 +2406,15 @@ class GateMonitorWindow:
 
     # ---- camera events ----------------------------------------------------
 
-    def _render_recognitions(self, recognitions, image_size):
-        self._latest_recognitions = recognitions
-        self._latest_image_size = image_size
-        self.stat_tiles["in_frame"].configure(text=str(len(recognitions)))
+    def _render_recognitions(self, recognitions, image_size, direction="entry"):
+        """One scanned frame's answer from the `direction` camera (entrance
+        or exit): its boxes go on that camera's feed; new events go into the
+        one live log, counters and alarms."""
+        feed = self._feeds.get(direction)
+        if feed is not None:  # the exit camera may have just been switched off
+            feed.recognitions = recognitions
+            feed.image_size = image_size
+        self._refresh_in_frame()
         corrected = {log_id for item in recognitions for log_id in item.get("corrected_log_ids") or []}
         if corrected:
             self._undo_unknowns(corrected)
@@ -1924,7 +2423,8 @@ class GateMonitorWindow:
         # the new-event loop below - its soft sound plays once per person,
         # when a covered face shows up where none was a moment ago.
         covered = [item["box"] for item in recognitions if item.get("occlusion_suspected") and item.get("box")]
-        if self._covered_faces.new_arrivals(covered) and self._sound_on["covered"]:
+        tracker = self._covered_faces.setdefault(direction, CoveredFaces())
+        if tracker.new_arrivals(covered) and self._sound_on["covered"]:
             self._sounds.play("covered")
 
         for item in recognitions:
@@ -1933,12 +2433,13 @@ class GateMonitorWindow:
             if not is_new_event:
                 continue
             self._seen_log_ids.add(log_id)
+            item.setdefault("direction", direction)
             if item.get("spoof_suspected"):
                 self.stats["spoof"] += 1
                 # Still counted and logged either way - the Settings page's
                 # "Alert on suspected fake face" only silences the alarm.
                 if self._alert_spoof:
-                    self._show_alert_banner("spoof")
+                    self._show_alert_banner("spoof", direction=direction)
                     self._sounds.play("spoof")
             elif item.get("occlusion_suspected"):
                 # Only reached by an older backend - covered faces no longer
@@ -1951,21 +2452,23 @@ class GateMonitorWindow:
                 if self._sound_on["not_enrolled"]:
                     self._sounds.play("not_enrolled")
             elif item["matched"]:
-                self.stats["entries"] += 1
+                self.stats["exits" if direction == "exit" else "entries"] += 1
             else:
+                # An unknown face leaving is still someone unregistered who
+                # was inside - same alarm, on the exit camera's panel.
                 self.stats["unknown"] += 1
                 if item.get("repeated_unknown"):
                     count = item.get("repeated_unknown_count")
                     sub = f"Seen {count} times at this gate recently — check this person" if count else None
-                    self._show_alert_banner("repeated", sub)
+                    self._show_alert_banner("repeated", sub, direction=direction)
                 else:
-                    self._show_alert_banner("unknown")
+                    self._show_alert_banner("unknown", direction=direction)
                 if self._sound_on["unknown"]:
                     self._sounds.play("unknown")
             self._push_log_entry(item)
 
         self._refresh_stat_labels()
-        if self._student is not None:
+        if self._student is not None and direction == "entry":
             self._student.update_recognitions(recognitions, image_size)
 
     def _undo_unknowns(self, log_ids):
@@ -1992,13 +2495,14 @@ class GateMonitorWindow:
             self._hide_alert_banner()
         self._refresh_stat_labels()
 
-    def _show_alert_banner(self, kind, sub=None):
-        """Docks the alarm banner across the top of the video panel - fires
-        once per genuinely new unknown-face or spoof event (the same log_id
-        dedup the stats/log rely on), not on every ~0.2s poll while the
-        person is still in frame. Just sets state here - _draw_overlays,
-        called on every video refresh tick, is what draws it."""
-        self._alert = {"kind": kind, "time": datetime.now().strftime("%I:%M:%S %p"), "sub": sub}
+    def _show_alert_banner(self, kind, sub=None, direction="entry"):
+        """Docks the alarm banner across the top of the video panel of the
+        camera it's about - fires once per genuinely new unknown-face or spoof
+        event (the same log_id dedup the stats/log rely on), not on every
+        ~0.2s poll while the person is still in frame. Just sets state here -
+        _Feed.draw_overlays, called on every video refresh tick, draws it."""
+        self._alert = {"kind": kind, "time": datetime.now().strftime("%I:%M:%S %p"), "sub": sub,
+                       "direction": direction}
         if self._alert_hide_job:
             self.window.after_cancel(self._alert_hide_job)
         self._alert_hide_job = self.window.after(self.ALERT_DISPLAY_MS, self._hide_alert_banner)
@@ -2011,6 +2515,7 @@ class GateMonitorWindow:
 
     def _refresh_stat_labels(self):
         self.stat_tiles["entries"].configure(text=str(self.stats["entries"]))
+        self.stat_tiles["exits"].configure(text=str(self.stats["exits"]))
         self.stat_tiles["unknown"].configure(text=str(self.stats["unknown"]))
         self.stat_tiles["spoof"].configure(text=str(self.stats["spoof"]))
         self.stat_tiles["today"].configure(text=str(self.stats["entries"]))
@@ -2057,10 +2562,15 @@ class GateMonitorWindow:
         if after_hours == self._after_hours:
             return
         self._after_hours = after_hours
+        self._render_mode_badge()
+
+    def _render_mode_badge(self):
         if self._test_mode:
             return  # the pill keeps saying TEST MODE
+        both = "exit" in self._feeds
         background, color, icon, word = (
-            (CAUTION, "white", "moon", "AFTER HOURS") if after_hours else (SURFACE, MAROON_DEEP, "sign-in", "ENTRY")
+            (CAUTION, "white", "moon", "AFTER HOURS") if self._after_hours
+            else (SURFACE, MAROON_DEEP, "sign-in", "ENTRY + EXIT" if both else "ENTRY")
         )
         self._mode_badge.configure(fg_color=background)
         self._mode_icon.configure(text=_icon(icon), text_color=color, fg_color=background)
@@ -2072,10 +2582,13 @@ class GateMonitorWindow:
         # though it isn't this event's own outcome - appended to the meta
         # line rather than dropped, per EntryLog.occlusion_detected.
         extra = " · face briefly covered" if item.get("occlusion_seen") else ""
+        leaving = item.get("direction") == "exit"
+        at_exit = " · AT EXIT" if leaving else ""
         if item.get("spoof_suspected"):
             self._push_log_row(
                 kind="spoof", name="Possible spoof", id_text="Liveness check failed", time=timestamp,
-                feature_word="SPOOF SUSPECTED", photo_bytes=item.get("photo_bytes"), extra=extra,
+                word="SPOOF · EXIT" if leaving else None, feature_word=f"SPOOF SUSPECTED{at_exit}",
+                photo_bytes=item.get("photo_bytes"), extra=extra,
             )
         elif item.get("occlusion_suspected"):
             self._push_log_row(
@@ -2093,25 +2606,40 @@ class GateMonitorWindow:
             # photos should be retaken.
             if item.get("photos_due"):
                 extra += " · photos due for update"
-            # Not on this semester's enrolled list - let in, flagged for the guard.
-            if item.get("not_enrolled"):
-                kind = "not_enrolled"
-                word = "NOT ENROLLED · AFTER HOURS" if self._after_hours else "NOT ENROLLED"
-            else:
-                kind = "after_hours" if self._after_hours else "entry"
-                word = "ENTRY · AFTER HOURS" if self._after_hours else None
+            kind, word, feature_word, extra = self._pass_kind(
+                "exit" if leaving else "entry", item.get("not_enrolled"), item.get("pattern_flag"), extra,
+            )
             self._push_log_row(
                 kind=kind, name=item["name"],
                 id_text=item.get("student_id") or "—", time=timestamp,
-                feature_word=word,
+                word=word, feature_word=feature_word,
                 conf=item.get("confidence"), photo_bytes=item.get("photo_bytes"),
                 initials_seed=item["name"], extra=extra,
             )
         else:
             self._push_log_row(
                 kind="unknown", name="Unknown", id_text="No ID on file", time=timestamp,
+                word="UNKNOWN · EXIT" if leaving else None, feature_word=f"UNKNOWN{at_exit}",
                 photo_bytes=item.get("photo_bytes"), extra=extra, log_id=item.get("log_id"),
             )
+
+    def _pass_kind(self, way, not_enrolled, pattern_flag, extra, card=False):
+        """(kind, row word, featured word, extra) for someone let through
+        `way` ("entry" or "exit"), by face or by card. In order: not enrolled
+        this semester (coming in only), an odd entry/exit pattern
+        (PATTERN_WORDS - the guard should ask), after hours, or a plain pass."""
+        base = ("CARD · " if card else "") + way.upper()
+        hours = " · AFTER HOURS" if self._after_hours else ""
+        if not_enrolled and way == "entry":
+            return "not_enrolled", "NOT ENROLLED", f"NOT ENROLLED{hours}", extra
+        if pattern_flag in PATTERN_WORDS:
+            word, note = PATTERN_WORDS[pattern_flag]
+            return "pattern", word, f"{base} · {word}{hours}", f"{extra} · {note}"
+        if self._after_hours:
+            return "after_hours", "AFTER HOURS" + (" · EXIT" if way == "exit" else ""), f"{base} · AFTER HOURS", extra
+        if card:
+            return "card", base, base, extra
+        return way, None, None, extra
 
     def _meta(self, entry):
         conf = f" · {entry['conf']}%" if entry.get("conf") is not None else ""
@@ -2266,240 +2794,21 @@ class GateMonitorWindow:
         if self._closed:
             return
         started = time.perf_counter()
-        try:
-            self._refresh_video()
-        except Exception:
-            # Logged, then the next frame tries again - an escaped error here
-            # used to skip the reschedule and leave the feed frozen for good.
-            traceback.print_exc()
+        for feed in list(self._feeds.values()):
+            try:
+                feed.refresh()
+            except Exception:
+                # Logged, then the next frame tries again - an escaped error
+                # here used to skip the reschedule and freeze the feed for good.
+                traceback.print_exc()
         # The next frame is due one interval after this one STARTED - waiting
         # the whole interval after drawing made 20 a second come out at ~13.
         # But never sooner than VIDEO_MIN_GAP_MS after drawing ends.
         spent_ms = (time.perf_counter() - started) * 1000
         self.window.after(max(VIDEO_MIN_GAP_MS, round(self._video_refresh_ms - spent_ms)), self._update_video)
 
-    def _refresh_video(self):
-        frame = self._get_preview_frame()
-        if frame is not None:
-            self._last_frame_at = time.monotonic()
-            if self._showing_no_camera:
-                self._showing_no_camera = False
-            self._draw_frame(frame)
-        elif time.monotonic() - self._last_frame_at >= self.CAMERA_GRACE_SECONDS:
-            # No frame for a while now - either no camera ever connected, or
-            # one did and then stopped (unplugged, driver crash - see
-            # Camera._close_after_failure). Camera's own background loop
-            # keeps retrying the connection for as long as the app runs, so
-            # the moment a frame arrives again the branch above takes back
-            # over - no restart needed.
-            if not self._showing_no_camera:
-                self._showing_no_camera = True
-                self.stat_tiles["in_frame"].configure(text="—")
-            self._draw_no_camera_placeholder()
-
-    def _panel_size(self):
-        return (
-            self.video_canvas.winfo_width() or self.MIN_VIDEO_SIZE[0],
-            self.video_canvas.winfo_height() or self.MIN_VIDEO_SIZE[1],
-        )
-
     def _strip_height(self):
         return self._px(self._s["strip"])
-
-    # How much of the camera frame may be trimmed off (per axis) so the feed
-    # fills the panel edge to edge. Past this - a very tall or very wide
-    # window - the whole frame is shown with bars instead, so nobody standing
-    # near the edge of the picture can be cropped out of view.
-    MAX_FEED_CROP = 0.35
-
-    def _compose_panel(self, frame=None):
-        """The whole video panel as one image, filling the canvas cell: dark
-        body, the top strip (filled with the alarm color while a banner
-        shows), and the live frame (OpenCV BGR) filling the area below it
-        (cropped a little if its shape differs from the panel's - see
-        MAX_FEED_CROP) - then the corners rounded off. Returns (image, panel
-        rect, frame placement): the rect is (x, y, w, h) on the canvas; the
-        placement is where the full, uncropped frame would sit, for mapping
-        face boxes, which _draw_box then clips to the visible feed.
-
-        Shrunk with OpenCV and turned RGB only after shrinking, and the
-        corners painted in the canvas color instead of an alpha mask over the
-        whole panel: measured at 1037x530, 5 ms a frame instead of 21 - the
-        difference between ~18 and the chosen 30 frames a second."""
-        import cv2  # already loaded by the camera; here so the launcher's `from ui import` doesn't load it
-
-        canvas_w, canvas_h = self._panel_size()
-        rect = (0, 0, canvas_w, canvas_h)
-        strip_h = self._strip_height()
-        feed_w, feed_h = canvas_w, max(1, canvas_h - strip_h)
-        self._feed_bounds = (0, strip_h, feed_w, strip_h + feed_h)
-        panel = Image.new("RGB", (canvas_w, canvas_h), INK)
-        if self._alert:
-            ImageDraw.Draw(panel).rectangle((0, 0, canvas_w, strip_h), fill=ALERTS[self._alert["kind"]]["color"])
-        placement = None
-        if frame is not None:
-            src_h, src_w = frame.shape[:2]
-            cover = max(feed_w / src_w, feed_h / src_h)
-            crop = 1 - min(feed_w / (src_w * cover), feed_h / (src_h * cover))
-            scale = cover if crop <= self.MAX_FEED_CROP else min(feed_w / src_w, feed_h / src_h)
-            img_w, img_h = max(1, round(src_w * scale)), max(1, round(src_h * scale))
-            origin_x, origin_y = (feed_w - img_w) // 2, strip_h + (feed_h - img_h) // 2
-            # Bilinear, not Lanczos: on a moving video frame the difference
-            # isn't visible, and it's several times cheaper every frame.
-            resized = cv2.resize(frame, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
-            # Paste only the part inside the feed area, so a cropped frame
-            # can't spill up into the strip.
-            left, top = max(0, -origin_x), max(0, strip_h - origin_y)
-            right, bottom = min(img_w, feed_w - origin_x), min(img_h, strip_h + feed_h - origin_y)
-            visible = cv2.cvtColor(resized[top:bottom, left:right], cv2.COLOR_BGR2RGB)
-            panel.paste(Image.fromarray(visible), (max(0, origin_x), max(strip_h, origin_y)))
-            placement = (origin_x, origin_y, img_w, img_h)
-        background = ImageColor.getrgb(CANVAS)
-        for box, cutout in self._corner_cutouts(panel.size, self._px(self.VIDEO_PANEL_CORNER_RADIUS)):
-            panel.paste(background, box, mask=cutout)
-        return panel, rect, placement
-
-    def _corner_cutouts(self, size, radius):
-        """The four corners outside the rounded panel, as (box, mask) - built
-        once per panel size from _corner_mask and painted each frame."""
-        key = (size, radius)
-        if getattr(self, "_corner_cutouts_key", None) != key:
-            outside = ImageOps.invert(self._corner_mask(size, radius))
-            width, height = size
-            r = max(1, min(radius, width, height))
-            boxes = ((0, 0, r, r), (width - r, 0, width, r), (0, height - r, r, height),
-                     (width - r, height - r, width, height))
-            self._corner_cutouts_key = key
-            self._corner_cutouts_list = [(box, outside.crop(box)) for box in boxes]
-        return self._corner_cutouts_list
-
-    def _corner_mask(self, size, radius):
-        """The rounded-corner mask for the video panel - built once per panel
-        size and reused every frame (it used to be redrawn from scratch about
-        24 times a second)."""
-        key = (size, radius)
-        if getattr(self, "_corner_mask_key", None) != key:
-            mask = Image.new("L", size, 0)
-            ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, fill=255)
-            self._corner_mask_key, self._corner_mask_image = key, mask
-        return self._corner_mask_image
-
-    def _show_panel(self, panel, rect):
-        # Kept as self._video_image (not a local) - Tk drops a PhotoImage
-        # with no surviving reference, which would blank the canvas. Reused
-        # (pasted into) while the panel keeps its size.
-        image = self._video_image
-        if image is not None and (image.width(), image.height()) == panel.size:
-            image.paste(panel)
-        else:
-            self._video_image = ImageTk.PhotoImage(panel)
-        self.video_canvas.delete("all")
-        self.video_canvas.create_image(rect[0], rect[1], image=self._video_image, anchor="nw")
-        self._panel_bounds = rect
-
-    def _canvas_text(self, x, y, text, family, px, color, anchor="w", weight="normal", width=None):
-        kwargs = {"width": width} if width else {}
-        return self.video_canvas.create_text(
-            x, y, text=text, font=self._tkfont(family, px, weight), fill=color, anchor=anchor, **kwargs
-        )
-
-    def _draw_overlays(self, rect):
-        """The top strip's contents - either the LIVE row (a square status
-        dot, LIVE / NO SIGNAL, and the caption) or the alarm banner's icon,
-        title, subtitle, speaker mark and time - drawn straight onto the
-        canvas over the composited panel. Called last from both _draw_frame
-        and _draw_no_camera_placeholder, which between them run continuously
-        at VIDEO_REFRESH_MS, so the banner's appear/disappear timing needs no
-        redraw call of its own."""
-        s = self._s
-        panel_x, panel_y, panel_w, _panel_h = rect
-        strip_h = self._strip_height()
-        cy = panel_y + strip_h / 2
-        x = panel_x + self._px(26)
-        if self._alert:
-            alert = ALERTS[self._alert["kind"]]
-            glyph = _icon(alert["icon"])
-            if glyph:
-                self._canvas_text(x, cy, glyph, ICON_FONT_BOLD, 36 * s["strip"] / 64, "white")
-                x += self._px(36 * s["strip"] / 64 + 16)
-            title_id = self._canvas_text(x, cy, alert["title"], SEMI_HEAVY, s["banner_title"], "white")
-            x = self.video_canvas.bbox(title_id)[2] + self._px(16)
-            # Right side first, so the subtitle can be ellipsized into
-            # whatever width is left between the title and it.
-            right_x = panel_x + panel_w - self._px(26)
-            time_id = self._canvas_text(right_x, cy, self._alert["time"], FONT_MONO_MEDIUM, 16, "white", anchor="e")
-            right_x = self.video_canvas.bbox(time_id)[0] - self._px(12)
-            speaker = _icon("speaker-high")
-            if speaker:
-                speaker_id = self._canvas_text(right_x, cy, speaker, ICON_FONT_BOLD, 28 * s["strip"] / 64, "white", anchor="e")
-                right_x = self.video_canvas.bbox(speaker_id)[0] - self._px(16)
-            sub_font = self._tkfont(FONT, s["banner_sub"])
-            sub = _ellipsize(sub_font, self._alert.get("sub") or alert["sub"], right_x - x)
-            if sub and right_x - x > self._px(40):
-                self._canvas_text(x, cy, sub, FONT, s["banner_sub"], "white")
-            return
-
-        live = not self._showing_no_camera
-        dot = self._px(10)
-        self.video_canvas.create_rectangle(
-            x, cy - dot / 2, x + dot, cy + dot / 2, fill=BRASS if live else INK_400, outline=""
-        )
-        word_id = self._canvas_text(x + dot + self._px(10), cy, "LIVE" if live else "NO SIGNAL", COND_HEAVY, 16, "white")
-        caption_x = self.video_canvas.bbox(word_id)[2] + self._px(16)
-        self._canvas_text(caption_x, cy, self._caption_text, FONT_MONO, 14, INK_400)
-
-    def _draw_no_camera_placeholder(self):
-        s = self._s
-        panel, rect, _placement = self._compose_panel(None)
-        self._show_panel(panel, rect)
-        panel_x, panel_y, panel_w, panel_h = rect
-        strip_h = self._strip_height()
-        cx, cy = panel_x + panel_w / 2, panel_y + strip_h + (panel_h - strip_h) / 2
-        t = (s["strip"] - 52) / 12  # 0 at the narrow profile, 1 at full HD
-        glyph = _icon("video-camera-slash", bold=False)
-        if glyph:
-            self._canvas_text(cx, cy - self._px(48), glyph, ICON_FONT, 44 + 12 * t, BRASS, anchor="s")
-        wrap = min(panel_w - self._px(52), self._px(620))
-        self._canvas_text(
-            cx, cy - self._px(28), "No camera connected — card taps still work.", SEMI_HEAVY, 22 + 6 * t,
-            "white", anchor="n", width=wrap,
-        )
-        self._canvas_text(
-            cx, cy + self._px(28 + 14 * t), "Connecting a camera resumes automatically.", FONT, 16 + 4 * t,
-            LINE, anchor="n", width=wrap,
-        )
-        index = self._initial_camera_index if self._initial_camera_index is not None else 0
-        self._caption_text = f"Camera {index} · waiting for device"
-        self._draw_overlays(rect)
-
-    def _draw_frame(self, frame):
-        panel, rect, placement = self._compose_panel(frame)
-        self._show_panel(panel, rect)
-
-        src_w, src_h = self._latest_image_size
-        if src_w > 0 and src_h > 0 and placement:
-            origin_x, origin_y, img_w, img_h = placement
-            for item in self._latest_recognitions:
-                self._draw_box(item, origin_x, origin_y, img_w, img_h, src_w, src_h)
-
-        count = len(self._latest_recognitions)
-        zoom = f" · zoom {self._camera_zoom:.1f}x" if self._camera_zoom > 1.0 else ""
-        # Two sizes, so 1440p doesn't look like it isn't working: what the
-        # camera takes, and what the face checks get (zoomed, then shrunk to
-        # Settings > Camera > "Detail sent for face checks").
-        camera_size = self._get_camera_size() if self._get_camera_size else None
-        camera_fps = self._get_camera_fps() if self._get_camera_fps else None
-        camera = (f"camera {camera_size[0]}×{camera_size[1]}" + (f" {camera_fps:.0f} fps" if camera_fps else "")
-                  + " · ") if camera_size else ""
-        checked = f"checked {src_w}×{src_h}" if src_w > 1 and src_h > 1 else "checked –"
-        # How smooth the video really is: redraws a second (each shows the
-        # camera's latest picture, so it can't look smoother than the camera).
-        self._draw_times.append(time.monotonic())
-        times = self._draw_times
-        screen = (f" · screen {(len(times) - 1) / (times[-1] - times[0]):.0f} fps"
-                  if len(times) >= 10 and times[-1] > times[0] else "")
-        self._caption_text = f"{camera}{checked}{zoom}{screen} · {count} face{'s' if count != 1 else ''} tracked"
-        self._draw_overlays(rect)
 
     @staticmethod
     def _box_style(item):
@@ -2542,53 +2851,10 @@ class GateMonitorWindow:
             return VERIFIED, "sign-in", label
         return CAUTION, "user-circle-dashed", "UNKNOWN"
 
-    def _draw_box(self, item, origin_x, origin_y, img_w, img_h, src_w, src_h):
-        box = item.get("box")
-        if not box:
-            return
-        x0 = origin_x + (box["left"] / src_w) * img_w
-        y0 = origin_y + (box["top"] / src_h) * img_h
-        x1 = origin_x + (box["right"] / src_w) * img_w
-        y1 = origin_y + (box["bottom"] / src_h) * img_h
-        # Clipped to the visible feed - the frame may be cropped a little to
-        # fill the panel (see _compose_panel), and a face in the trimmed
-        # margin shouldn't draw its box over the strip or off the panel.
-        feed_x0, feed_y0, feed_x1, feed_y1 = self._feed_bounds
-        x0, y0 = max(x0, feed_x0), max(y0, feed_y0)
-        x1, y1 = min(x1, feed_x1 - 1), min(y1, feed_y1 - 1)
-        if x1 - x0 < self._px(8) or y1 - y0 < self._px(8):
-            return  # face is (almost) entirely in the cropped-off margin
-        color, icon_name, label = self._box_style(item)
-        if item.get("distance_m") is not None:
-            label = f"{label} · {item['distance_m']:.1f} m"
-
-        self.video_canvas.create_rectangle(x0, y0, x1, y1, outline=color, width=self._px(2))
-
-        # The name tab: a solid color tab sitting on the box's top edge,
-        # icon + label in white. Flipped inside the box if it would run up
-        # into the top strip.
-        tab_px = self._s["tab"]
-        text_font = self._tkfont(FONT, tab_px, "bold")
-        glyph = _icon(icon_name)
-        icon_w = self._px(tab_px + 6) if glyph else 0
-        pad_x, pad_y = self._px(10), self._px(6)
-        tab_h = text_font.metrics("linespace") + 2 * pad_y
-        tab_w = icon_w + text_font.measure(label) + 2 * pad_x
-        top = y0 - tab_h
-        if top < feed_y0 + self._px(4):
-            top = y0
-        # Kept inside the feed - a face near the right edge would otherwise
-        # push its tab off the side of the panel.
-        left = max(feed_x0, min(x0 - self._px(1), feed_x1 - tab_w - self._px(4)))
-        self.video_canvas.create_rectangle(left, top, left + tab_w, top + tab_h, fill=color, outline="")
-        cy = top + tab_h / 2
-        if glyph:
-            self._canvas_text(left + pad_x, cy, glyph, ICON_FONT_BOLD, tab_px, "white")
-        self._canvas_text(left + pad_x + icon_w, cy, label, FONT, tab_px, "white", weight="bold")
-
     def _handle_close(self):
         self._closed = True
         self._close_sign_in_dialog()
+        self._close_setup_dialog()
         if self._student is not None:
             self._student.close()  # it's a child window - it goes when the monitor does
         if self._on_close:

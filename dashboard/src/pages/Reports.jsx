@@ -214,6 +214,105 @@ function hourLabel(hour) {
   return `${h % 12 === 0 ? 12 : h % 12}:00 ${suffix}`;
 }
 
+// Entries against exits (reports/views.py _in_out): blue in, orange out - a
+// pair the dataviz palette validator passes for color-blind readers (ΔE 24.7)
+// and everyone else (33.6), and always named in the legend beside them.
+const IN_OUT = [
+  { key: "entries", label: "Entries", color: "#2a78d6" },
+  { key: "exits", label: "Exits", color: "#eb6834" },
+];
+
+// "8h 02m" from minutes.
+function duration(minutes) {
+  if (minutes == null) return "—";
+  const hours = Math.floor(minutes / 60);
+  return hours ? `${hours}h ${String(minutes % 60).padStart(2, "0")}m` : `${minutes}m`;
+}
+
+function InOutStat({ label, value, tone = "" }) {
+  return (
+    <div className="flex flex-col gap-s1 border-l border-line px-s4">
+      <span className={`t-eyebrow ${tone}`}>{label}</span>
+      <span className={`font-mono text-[22px] font-semibold leading-tight ${tone}`}>{value}</span>
+    </div>
+  );
+}
+
+// People coming in and going out over the range - only meaningful once a gate
+// has an exit camera (chosen in its gate monitor), so it says so when none has.
+function InOutSection({ inOut, rangeLabel }) {
+  if (!inOut) return null;
+  const hours = inOut.by_hour.map((row) => ({ ...row, h: Number(row.hour.slice(0, 2)) }));
+  const flags = inOut.pattern_flags || {};
+  return (
+    <div className="mt-s6 flex flex-col gap-s4">
+      <div className="flex flex-wrap items-baseline justify-between gap-s3">
+        <span className="t-section">Entries and exits &middot; {rangeLabel.toLowerCase()}</span>
+        {inOut.exits === 0 && (
+          <span className="text-sm text-ink-600">
+            No exits recorded yet - a gate records them once its gate monitor has an exit camera (Cameras &amp; card
+            readers).
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-y-s3">
+        <InOutStat label="Entries" value={inOut.entries} />
+        <InOutStat label="Exits" value={inOut.exits} />
+        <InOutStat label="Average stay" value={duration(inOut.average_stay_minutes)} />
+        <InOutStat label="Median stay" value={duration(inOut.median_stay_minutes)} />
+        <InOutStat label="Busiest exit hour" value={hourLabel(inOut.busiest_exit_hour)} />
+        <InOutStat label="Left, no entry" value={flags.no_entry || 0} tone={flags.no_entry ? "text-caution" : ""} />
+        <InOutStat label="In again, no exit" value={flags.no_exit || 0} tone={flags.no_exit ? "text-caution" : ""} />
+        <InOutStat label="Unknown at exits" value={inOut.exit_unknown} tone={inOut.exit_unknown ? "text-caution" : ""} />
+        <InOutStat label="Spoof at exits" value={inOut.exit_spoof} tone={inOut.exit_spoof ? "text-danger" : ""} />
+      </div>
+      <ChartCard
+        title={
+          <div className="flex flex-wrap items-center justify-between gap-s4">
+            <span className="font-display stretch-semi text-base font-bold">In and out by hour of the day</span>
+            <div className="flex gap-s4 text-xs text-ink-600">
+              {IN_OUT.map((series) => (
+                <span key={series.key} className="flex items-center gap-s2">
+                  <span className="h-3 w-3 rounded-[2px]" style={{ background: series.color }} />
+                  {series.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        }
+      >
+        <div className="h-[230px]">
+          <ResponsiveContainer>
+            <BarChart data={hours} margin={{ top: 4, right: 0, bottom: 0, left: -24 }} barCategoryGap={3} barGap={2}>
+              <CartesianGrid vertical={false} stroke={C.line} />
+              <XAxis
+                dataKey="h"
+                tick={TICK}
+                tickLine={false}
+                axisLine={{ stroke: C.line }}
+                interval={0}
+                tickFormatter={(h) => (h % 3 === 0 ? String(h) : "")}
+              />
+              <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
+              <Tooltip {...TOOLTIP} labelFormatter={(h) => `${String(h).padStart(2, "0")}:00`} />
+              {IN_OUT.map((series) => (
+                <Bar
+                  key={series.key}
+                  dataKey={series.key}
+                  name={series.label}
+                  fill={series.color}
+                  radius={[2, 2, 0, 0]}
+                  isAnimationActive={false}
+                />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </ChartCard>
+    </div>
+  );
+}
+
 function ChartCard({ title, className = "", children }) {
   return (
     <div className={`card flex min-w-0 flex-col gap-s3 px-s4 pb-s3 pt-s4 ${className}`}>
@@ -342,6 +441,10 @@ export default function Reports() {
             <span className="t-hero">{summary.entries_today}</span>
           </div>
           <div className="flex flex-col gap-s2 border-l border-line px-s5 pb-0.5">
+            <span className="t-eyebrow">Exits today</span>
+            <span className="t-stat">{summary.exits_today ?? 0}</span>
+          </div>
+          <div className="flex flex-col gap-s2 border-l border-line px-s5 pb-0.5">
             <span className={`t-eyebrow ${summary.failed_today > 0 ? "text-danger" : ""}`}>Failed verifications</span>
             <span className={`t-stat ${summary.failed_today > 0 ? "text-danger" : ""}`}>{summary.failed_today}</span>
           </div>
@@ -368,6 +471,8 @@ export default function Reports() {
       </div>
 
       <UnitBreakdown rows={summary.entries_by_unit || []} rangeLabel={rangeLabel} />
+
+      <InOutSection inOut={summary.in_out} rangeLabel={rangeLabel} />
 
       <div className="mt-s6 grid grid-cols-1 gap-x-s6 gap-y-s5 xl:grid-cols-[minmax(0,8fr)_minmax(0,4fr)]">
         <ChartCard title={`Busiest hours · ${rangeLabel.toLowerCase()}`}>

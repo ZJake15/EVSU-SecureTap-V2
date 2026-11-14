@@ -16,10 +16,23 @@ class RealEntryLogManager(models.Manager):
 
 class EntryLog(models.Model):
     class Direction(models.TextChoices):
-        # Entries only: the university doesn't record people leaving, so every
-        # gate checks people coming in. Exits used to be recorded too -
-        # migration 0013 deleted those records.
+        # Every gate has an entrance camera; one with an exit camera beside it
+        # (chosen in that gate's monitor) records people leaving too - see
+        # logs/lanes.py. (An older version recorded exits; migration 0013
+        # deleted those, and 0020 brought exits back.)
         ENTRY = "entry", "Entry"
+        EXIT = "exit", "Exit"
+
+    class PatternFlag(models.TextChoices):
+        # A let-in record that doesn't fit the person's day so far - most
+        # often a missed scan, sometimes tailgating. Shown as a tag in Logs,
+        # Live Monitoring and the gate monitor's live log; never refuses anyone.
+        NONE = "", "None"
+        # Leaving, with no entry for them since midnight.
+        NO_ENTRY = "no_entry", "No entry today"
+        # Entering again, when their last record today was an entry at a gate
+        # that records exits - so they left without being seen.
+        NO_EXIT = "no_exit", "No exit since last entry"
 
     class VerificationMethod(models.TextChoices):
         # Kept for historical rows - the dual-check tap flow was replaced by
@@ -134,6 +147,9 @@ class EntryLog(models.Model):
     # guard and the dashboard. Decided when the row is written, so a later
     # upload of the list never re-labels old entries. Set by save() itself.
     not_enrolled = models.BooleanField(default=False)
+    # An odd entry/exit pattern (see PatternFlag) - decided when the row is
+    # written, by save() itself.
+    pattern_flag = models.CharField(max_length=12, choices=PatternFlag.choices, default="", blank=True)
     # Written while the gate monitor was in the capstone test mode (see
     # logs/test_mode.py) - left out of the dashboard, deleted by "delete all
     # test data". Set by save() itself.
@@ -159,7 +175,9 @@ class EntryLog(models.Model):
                 from configuration.schedule import is_after_hours
 
                 self.after_hours = is_after_hours()
-            if not self.not_enrolled and self.person_id and self.status == self.Status.SUCCESS:
+            # Coming in only: nobody is flagged, or kept in, on the way out.
+            if (not self.not_enrolled and self.person_id and self.status == self.Status.SUCCESS
+                    and self.direction == self.Direction.ENTRY):
                 from users import semesters
 
                 self.not_enrolled = semesters.not_enrolled(self.person)
@@ -174,7 +192,34 @@ class EntryLog(models.Model):
 
             if test_mode.active():
                 self.is_test = True
+            if not self.pattern_flag and self.person_id and self.status == self.Status.SUCCESS:
+                self.pattern_flag = self._pattern_flag()
         super().save(*args, **kwargs)
+
+    # A gate counts as recording exits once it has logged one this recently -
+    # so a gate with no exit camera never flags anyone "No exit".
+    EXIT_GATE_MEMORY_DAYS = 7
+
+    def _pattern_flag(self):
+        """PatternFlag for this new let-in record, from the same person's
+        records since local midnight (test records only among test records).
+        A refusal isn't a pass, so only SUCCESS rows count."""
+        from django.utils import timezone
+
+        day_start = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = EntryLog.objects.filter(person_id=self.person_id, status=self.Status.SUCCESS,
+                                        timestamp__gte=day_start, is_test=self.is_test)
+        if self.direction == self.Direction.EXIT:
+            entered = today.filter(direction=self.Direction.ENTRY).exists()
+            return "" if entered else self.PatternFlag.NO_ENTRY
+        last = today.order_by("-timestamp").first()
+        if last is None or last.direction != self.Direction.ENTRY:
+            return ""
+        since = timezone.now() - timezone.timedelta(days=self.EXIT_GATE_MEMORY_DAYS)
+        gate_records_exits = EntryLog.objects.filter(
+            gate_location=last.gate_location, direction=self.Direction.EXIT, timestamp__gte=since,
+        ).exists()
+        return self.PatternFlag.NO_EXIT if gate_records_exits else ""
 
 
 class GateShift(models.Model):

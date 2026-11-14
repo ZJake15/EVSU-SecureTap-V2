@@ -15,6 +15,9 @@ class EntryLogSerializer(serializers.ModelSerializer):
     on_duty_name = serializers.SerializerMethodField()
     # "Faculty · Instructor I · School of Engineering - ..." (Person.affiliation).
     person_affiliation = serializers.SerializerMethodField()
+    # On an exit: when the same person came in before it that day, so Logs
+    # can show their time in and time inside. None for everything else.
+    entered_at = serializers.SerializerMethodField()
 
     class Meta:
         model = EntryLog
@@ -41,7 +44,27 @@ class EntryLogSerializer(serializers.ModelSerializer):
             "after_hours",
             "not_enrolled",
             "person_affiliation",
+            "pattern_flag",
+            "entered_at",
         ]
+
+    def get_entered_at(self, obj):
+        if obj.direction != EntryLog.Direction.EXIT or not obj.person_id or obj.status != EntryLog.Status.SUCCESS:
+            return None
+        from django.utils import timezone
+
+        local = timezone.localtime(obj.timestamp)
+        day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+        entry = (
+            EntryLog.objects.filter(
+                person_id=obj.person_id, direction=EntryLog.Direction.ENTRY, status=EntryLog.Status.SUCCESS,
+                timestamp__gte=day_start, timestamp__lt=obj.timestamp, is_test=obj.is_test,
+            )
+            .order_by("-timestamp")
+            .values_list("timestamp", flat=True)
+            .first()
+        )
+        return entry
 
     def get_person_affiliation(self, obj):
         return obj.person.affiliation() if obj.person else None

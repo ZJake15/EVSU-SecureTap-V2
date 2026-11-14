@@ -299,8 +299,9 @@ def fix_gate_key():
 # ---- an old copy's gate settings -------------------------------------------
 
 # entry-agent/.env lines that describe this gate's hardware and identity.
-# (No direction: every gate checks people coming in - exits aren't recorded,
-# so an old copy's DIRECTION=exit isn't brought along.)
+# (No direction: the gate monitor runs the entrance camera and, when one is
+# chosen in it, the exit camera - so an old copy's DIRECTION=exit isn't brought
+# along. The exit camera and reader choices live in the data folder.)
 GATE_ENV_KEYS = ("GATE_LOCATION", "CAMERA_INDEX", "CAMERA_EXPOSURE", "NFC_READER_USB_IDS", "OFFICER_NAME")
 LAUNCHER_KEYS = ("gate_location", "officer_name", "auto_launch_entry_agent", "camera_zoom")
 

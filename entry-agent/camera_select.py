@@ -108,22 +108,42 @@ def classify(cameras, windows_devices=None):
     return described
 
 
-def remembered_name():
+def _choices():
     try:
         with open(data_file(CHOICE_FILE), encoding="utf-8") as fh:
-            return (json.load(fh).get("name") or "").strip() or None
-    except (OSError, ValueError, AttributeError):
-        return None
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
-def remember(name):
+# The exit camera (lanes.py) is remembered beside the entrance one, under its
+# own key; no key, or an empty name, means this gate has no exit camera.
+_KEYS = {"entry": "name", "exit": "exit_name"}
+
+
+def remembered_name(direction="entry"):
+    return (_choices().get(_KEYS[direction]) or "").strip() or None
+
+
+def remember(name, direction="entry"):
     """Remembers a camera someone picked (setup window or the gate monitor's
-    camera list)."""
+    "Cameras & card readers" window) - None for "no exit camera"."""
+    data = _choices()
+    data[_KEYS[direction]] = name or ""
     try:
         with open(data_file(CHOICE_FILE), "w", encoding="utf-8") as fh:
-            json.dump({"name": name}, fh)
+            json.dump(data, fh)
     except OSError:
         pass  # a convenience - picking again next time still works
+
+
+def find_by_name(described, name):
+    """The index of the listed camera with this (remembered) name, or None."""
+    key = _key(name)
+    if not key:
+        return None
+    return next((index for index, camera_name, _kind in described if _key(camera_name) == key), None)
 
 
 def choose(described, remembered=None, fallback_index=0):

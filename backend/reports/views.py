@@ -42,14 +42,17 @@ class SummaryView(APIView):
         tomorrow_start = today_start + timedelta(days=1)
 
         today_logs = EntryLog.real.filter(timestamp__gte=today_start, timestamp__lt=tomorrow_start)
+        # Everything below about "entries" counts people coming in only; a
+        # gate with an exit camera also records people leaving, and those are
+        # reported on their own (in_out, below) rather than counted twice.
+        today_entries = today_logs.filter(direction=EntryLog.Direction.ENTRY)
 
-        entries_today = today_logs.filter(
-            direction=EntryLog.Direction.ENTRY, status=EntryLog.Status.SUCCESS
-        ).count()
+        entries_today = today_entries.filter(status=EntryLog.Status.SUCCESS).count()
+        exits_today = today_logs.filter(direction=EntryLog.Direction.EXIT, status=EntryLog.Status.SUCCESS).count()
         failed_today = today_logs.filter(status=EntryLog.Status.FAILED).count()
 
         entries_by_hour = self._counts_by_key(
-            today_logs.filter(status=EntryLog.Status.SUCCESS).values_list("timestamp", flat=True),
+            today_entries.filter(status=EntryLog.Status.SUCCESS).values_list("timestamp", flat=True),
             key_fn=lambda local_dt: local_dt.strftime("%H:00"),
             count_key="hour",
         )
@@ -58,7 +61,8 @@ class SummaryView(APIView):
         week_start = today_start - timedelta(days=6)
         entries_by_day = self._counts_by_key(
             EntryLog.real.filter(
-                timestamp__gte=week_start, timestamp__lt=tomorrow_start, status=EntryLog.Status.SUCCESS
+                timestamp__gte=week_start, timestamp__lt=tomorrow_start, status=EntryLog.Status.SUCCESS,
+                direction=EntryLog.Direction.ENTRY,
             ).values_list("timestamp", flat=True),
             key_fn=lambda local_dt: local_dt.strftime("%Y-%m-%d"),
             count_key="date",
@@ -67,21 +71,63 @@ class SummaryView(APIView):
         days = _parse_days(request)
         range_start = today_start - timedelta(days=days - 1)
         range_logs = EntryLog.real.filter(timestamp__gte=range_start, timestamp__lt=tomorrow_start)
+        range_entries = range_logs.filter(direction=EntryLog.Direction.ENTRY)
 
         return Response(
             {
                 "entries_today": entries_today,
+                "exits_today": exits_today,
                 "failed_today": failed_today,
                 "peak_hour": peak_hour,
                 "entries_by_hour": entries_by_hour,
                 "entries_by_day": entries_by_day,
                 "range_days": days,
-                "entries_by_method": self._entries_by_method(range_logs),
-                "entries_by_unit": self._entries_by_unit(range_logs),
+                "entries_by_method": self._entries_by_method(range_entries),
+                "entries_by_unit": self._entries_by_unit(range_entries),
                 "confidence_histogram": self._confidence_histogram(range_logs),
-                "busiest_hours": self._busiest_hours(range_logs),
+                "busiest_hours": self._busiest_hours(range_entries),
+                "in_out": self._in_out(range_logs),
             }
         )
+
+    @staticmethod
+    def _in_out(range_logs):
+        """Entries against exits for the range: both per hour of the day, the
+        busiest hour for leaving, how long people stayed (an exit paired with
+        the same person's entry before it that day), the odd patterns
+        (EntryLog.PatternFlag), and the unknown / spoof records at the exits."""
+        hours = [{"hour": f"{hour:02d}:00", "entries": 0, "exits": 0} for hour in range(24)]
+        stays = []
+        open_entry = {}  # (person, local date) -> time of their entry still waiting for an exit
+        let_in = range_logs.filter(status=EntryLog.Status.SUCCESS).order_by("timestamp")
+        for person_id, direction, ts in let_in.values_list("person_id", "direction", "timestamp"):
+            local = timezone.localtime(ts)
+            hours[local.hour]["entries" if direction == EntryLog.Direction.ENTRY else "exits"] += 1
+            if person_id is None:
+                continue
+            key = (person_id, local.date())
+            if direction == EntryLog.Direction.ENTRY:
+                open_entry[key] = ts
+            elif key in open_entry:
+                stays.append((ts - open_entry.pop(key)).total_seconds() / 60)
+        stays.sort()
+        exits = range_logs.filter(direction=EntryLog.Direction.EXIT)
+        busiest_exit = max(hours, key=lambda row: row["exits"])
+        flags = dict.fromkeys(("no_entry", "no_exit"), 0)
+        for flag in range_logs.exclude(pattern_flag="").values_list("pattern_flag", flat=True):
+            flags[flag] = flags.get(flag, 0) + 1
+        return {
+            "by_hour": hours,
+            "entries": sum(row["entries"] for row in hours),
+            "exits": sum(row["exits"] for row in hours),
+            "busiest_exit_hour": busiest_exit["hour"] if busiest_exit["exits"] else None,
+            "stays": len(stays),
+            "average_stay_minutes": round(sum(stays) / len(stays)) if stays else None,
+            "median_stay_minutes": round(stays[len(stays) // 2]) if stays else None,
+            "pattern_flags": flags,
+            "exit_unknown": exits.filter(status=EntryLog.Status.FAILED).count(),
+            "exit_spoof": exits.filter(status=EntryLog.Status.SPOOF_SUSPECTED).count(),
+        }
 
     @staticmethod
     def _counts_by_key(timestamps, key_fn, count_key):

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import apiClient from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { AfterHoursTag, NotEnrolledTag } from "../components/StatusBadge";
+import { AfterHoursTag, DirectionTag, NotEnrolledTag, PATTERN_LABELS, PatternTag } from "../components/StatusBadge";
 import { Avatar, Icon, Notice, PageHeader } from "../components/ui";
 
 const POLL_INTERVAL_MS = 1000;
@@ -69,6 +69,10 @@ function attentionKind(event) {
   if (event.status === "occlusion_detected") {
     return { word: "Face covered", icon: "hand-palm", color: "#1D5FA8", className: "text-prompt" };
   }
+  if (event.status === "success" && PATTERN_LABELS[event.pattern_flag]) {
+    // Let through, but it doesn't fit their day so far - usually a missed scan.
+    return { word: PATTERN_LABELS[event.pattern_flag].label, icon: "warning", color: "#9A5B00", className: "text-caution" };
+  }
   if (event.verification_method === "confusable_pair_tiebreak") {
     // Unresolved - no card tap came in time, and (per EntryLog.person being
     // null on this row) nobody was auto-accepted either. Needs a specific
@@ -99,7 +103,7 @@ function LatestPass({ event }) {
       <Avatar src={event.person_photo} name={event.person_name} size={120} />
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-s2">
         <span className="t-eyebrow">
-          Latest entry &middot; {event.gate_location || "Gate"}
+          {event.direction === "exit" ? "Latest exit" : "Latest entry"} &middot; {event.gate_location || "Gate"}
         </span>
         <span className="truncate text-[28px] font-bold leading-tight">{event.person_name}</span>
         {event.person_affiliation && (
@@ -114,6 +118,8 @@ function LatestPass({ event }) {
             <Icon name={method.icon} bold size={16} />
             {method.label}
           </span>
+          <DirectionTag direction={event.direction} />
+          <PatternTag flag={event.pattern_flag} />
           {event.after_hours && <AfterHoursTag />}
           {event.not_enrolled && <NotEnrolledTag />}
         </div>
@@ -150,8 +156,12 @@ function PassRow({ event }) {
             {event.person_affiliation}
           </span>
         )}
-        {event.after_hours && <AfterHoursTag />}
-        {event.not_enrolled && <NotEnrolledTag />}
+        <span className="flex flex-wrap gap-s1">
+          <DirectionTag direction={event.direction} />
+          <PatternTag flag={event.pattern_flag} />
+          {event.after_hours && <AfterHoursTag />}
+          {event.not_enrolled && <NotEnrolledTag />}
+        </span>
         {note && (
           <span className="flex items-center gap-s1 truncate text-xs text-ink-600" title={note}>
             <Icon name="note" size={12} />
@@ -192,8 +202,10 @@ function AttentionCard({ event }) {
         : "Refused · not on this semester's list"
       : isLookalike
         ? "Lookalike unresolved"
-        : event.failure_reason,
-    event.gate_location,
+        : event.status === "success" && PATTERN_LABELS[event.pattern_flag]
+          ? `${PATTERN_LABELS[event.pattern_flag].title} - ask them`
+          : event.failure_reason,
+    event.direction === "exit" ? `${event.gate_location} · exit` : event.gate_location,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -277,7 +289,15 @@ function GateDutyCard({ gate }) {
       <div className="flex flex-wrap gap-x-s4 gap-y-s1 border-t border-line pt-s2 text-xs text-ink-600">
         <span>
           <span className="font-mono font-medium text-ink">{gate.entries_today}</span>{" "}
-          {gate.entries_today === 1 ? "entry" : "entries"} today
+          {gate.entries_today === 1 ? "entry" : "entries"}
+          {gate.exits_today > 0 && (
+            <>
+              {" "}
+              &middot; <span className="font-mono font-medium text-ink">{gate.exits_today}</span>{" "}
+              {gate.exits_today === 1 ? "exit" : "exits"}
+            </>
+          )}{" "}
+          today
         </span>
         {gate.unattended_today > 0 && (
           <span className="font-bold text-caution">
@@ -389,8 +409,13 @@ export default function LiveMonitoring() {
   }, []);
 
   const passes = events.filter((event) => event.status === "success");
-  // A not-enrolled student was let in (a pass), and is also pinned for checking.
-  const attention = events.filter((event) => event.status !== "success" || event.not_enrolled);
+  // A not-enrolled student was let in (a pass), and is also pinned for checking -
+  // as is a pass that doesn't fit the person's day (an odd entry/exit pattern).
+  const attention = events.filter(
+    (event) => event.status !== "success" || event.not_enrolled || PATTERN_LABELS[event.pattern_flag],
+  );
+  const entryCount = passes.filter((event) => event.direction !== "exit").length;
+  const exitCount = passes.filter((event) => event.direction === "exit").length;
   // Let in flagged, or refused (Settings > Semester Enrollment).
   const notEnrolledCount = events.filter((event) => event.not_enrolled).length;
   const unknownCount = events.filter((event) => event.status === "failed").length;
@@ -408,8 +433,8 @@ export default function LiveMonitoring() {
 
   const attentionEmpty = (
     <span className="border-t border-line pt-s4 text-sm leading-normal text-ink-600">
-      Nothing to review. Spoof attempts, unknown people, covered faces, unresolved lookalikes and students not
-      enrolled this semester will be pinned here.
+      Nothing to review. Spoof attempts, unknown people, covered faces, unresolved lookalikes, students not
+      enrolled this semester and odd entry/exit patterns will be pinned here.
     </span>
   );
 
@@ -433,7 +458,8 @@ export default function LiveMonitoring() {
           <span className="t-eyebrow">Scans today</span>
           <span className="t-hero">{events.length}</span>
         </div>
-        <SubStat label="Enrolled matches" icon="user-focus" value={passes.length} />
+        <SubStat label="Entries" icon="sign-in" value={entryCount} />
+        <SubStat label="Exits" icon="sign-out" value={exitCount} />
         <SubStat label="Unknown attempts" icon="user-circle-dashed" value={unknownCount} tone="text-caution" />
         <SubStat label="Spoof suspected" icon="warning-octagon" value={spoofCount} tone="text-danger" />
         <SubStat label="Face covered" icon="hand-palm" value={occludedCount} tone="text-prompt" />

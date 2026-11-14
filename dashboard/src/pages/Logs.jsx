@@ -1,15 +1,32 @@
 import { useEffect, useState } from "react";
 import apiClient from "../api/client";
-import StatusBadge, { AfterHoursTag, NotEnrolledTag, STATUS_BAR } from "../components/StatusBadge";
+import StatusBadge, {
+  AfterHoursTag,
+  DirectionTag,
+  NotEnrolledTag,
+  PATTERN_LABELS,
+  PatternTag,
+  STATUS_BAR,
+} from "../components/StatusBadge";
 import { Checkbox, Field, Icon, Notice, PageHeader } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
 import { groupedUnits, useOrgLists } from "../lib/orgUnits";
 
 const PAGE_SIZE = 25;
-const emptyFilters = { date: "", user: "", gate: "", status: "", org_unit: "" };
-// Entries only - SecureTap doesn't record exits, so there's no direction to
-// pick or show (the backend records every manual entry as an entry).
-const emptyOverrideForm = { student_or_employee_id: "", reason: "" };
+const emptyFilters = { date: "", user: "", gate: "", status: "", org_unit: "", direction: "" };
+// A manual override is logged as coming in or going out - the guard picks.
+const emptyOverrideForm = { student_or_employee_id: "", reason: "", direction: "entry" };
+
+// "8h 02m" between an exit and the same person's entry before it that day.
+function timeInside(enteredAt, exitedAt) {
+  const minutes = Math.max(0, Math.round((new Date(exitedAt) - new Date(enteredAt)) / 60000));
+  const hours = Math.floor(minutes / 60);
+  return hours ? `${hours}h ${String(minutes % 60).padStart(2, "0")}m` : `${minutes}m`;
+}
+
+function shortClock(value) {
+  return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
 
 const ADMIN_COLS = "minmax(0,1.6fr) 160px minmax(0,1.5fr) minmax(0,1.2fr) 52px minmax(0,1.3fr) minmax(0,90px)";
 const OFFICER_COLS = "minmax(0,1.5fr) 150px minmax(0,1.4fr) minmax(0,1.1fr) 48px minmax(0,1.1fr) minmax(0,80px)";
@@ -77,7 +94,7 @@ function ManualOverrideForm({ username, onLogged }) {
     setIsSubmitting(true);
     try {
       const { data } = await apiClient.post("/logs/manual-override", form);
-      setNotice(`Entry logged: ${data.person_name}.`);
+      setNotice(`${data.direction === "exit" ? "Exit" : "Entry"} logged: ${data.person_name}.`);
       setForm(emptyOverrideForm);
       onLogged();
     } catch (err) {
@@ -106,6 +123,12 @@ function ManualOverrideForm({ username, onLogged }) {
           onChange={handleChange("student_or_employee_id")}
           className="input font-mono"
         />
+      </Field>
+      <Field label="Which way">
+        <select value={form.direction} onChange={handleChange("direction")} className="input">
+          <option value="entry">Coming in (entry)</option>
+          <option value="exit">Going out (exit)</option>
+        </select>
       </Field>
       <Field label="Reason">
         <textarea
@@ -149,11 +172,15 @@ export default function Logs() {
     if (filters.user) params.person__full_name = filters.user;
     if (filters.gate) params.gate_location = filters.gate;
     if (filters.org_unit) params.org_unit = filters.org_unit;
+    if (filters.direction) params.direction = filters.direction;
     // "Not enrolled (let in)" is a flag on successful entries; "(refused)" is
     // a status of its own (Settings > Semester Enrollment: Refuse entry).
+    // The odd entry/exit patterns are flags on let-in records too.
     if (filters.status === "not_enrolled_let_in") {
       params.not_enrolled = true;
       params.status = "success";
+    } else if (filters.status.startsWith("pattern:")) {
+      params.pattern_flag = filters.status.slice("pattern:".length);
     } else if (filters.status) params.status = filters.status;
 
     apiClient
@@ -183,13 +210,15 @@ export default function Logs() {
 
   const exportCsv = () => {
     const header = [
-      "Name", "School / office · role", "Timestamp", "Method", "Status", "Confidence", "Reason", "Gate", "On duty",
-      "After hours", "Not enrolled",
+      "Name", "School / office · role", "Timestamp", "Direction", "Time in", "Method", "Status", "Confidence",
+      "Reason", "Gate", "On duty", "After hours", "Not enrolled", "Pattern",
     ];
     const rows = visibleLogs.map((log) => [
       log.person_name,
       log.person_affiliation,
       log.timestamp,
+      log.direction === "exit" ? "Exit" : "Entry",
+      log.entered_at || "",
       log.verification_method,
       log.status,
       log.match_confidence != null ? Math.round(log.match_confidence * 100) : "",
@@ -198,6 +227,7 @@ export default function Logs() {
       log.on_duty_name || (log.unattended ? "Unattended" : ""),
       log.after_hours ? "Yes" : "",
       log.not_enrolled ? "Yes" : "",
+      PATTERN_LABELS[log.pattern_flag]?.label || "",
     ]);
     const csv = [header, ...rows]
       .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
@@ -268,6 +298,15 @@ export default function Logs() {
             <option value="occlusion_detected">Face covered</option>
             <option value="not_enrolled_let_in">Not enrolled (let in)</option>
             <option value="not_enrolled">Not enrolled (refused)</option>
+            <option value="pattern:no_entry">Left with no entry today</option>
+            <option value="pattern:no_exit">Came in with no exit since</option>
+          </select>
+        </Field>
+        <Field label="Direction" eyebrow className="w-[150px]">
+          <select value={filters.direction} onChange={handleFilterChange("direction")} className="input">
+            <option value="">In and out</option>
+            <option value="entry">In (entries)</option>
+            <option value="exit">Out (exits)</option>
           </select>
         </Field>
         <Field label="School / office" eyebrow className="w-[240px]">
@@ -322,8 +361,20 @@ export default function Logs() {
                         </span>
                       )}
                     </span>
-                    <span className="whitespace-nowrap font-mono text-xs font-medium text-ink-600">
-                      {formatTimestamp(log.timestamp)}
+                    <span className="flex min-w-0 flex-col items-start gap-[2px]">
+                      <span className="whitespace-nowrap font-mono text-xs font-medium text-ink-600">
+                        {formatTimestamp(log.timestamp)}
+                      </span>
+                      <DirectionTag direction={log.direction} />
+                      {/* An exit: when they came in that day, and how long they stayed. */}
+                      {log.entered_at && (
+                        <span
+                          className="whitespace-nowrap text-xs text-ink-600"
+                          title={`Came in at ${formatTimestamp(log.entered_at)}`}
+                        >
+                          in {shortClock(log.entered_at)} &middot; {timeInside(log.entered_at, log.timestamp)}
+                        </span>
+                      )}
                     </span>
                     <MethodCell log={log} />
                     <span className="flex min-w-0 flex-col items-start gap-[2px]">
@@ -332,6 +383,8 @@ export default function Logs() {
                       {log.after_hours && <AfterHoursTag />}
                       {/* Not on this semester's enrolled list (Semester page) */}
                       {log.not_enrolled && log.status === "success" && <NotEnrolledTag />}
+                      {/* Left with no entry today / came in with no exit since */}
+                      <PatternTag flag={log.pattern_flag} />
                     </span>
                     <span className="text-right font-mono font-medium">
                       {log.match_confidence != null ? `${Math.round(log.match_confidence * 100)}%` : "—"}

@@ -10,8 +10,10 @@ from pathlib import Path
 import requests
 
 import camera_select
+import lanes
 from api_client import ApiClient
 from camera import Camera, list_available_cameras
+from card_readers import CardReaders
 from config import data_file, load_config
 from offline_queue import OfflineQueue
 from monitor_stream import monitor_stream_loop
@@ -84,6 +86,7 @@ def _write_last_session_summary(config, monitor):
                     "gate_location": config.gate_location,
                     "direction": config.direction,
                     "entries": monitor.stats.get("entries", 0),
+                    "exits": monitor.stats.get("exits", 0),
                     "unknown": monitor.stats.get("unknown", 0),
                     "spoof": monitor.stats.get("spoof", 0),
                     "occlusion": monitor.stats.get("occlusion", 0),
@@ -238,6 +241,9 @@ def _build_recognition(direction, result, api_client, photo_cache):
         # Only sent with "Show distance on face boxes" on (Settings, Advanced).
         "distance_m": result.get("distance_m"),
         "photo_bytes": _fetch_photo_cached(api_client, photo_cache, photo_url),
+        # An odd entry/exit pattern (backend EntryLog.PatternFlag) - the live
+        # log tags the row so the guard can ask.
+        "pattern_flag": result.get("pattern_flag") or "",
     }
 
 
@@ -267,6 +273,7 @@ def _build_profile(api_client, result, card_id, direction):
         "distinguishing_note": result.get("distinguishing_note"),
         "photos_due": bool(result.get("photos_due")),
         "not_enrolled": bool(result.get("not_enrolled")),
+        "pattern_flag": result.get("pattern_flag") or "",
     }
 
 
@@ -312,10 +319,11 @@ def camera_report(camera, live):
     }
 
 
-def _report_camera(config, api_client, camera, live, last):
+def _report_camera(lane_name, api_client, camera, live, last):
     """Sends camera_report when it changes (or once its frame rate is first
     measured), and otherwise once every CAMERA_REPORT_SECONDS - on its own
-    thread, so it never delays a face check."""
+    thread, so it never delays a face check. Under the camera's lane name
+    (lanes.py), so Settings > Camera lists the exit camera on its own row."""
     report = camera_report(camera, live)
     if report["resolution"] is None:
         return  # no picture yet
@@ -327,23 +335,28 @@ def _report_camera(config, api_client, camera, live, last):
 
     def send():
         try:
-            api_client.camera_report(config.gate_location, report)
+            api_client.camera_report(lane_name, report)
         except requests.RequestException:
             pass  # sent again later
 
     threading.Thread(target=send, daemon=True).start()
 
 
-def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=None):
+def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=None, direction=lanes.ENTRY):
     """Runs continuously on its own thread: samples a frame and checks every
     face in it against every enrolled face (1:N search per face) - this is
     the primary gate check, no card tap required, and handles several
     people walking through together in the same frame. Kept off the Tk
     thread so a burst of faces during class change can't freeze the UI.
 
+    One loop per camera: `direction` says which - the entrance camera's
+    (config.direction, always entry) or the exit camera's (lanes.py), each
+    with its own Camera and its own ApiClient connection.
+
     test_run (the capstone test mode, test_mode.py) only watches: it gets
     each frame's capture and answer times and the answer, and the frame is
-    marked as a test frame for the backend - nothing else changes."""
+    marked as a test frame for the backend - nothing else changes. The
+    entrance camera only."""
     # The backend sends its current Settings-page values with every answer,
     # so a change made on the dashboard reaches this gate monitor within a
     # frame or two - no restart. Only passed on to the UI when they change.
@@ -365,7 +378,7 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=No
 
         try:
             response = api_client.identify(
-                config.gate_location, config.direction, image_bytes, camera_zoom=camera.zoom,
+                config.gate_location, direction, image_bytes, camera_zoom=camera.zoom,
                 test_mode=test_run is not None,
             )
             ui.show_offline(False)
@@ -393,7 +406,7 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=No
             recognitions = [
                 r
                 for r in (
-                    _build_recognition(config.direction, item, api_client, photo_cache)
+                    _build_recognition(direction, item, api_client, photo_cache)
                     for item in response.get("results", [])
                 )
                 if r is not None
@@ -403,7 +416,7 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=No
                 # screen refresh (~66 ms).
                 test_run.on_frame(t_frame, time.perf_counter(), response, image_size, camera.capture_size(),
                                   t_sent=t_sent)
-            ui.show_recognitions(recognitions, _extract_image_size(response, image_size))
+            ui.show_recognitions(recognitions, _extract_image_size(response, image_size), direction)
         except requests.RequestException:
             # No offline queueing here - a stale queued frame from a live scan
             # has no value once connectivity returns; just keep sampling.
@@ -415,23 +428,24 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=No
             # feed kept looking live.
             traceback.print_exc()
 
-        _report_camera(config, api_client, camera, live, last_report)
+        _report_camera(lanes.lane(config.gate_location, direction), api_client, camera, live, last_report)
         stop_event.wait(live["scan_pause_seconds"])
 
 
-def handle_tap(config, api_client, offline_queue, ui, nfc_id):
+def handle_tap(config, api_client, offline_queue, ui, nfc_id, direction=lanes.ENTRY):
     """Runs off the Tk main thread. A card tap is a lookup that shows the
     guard the person's details for a cross-check - the actual entry decision
     comes from the continuous scan, not this. Either way the outcome lands
-    in the monitor's live log, so a tap is as visible as a face event."""
+    in the monitor's live log, so a tap is as visible as a face event.
+    `direction`: which side's reader it was tapped on (card_readers.py)."""
     ui.show_card_status("Checking card...")
     try:
-        result = api_client.verify(config.gate_location, config.direction, nfc_id=nfc_id)
+        result = api_client.verify(config.gate_location, direction, nfc_id=nfc_id)
     except requests.exceptions.HTTPError as exc:
         ui.show_card_failure(_describe_http_error(exc.response), "server_error")
         return
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        offline_queue.enqueue(nfc_id, config.gate_location, config.direction)
+        offline_queue.enqueue(nfc_id, config.gate_location, direction)
         ui.show_card_failure("Offline - tap queued, will sync automatically.", "offline")
         return
     except requests.RequestException:
@@ -457,7 +471,7 @@ def handle_tap(config, api_client, offline_queue, ui, nfc_id):
             ui.show_card_failure(result.get("reason") or "Not enrolled.", result.get("reason_code"))
             return
         ui.show_card_match(
-            _build_profile(api_client, result, card_id=nfc_id, direction=config.direction)
+            _build_profile(api_client, result, card_id=nfc_id, direction=direction)
         )
     except Exception:
         traceback.print_exc()
@@ -543,12 +557,71 @@ def main():
     live["camera_name"] = camera_names.get(camera_index, f"#{camera_index}")
 
     def pick_camera(index):
-        """The guard chose a camera in the gate monitor - use it now and
-        prefer it next time."""
+        """The guard chose the entrance camera in the gate monitor - use it
+        now and prefer it next time."""
         camera.set_index(index)
         live["camera_name"] = camera_names.get(index, f"#{index}")
         if index in camera_names:
             camera_select.remember(camera_names[index])
+
+    # The exit camera (lanes.py): only once one has been chosen in the gate
+    # monitor's "Cameras & card readers" window - remembered by name, like
+    # the entrance camera. Without one this gate records entries only, as
+    # before. It gets its own Camera, scan loop, backend connection and
+    # Cameras-page stream, all stopped together by its own stop event.
+    exit_lane = {}
+
+    def start_exit_camera(index):
+        exit_camera = Camera(index, exposure=config.camera_exposure,
+                             max_upload_dimension=config.upload_max_dimension, zoom=config.camera_zoom)
+        exit_live = live_settings(config)
+        exit_live["camera_name"] = camera_names.get(index, f"#{index}")
+        exit_stop = threading.Event()
+        exit_api = ApiClient(config.api_base_url, config.service_token)  # its own connection - never waits behind the entrance's
+        try:
+            exit_camera.start()
+        except Exception as exc:
+            print(f"WARNING: exit camera unavailable ({exc})", file=sys.stderr)
+        exit_lane.update(camera=exit_camera, stop=exit_stop, index=index)
+        threading.Thread(target=scan_loop, args=(config, exit_api, exit_camera, monitor, exit_stop, None, exit_live,
+                                                 lanes.EXIT), daemon=True).start()
+        threading.Thread(target=monitor_stream_loop, args=(lanes.lane(config.gate_location, lanes.EXIT), exit_api,
+                                                           exit_camera, exit_stop), daemon=True).start()
+        monitor.show_exit_feed(exit_camera.get_preview_frame, exit_camera.capture_size, exit_camera.measured_fps,
+                               config.camera_zoom, index)
+        print(f"exit camera: using {exit_live['camera_name']}", file=sys.stderr)
+
+    def stop_exit_camera():
+        if exit_lane:
+            exit_lane["stop"].set()
+            exit_lane["camera"].stop()
+            exit_lane.clear()
+
+    def pick_exit_camera(index):
+        """The guard chose the exit camera (or None: no exit camera) - Tk thread."""
+        stop_exit_camera()
+        monitor.hide_exit_feed()
+        if index is None:
+            camera_select.remember(None, lanes.EXIT)
+            return
+        start_exit_camera(index)
+        if index in camera_names:
+            camera_select.remember(camera_names[index], lanes.EXIT)
+
+    # Which reader a card was tapped on (card_readers.py): the one set as the
+    # exit's makes it an exit tap; any other is the entrance's.
+    readers = CardReaders()
+    readers.start()
+
+    def reader_setup(action):
+        """The "Cameras & card readers" window's reader buttons - Tk thread."""
+        if action == "set_exit":
+            readers.awaiting_exit_tap = True
+        elif action == "clear":
+            readers.clear_exit_reader()
+        else:  # "cancel" - the window closed while waiting for a tap
+            readers.awaiting_exit_tap = False
+        monitor.set_reader_status(readers.status())
     # Starts a background thread that opens the webcam (retrying on its own
     # timer for as long as the app runs if none is connected yet, or it's
     # unplugged mid-session - see Camera._run_loop) - never blocks here and
@@ -571,10 +644,20 @@ def main():
     # be a click everyone makes every time. The monitor is the app.
     stop_event = threading.Event()
 
+    def tap_from_reader(nfc_id):
+        # A moment for the raw input listener to note the last keys of this
+        # tap - it runs on its own thread, beside the window's.
+        time.sleep(0.05)
+        if readers.awaiting_exit_tap:
+            # "Set exit reader": this tap only says which reader is the exit's.
+            device = readers.assign_exit_from_last_tap()
+            message = "Exit reader set." if device else "Couldn't tell which reader that was - try again."
+            monitor.set_reader_status({**readers.status(), "message": message})
+            return
+        handle_tap(config, api_client, offline_queue, monitor, nfc_id, readers.direction_of_last_tap())
+
     def on_tap(nfc_id):
-        threading.Thread(
-            target=handle_tap, args=(config, api_client, offline_queue, monitor, nfc_id), daemon=True
-        ).start()
+        threading.Thread(target=tap_from_reader, args=(nfc_id,), daemon=True).start()
 
     def on_sign_in(username, password):
         threading.Thread(
@@ -589,6 +672,7 @@ def main():
         # stop the scan thread and release the camera on the way out.
         stop_event.set()
         camera.stop()
+        stop_exit_camera()
         _write_last_session_summary(config, monitor)
         # Whoever was on duty here goes off duty with the gate monitor, so
         # the next entries aren't credited to someone who has left.
@@ -616,13 +700,21 @@ def main():
         student_display_fps=config.student_display_fps,
         on_sign_in=on_sign_in,
         on_sign_out=on_sign_out,
+        on_exit_camera_change=pick_exit_camera,
+        on_reader_setup=reader_setup,
     )
+    monitor.set_reader_status(readers.status())
+    # The exit camera chosen last time, if it's plugged in (and isn't the
+    # entrance camera).
+    exit_index = camera_select.find_by_name(cameras, camera_select.remembered_name(lanes.EXIT))
+    if exit_index is not None and exit_index != camera_index:
+        start_exit_camera(exit_index)
 
     try:
         summary = api_client.gate_summary(config.gate_location)
         monitor.seed_stats(
             summary.get("entries_today", 0), summary.get("unknown_today", 0), summary.get("spoof_today", 0),
-            summary.get("occlusion_today", 0),
+            summary.get("occlusion_today", 0), summary.get("exits_today", 0),
         )
     except requests.RequestException:
         pass  # stats just start at zero for this session if unreachable
@@ -667,7 +759,15 @@ def main():
         # included - for most of every 5s cycle. The monitor's set_* calls
         # are queue-based, so they're safe to make from here.
         try:
-            monitor.set_camera_ok(camera.is_open())
+            exit_camera = exit_lane.get("camera")
+            entrance_ok = camera.is_open()
+            exit_ok = exit_camera is None or exit_camera.is_open()
+            monitor.set_camera_ok(
+                entrance_ok and exit_ok,
+                "Cameras not connected" if not entrance_ok and not exit_ok
+                else "Exit camera not connected" if not exit_ok
+                else "Entrance camera not connected" if exit_camera is not None else "Camera not connected",
+            )
             try:
                 api_client.health()
                 server_ok = True

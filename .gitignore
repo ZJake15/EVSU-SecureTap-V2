@@ -38,6 +38,9 @@ entry-agent/test-results/
 entry-agent/*.log
 entry-agent/last_session.json
 entry-agent/camera_choice.json
+# This gate's exit card reader and camera layout (card_readers.py, main.py) - per computer
+entry-agent/card_readers.json
+entry-agent/gate_layout.json
 
 # Launcher local state (remembered gate/direction/guard name - per-machine,
 # not something to check in)

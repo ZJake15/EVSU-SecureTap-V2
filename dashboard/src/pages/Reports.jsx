@@ -7,6 +7,8 @@ import {
   LabelList,
   Line,
   LineChart,
+  Pie,
+  PieChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -50,9 +52,9 @@ const TOOLTIP = {
 // Every outcome the gates log - entries by how they were confirmed, then each
 // kind of refusal - so the bar adds up to everything (reports/views.py).
 // Eight clearly different hues, in this order: every two neighbouring
-// segments stay apart for color-blind readers (OKLab ΔE ≥ 9.2) and
-// everyone else (≥ 20.8) - checked with the dataviz palette validator.
-// Each segment is also named with its count in the legend below the bar.
+// slices of the donut stay apart for color-blind readers (OKLab ΔE ≥ 9.2)
+// and everyone else (≥ 20.8) - checked with the dataviz palette validator.
+// Each one is also named with its count and share in the list beside it.
 const METHODS = [
   { key: "face", label: "Face", color: "#2a78d6" }, // blue
   { key: "face_nfc", label: "Face + card", color: "#1baf7a" }, // aqua
@@ -63,6 +65,65 @@ const METHODS = [
   { key: "occluded", label: "Face covered", color: "#008300" }, // green
   { key: "not_enrolled", label: "Not enrolled (refused)", color: "#e87ba4" }, // magenta
 ];
+
+function percent(n, sum) {
+  if (!sum || !n) return "0%";
+  const value = (n / sum) * 100;
+  return value < 1 ? "<1%" : `${Math.round(value)}%`;
+}
+
+// Entries by method as a flat donut (every slice true to size - a 3D pie
+// would enlarge the slices at the front) with the total in the middle, and
+// beside it every method with its count and share, so even a sliver is read
+// from the list rather than guessed from the ring.
+function MethodDonut({ totals, sum }) {
+  const slices = totals.filter((m) => m.n > 0);
+  return (
+    <div className="flex flex-wrap items-center gap-s5">
+      <div className="relative h-[176px] w-[176px] flex-none">
+        {sum > 0 ? (
+          <ResponsiveContainer>
+            <PieChart>
+              <Pie
+                data={slices}
+                dataKey="n"
+                nameKey="label"
+                innerRadius={56}
+                outerRadius={84}
+                startAngle={90}
+                endAngle={-270}
+                stroke="#FFFFFF"
+                strokeWidth={2}
+                isAnimationActive={false}
+              >
+                {slices.map((m) => (
+                  <Cell key={m.key} fill={m.color} />
+                ))}
+              </Pie>
+              <Tooltip {...TOOLTIP} formatter={(value, name) => [`${value} · ${percent(value, sum)}`, name]} />
+            </PieChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-full w-full rounded-full border-[28px] border-canvas" />
+        )}
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <span className="font-display stretch-semi text-[28px] font-extrabold leading-none text-ink">{sum}</span>
+          <span className="text-xs text-ink-600">logged</span>
+        </div>
+      </div>
+      <ul className="flex min-w-[220px] flex-1 flex-col gap-s1 text-sm">
+        {totals.map((m) => (
+          <li key={m.key} className={`grid grid-cols-[12px_minmax(0,1fr)_40px_40px] items-center gap-s2 ${m.n ? "" : "text-ink-400"}`}>
+            <span className="h-[12px] w-[12px] rounded-sm" style={{ background: m.n ? m.color : C.line }} />
+            <span className="truncate">{m.label}</span>
+            <span className={`text-right font-mono font-semibold ${m.n ? "text-ink" : ""}`}>{m.n}</span>
+            <span className="text-right font-mono text-xs">{percent(m.n, sum)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 // Successful entries by the school or office of whoever entered (reports/views.py
 // _entries_by_unit), students and staff apart, most first.
@@ -302,20 +363,7 @@ export default function Reports() {
               Export CSV
             </button>
           </div>
-          <div className="flex h-4 gap-0.5 bg-canvas">
-            {methodSum > 0 &&
-              methodTotals
-                .filter((m) => m.n > 0)
-                .map((m) => <span key={m.key} style={{ flex: m.n, background: m.color }} title={`${m.label}: ${m.n}`} />)}
-          </div>
-          <div className="flex flex-wrap gap-x-s4 gap-y-s2 text-xs">
-            {methodTotals.map((m) => (
-              <span key={m.key} className="flex items-center gap-s2 text-ink-600">
-                <span className="h-[10px] w-[10px]" style={{ background: m.color }} />
-                {m.label} <span className="font-mono font-semibold text-ink">{m.n}</span>
-              </span>
-            ))}
-          </div>
+          <MethodDonut totals={methodTotals} sum={methodSum} />
         </div>
       </div>
 

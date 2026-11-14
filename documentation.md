@@ -1425,6 +1425,18 @@ minutes", and the lock is audit-logged). Automatic logout runs in the dashboard:
 any mouse, key, scroll or touch activity restarts the countdown, and the Login
 page says why the user was signed out.
 
+**Live Log Details** (`users/live_details.py`). Four switches, all on by
+default, for what's shown under each person's name in the gate monitor's live
+log (featured card, earlier rows, and the separate exit window's log) and on
+the dashboard's Live Monitoring page (latest card, list, Needs attention): a
+**Student / Staff** tag (maroon / grey), their **school or office**, their
+**department** (offices have none), and their **role** (staff: type and job
+title, e.g. "Faculty · Instructor I"; students: year level). Someone
+registered before schools and offices were a list shows "previous: <old
+text>" as their school or office. The server leaves out what's switched off
+(`person_details` in `/api/identify`, `/api/verify` and `/api/logs` answers),
+so the gates follow a change within a few seconds. Admin only.
+
 **Alerts.** "Alert on suspected fake face" only silences the gate monitor's
 banner and sound — the event is still counted and logged. "Sound for unknown
 faces", "Sound for covered faces" and "Sound for refused students (not

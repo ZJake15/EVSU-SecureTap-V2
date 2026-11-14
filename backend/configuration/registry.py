@@ -545,7 +545,7 @@ DEFINITIONS = [
         "Shows a warning and sounds the alarm on the gate monitor when someone appears to be using a "
         "photo or screen.",
         BOOL, True,
-        note="Its sound is a harsh rising siren - the most urgent of the gate monitor's sounds.",
+        note="Its sound is a rising siren, three times - the most urgent of the gate monitor's sounds.",
     ),
     SettingDef(
         "alert_unknown_sound", "alerts", "Sound for unknown faces",

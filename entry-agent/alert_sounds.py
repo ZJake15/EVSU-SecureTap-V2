@@ -2,7 +2,7 @@
 so a guard who isn't looking at the screen still knows what happened:
 
   unknown       two bright bell notes, high-low, twice
-  spoof         harsh rising siren sweeps (the most urgent)
+  spoof         rising siren sweeps, three times (the most urgent)
   covered       two soft low notes, once per person (a polite prompt)
   not_enrolled  two buzzy notes falling ("uh-oh") - refused, not enrolled
 
@@ -24,7 +24,7 @@ PRIORITY = {"spoof": 3, "unknown": 2, "not_enrolled": 2, "covered": 1}
 # Only if a .wav file is missing or won't play: (frequency Hz, milliseconds) beeps.
 FALLBACK_BEEPS = {
     "unknown": [(1200, 180), (900, 180)] * 2,
-    "spoof": [(1600, 90), (800, 90)] * 4,
+    "spoof": [(700, 150), (1000, 200)] * 3,
     "covered": [(520, 220)],
     "not_enrolled": [(470, 220), (350, 320)],
 }

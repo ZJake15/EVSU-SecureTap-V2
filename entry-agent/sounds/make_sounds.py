@@ -6,7 +6,7 @@ Standard library only, so the files can always be remade. Each sound has its
 own pitch direction and timbre, so a guard can tell them apart without looking:
 
   unknown.wav       two bright bell notes, high-low, twice   (attention)
-  spoof.wav         harsh rising siren sweeps, four times    (most urgent)
+  spoof.wav         rising siren sweeps, three times         (most urgent)
   covered.wav       two soft low notes, rising, quiet        (a polite prompt)
   not_enrolled.wav  two buzzy notes falling, "uh-oh"         (refused)
 """
@@ -48,13 +48,13 @@ def sweep(start, end, seconds, harmonics):
         t = i / RATE
         freq = start + (end - start) * (t / seconds)
         phase += 2 * math.pi * freq / RATE
-        level = min(1.0, t / 0.005) * min(1.0, (seconds - t) / 0.01)
+        level = min(1.0, t / 0.03) * min(1.0, (seconds - t) / 0.05)
         out.append(level * sum(strength * math.sin(phase * multiple) for multiple, strength in harmonics))
     return out
 
 
 BELL = ((1, 1.0), (2, 0.35), (3, 0.12), (4.2, 0.05))
-HARSH = ((1, 1.0), (3, 1 / 3), (5, 1 / 5), (7, 1 / 7))  # square-ish
+ROUNDED = ((1, 1.0), (2, 0.2), (3, 0.08))
 SOFT = ((1, 1.0), (2, 0.08))
 BUZZ = tuple((n, 1 / n) for n in range(1, 8))  # sawtooth-ish
 
@@ -66,8 +66,10 @@ def unknown():
 
 
 def spoof():
-    one = sweep(750, 1650, 0.22, HARSH) + silence(0.04)
-    return one * 4, 0.85
+    # Toned down from four fast harsh 750-1650 Hz sweeps at 0.85: still the
+    # rising siren (nothing else rises like it), but slower, lower, rounder.
+    one = sweep(620, 1050, 0.3, ROUNDED) + silence(0.09)
+    return one * 3, 0.6
 
 
 def covered():

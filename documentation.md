@@ -369,7 +369,7 @@ currently in frame.
     SUSPECTED, with the time). Each kind of event has **its own sound**
     (`entry-agent/alert_sounds.py`, .wav files in `entry-agent/sounds/` made by
     `sounds/make_sounds.py`): unknown = two bright bell notes high-low twice,
-    spoof = harsh rising siren sweeps, refused not-enrolled = a falling
+    spoof = three rising siren sweeps, refused not-enrolled = a falling
     "uh-oh" buzz, covered face = two soft quiet notes. A more urgent sound
     cuts off a gentler one; a gentler one never cuts off a more urgent one.
     Each can be switched off in Settings › Alerts (`alert_spoof`,

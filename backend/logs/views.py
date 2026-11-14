@@ -939,7 +939,13 @@ class IdentifyView(APIView):
         return {
             "threshold": system_settings.get("match_strictness"),
             "liveness_threshold": system_settings.get("spoof_strictness"),
-            "alerts": {"spoof": system_settings.get("alert_spoof")},
+            "alerts": {
+                "spoof": system_settings.get("alert_spoof"),
+                # Settings > Alerts: which of the gate monitor's sounds play.
+                "unknown_sound": system_settings.get("alert_unknown_sound"),
+                "covered_sound": system_settings.get("alert_covered_sound"),
+                "not_enrolled_sound": system_settings.get("alert_not_enrolled_sound"),
+            },
             "gate_sign_in": gate_shifts.status(gate_location),
             # Settings > Scheduling > Gate opening hours: the gate monitor
             # alerts the guard and tags its live log while this is true.

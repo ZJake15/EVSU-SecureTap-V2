@@ -95,9 +95,10 @@ const GUIDES = [
   {
     key: "gate", icon: "scan-smiley", title: "At the gate (gate monitor)", roles: ALL,
     steps: [
-      "Green box with a name: let in. Amber UNKNOWN: not registered - the alarm sounds. Red SPOOF: a photo or screen - the alarm sounds.",
-      "Blue PLEASE UNCOVER YOUR FACE: a mask, cap or hand is in the way. TAP CARD TO CONFIRM: an unsure or lookalike match - ask for the school ID card.",
-      "NOT ENROLLED: the student isn't on this semester's list - amber if let in, red if refused. Send them to the Student Affairs Office.",
+      "Green box with a name: let in. Amber UNKNOWN: not registered - two bell notes, high-low, twice. Red SPOOF: a photo or screen - a harsh rising siren.",
+      "Blue PLEASE UNCOVER YOUR FACE: a mask, cap or hand is in the way - two soft notes, once. TAP CARD TO CONFIRM: an unsure or lookalike match - ask for the school ID card.",
+      "NOT ENROLLED: the student isn't on this semester's list - amber if let in (no sound), red if refused (a falling \"uh-oh\" buzz). Send them to the Student Affairs Office.",
+      "Each sound can be switched off in Settings › Alerts.",
       "If the camera fails, students can still tap their school ID card on the reader.",
     ],
   },

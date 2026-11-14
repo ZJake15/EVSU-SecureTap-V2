@@ -545,6 +545,26 @@ DEFINITIONS = [
         "Shows a warning and sounds the alarm on the gate monitor when someone appears to be using a "
         "photo or screen.",
         BOOL, True,
+        note="Its sound is a harsh rising siren - the most urgent of the gate monitor's sounds.",
+    ),
+    SettingDef(
+        "alert_unknown_sound", "alerts", "Sound for unknown faces",
+        "Plays two bright bell notes (high-low, twice) on the gate monitor when an unrecognized person is "
+        "confirmed. The amber box, banner and log row show either way.",
+        BOOL, True,
+    ),
+    SettingDef(
+        "alert_covered_sound", "alerts", "Sound for covered faces",
+        "Plays two soft, quiet notes once when someone's mouth or nose is covered, as a polite prompt to "
+        "uncover - not again while the same person stays covered.",
+        BOOL, True,
+    ),
+    SettingDef(
+        "alert_not_enrolled_sound", "alerts", "Sound for refused students (not enrolled)",
+        "Plays a falling \"uh-oh\" buzz when a student is refused for not being on this semester's list.",
+        BOOL, True,
+        note='Only heard when Semester Enrollment is set to "Refuse entry"; a student let in and flagged '
+             "makes no sound.",
     ),
     SettingDef(
         "alert_repeated_unknown", "alerts", "Alert on repeated unknown faces",

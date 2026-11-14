@@ -364,12 +364,22 @@ currently in frame.
     covered (shown as soon as suspected, same as spoof), **blue "TAP CARD TO
     CONFIRM"** = tiebreak, **gray "Checking…"** = not yet decided. It then adds
     the event to the live log, updates the stats row, and, for a newly
-    *confirmed* unknown-person or spoof event specifically, plays an audible
-    alarm and docks an alarm banner across the top of the video panel
-    (UNKNOWN PERSON / SPOOF SUSPECTED, with the time). A covered face gets
-    neither the banner nor the alarm — covering your face isn't inherently
-    adversarial the way a spoof attempt is, so the label on the face itself is
-    the prompt, and the live view is never blocked for it. It is also **not
+    *confirmed* unknown-person or spoof event specifically, docks an alarm
+    banner across the top of the video panel (UNKNOWN PERSON / SPOOF
+    SUSPECTED, with the time). Each kind of event has **its own sound**
+    (`entry-agent/alert_sounds.py`, .wav files in `entry-agent/sounds/` made by
+    `sounds/make_sounds.py`): unknown = two bright bell notes high-low twice,
+    spoof = harsh rising siren sweeps, refused not-enrolled = a falling
+    "uh-oh" buzz, covered face = two soft quiet notes. A more urgent sound
+    cuts off a gentler one; a gentler one never cuts off a more urgent one.
+    Each can be switched off in Settings › Alerts (`alert_spoof`,
+    `alert_unknown_sound`, `alert_covered_sound`, `alert_not_enrolled_sound`);
+    a missing .wav falls back to plain beeps. A covered face gets no banner —
+    covering your face isn't inherently adversarial the way a spoof attempt
+    is, so the label on the face itself is the prompt, and the live view is
+    never blocked for it — and its soft sound plays **once per person**: since
+    covered faces carry no log_id, the gate monitor treats a covered box near
+    one seen in the last 3 s as the same person (`CoveredFaces`). It is also **not
     logged or counted** — it never appears in the live log, the dashboard's
     logs or the reports (§2.1 step 5).
 
@@ -1349,7 +1359,10 @@ any mouse, key, scroll or touch activity restarts the countdown, and the Login
 page says why the user was signed out.
 
 **Alerts.** "Alert on suspected fake face" only silences the gate monitor's
-banner and sound — the event is still counted and logged. "Alert on repeated
+banner and sound — the event is still counted and logged. "Sound for unknown
+faces", "Sound for covered faces" and "Sound for refused students (not
+enrolled)" switch off just that sound; the box, banner and log row still show
+(§2.1 step 11 describes each sound). "Alert on repeated
 unknown faces" makes the backend count how many times the same unrecognized
 face has been logged at that gate within the set minutes; once it reaches the
 set number, the gate monitor shows a "SAME UNKNOWN PERSON AGAIN" banner.
@@ -1431,9 +1444,10 @@ owns the Tk root, so closing it ends the process.
     CONFIRM" = ambiguous match or, for a confusable-pair-forced tiebreak
     specifically, "TAP CARD · LOOKALIKE CHECK" (§5.8) so it doesn't read as an
     ordinary uncertain match, gray "Checking…" = not yet confirmed. A newly
-    confirmed unknown person or spoof also sounds an alarm and replaces the top
-    strip with an amber UNKNOWN PERSON / red SPOOF SUSPECTED banner for 6
-    seconds; a covered face gets no banner and no alarm (§2.1 step 11). **No
+    confirmed unknown person or spoof also sounds its own alarm and replaces the
+    top strip with an amber UNKNOWN PERSON / red SPOOF SUSPECTED banner for 6
+    seconds; a covered face gets no banner, only a soft sound once per person,
+    and a refused not-enrolled student its own "uh-oh" sound (§2.1 step 11). **No
     camera connected** shows its own panel state — "No camera connected — card
     taps still work. Connecting a camera resumes automatically." — instead of a
     frozen or blank feed; the entry-agent starts up fine with no webcam at all (a

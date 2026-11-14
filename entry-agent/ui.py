@@ -2,18 +2,18 @@ import io
 import math
 import os
 import queue
-import threading
 import time
 import tkinter as tk
 import traceback
 import tkinter.font as tkfont
-import winsound
 from collections import deque
 from datetime import datetime
 from tkinter import messagebox
 
 import customtkinter as ctk
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps, ImageTk
+
+from alert_sounds import AlertSounds, CoveredFaces
 
 # ---------------------------------------------------------------------------
 # Design tokens - the redesign's whole palette is these 17 colors (see
@@ -340,23 +340,6 @@ def _rounded_rect_points(x0, y0, x1, y1, radius, steps_per_corner=12):
     return points
 
 
-def _play_alert_sound():
-    """A short alternating-tone alarm for an unrecognized face. winsound.Beep
-    blocks its calling thread for the full duration, so this always runs on
-    a throwaway daemon thread rather than the Tk main thread - otherwise the
-    whole UI would freeze for the length of the alarm."""
-
-    def _beep():
-        try:
-            for _ in range(2):
-                winsound.Beep(1200, 180)
-                winsound.Beep(900, 180)
-        except RuntimeError:
-            pass  # no audio device on this machine - never worth blocking the guard's UI over
-
-    threading.Thread(target=_beep, daemon=True).start()
-
-
 def _ellipsize(font, text, max_px):
     """Trims text with a trailing ellipsis until it fits max_px as measured
     in `font` - Tk labels never truncate on their own, they just clip or
@@ -670,6 +653,11 @@ class GateMonitorWindow:
         # Settings page: "Alert on suspected fake face" - on until the
         # backend says otherwise (see set_alert_settings).
         self._alert_spoof = True
+        # Settings > Alerts: a sound switch each for unknown, covered and
+        # not-enrolled (refused) - all on until the backend says otherwise.
+        self._sound_on = {"unknown": True, "covered": True, "not_enrolled": True}
+        self._sounds = AlertSounds()  # a different sound per event (alert_sounds.py)
+        self._covered_faces = CoveredFaces()
         self._alert_hide_job = None
         self._card_reset_job = None
         self._card_images = {}
@@ -1388,8 +1376,9 @@ class GateMonitorWindow:
         self._mode_word.configure(text="TEST MODE", text_color="white", fg_color=DANGER)
 
     def set_alert_settings(self, alerts):
-        """alerts: {"spoof": bool} from the backend (Settings page) - whether
-        a suspected fake gets the alarm banner and sound."""
+        """alerts: from the backend (Settings > Alerts) - "spoof": whether a
+        suspected fake gets the alarm banner and sound; "unknown_sound",
+        "covered_sound", "not_enrolled_sound": whether those play their sound."""
         self._queue.put(("alert_settings", alerts))
 
     # ---- public API: card side --------------------------------------------
@@ -1486,6 +1475,8 @@ class GateMonitorWindow:
                 self._student.set_fps(payload)
         elif kind == "alert_settings":
             self._alert_spoof = bool(payload.get("spoof", True))
+            for sound in self._sound_on:
+                self._sound_on[sound] = bool(payload.get(f"{sound}_sound", True))
         elif kind == "card_match":
             self._render_card_match(payload)
         elif kind == "card_failure":
@@ -1929,6 +1920,13 @@ class GateMonitorWindow:
         if corrected:
             self._undo_unknowns(corrected)
 
+        # A covered face is never logged (no log_id), so it can't go through
+        # the new-event loop below - its soft sound plays once per person,
+        # when a covered face shows up where none was a moment ago.
+        covered = [item["box"] for item in recognitions if item.get("occlusion_suspected") and item.get("box")]
+        if self._covered_faces.new_arrivals(covered) and self._sound_on["covered"]:
+            self._sounds.play("covered")
+
         for item in recognitions:
             log_id = item.get("log_id")
             is_new_event = bool(log_id) and not item.get("deduped") and log_id not in self._seen_log_ids
@@ -1941,7 +1939,7 @@ class GateMonitorWindow:
                 # "Alert on suspected fake face" only silences the alarm.
                 if self._alert_spoof:
                     self._show_alert_banner("spoof")
-                    _play_alert_sound()
+                    self._sounds.play("spoof")
             elif item.get("occlusion_suspected"):
                 # Only reached by an older backend - covered faces no longer
                 # come with a log_id (see IdentifyView._occlusion_prompt), so
@@ -1949,8 +1947,9 @@ class GateMonitorWindow:
                 self.stats["occlusion"] += 1
             elif item.get("refused_not_enrolled"):
                 # A known student refused (not enrolled this semester) - not an
-                # Unknown, so no Unknown alarm; the red box and log row show it.
-                pass
+                # Unknown, so no Unknown alarm; its own "uh-oh" sound instead.
+                if self._sound_on["not_enrolled"]:
+                    self._sounds.play("not_enrolled")
             elif item["matched"]:
                 self.stats["entries"] += 1
             else:
@@ -1961,7 +1960,8 @@ class GateMonitorWindow:
                     self._show_alert_banner("repeated", sub)
                 else:
                     self._show_alert_banner("unknown")
-                _play_alert_sound()
+                if self._sound_on["unknown"]:
+                    self._sounds.play("unknown")
             self._push_log_entry(item)
 
         self._refresh_stat_labels()

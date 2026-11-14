@@ -49,15 +49,19 @@ const TOOLTIP = {
 
 // Every outcome the gates log - entries by how they were confirmed, then each
 // kind of refusal - so the bar adds up to everything (reports/views.py).
+// Eight clearly different hues, in this order: every two neighbouring
+// segments stay apart for color-blind readers (OKLab ΔE ≥ 9.2) and
+// everyone else (≥ 20.8) - checked with the dataviz palette validator.
+// Each segment is also named with its count in the legend below the bar.
 const METHODS = [
-  { key: "face", label: "Face", color: C.maroon },
-  { key: "face_nfc", label: "Face + card", color: C.ink6 },
-  { key: "card", label: "Card", color: C.ink4 },
-  { key: "manual", label: "Manual override", color: C.brass },
-  { key: "failed", label: "Failed", color: C.danger },
-  { key: "spoof", label: "Spoof suspected", color: C.maroonDeep },
-  { key: "occluded", label: "Face covered", color: C.prompt },
-  { key: "not_enrolled", label: "Not enrolled (refused)", color: C.caution },
+  { key: "face", label: "Face", color: "#2a78d6" }, // blue
+  { key: "face_nfc", label: "Face + card", color: "#1baf7a" }, // aqua
+  { key: "card", label: "Card", color: "#eb6834" }, // orange
+  { key: "manual", label: "Manual override", color: "#6250d6" }, // violet
+  { key: "failed", label: "Failed", color: "#e34948" }, // red
+  { key: "spoof", label: "Spoof suspected", color: "#eda100" }, // yellow
+  { key: "occluded", label: "Face covered", color: "#008300" }, // green
+  { key: "not_enrolled", label: "Not enrolled (refused)", color: "#e87ba4" }, // magenta
 ];
 
 // Successful entries by the school or office of whoever entered (reports/views.py

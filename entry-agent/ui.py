@@ -1915,6 +1915,10 @@ class GateMonitorWindow:
         dialog.resizable(False, False)
         dialog.transient(self.window)
         dialog.protocol("WM_DELETE_WINDOW", self._close_setup_dialog)
+        # The keyboard stays with this window while it's open (see
+        # _keep_focus), so a card tap typed here - "Set exit reader", or an
+        # ordinary tap - is passed on to the card field, as the student display does.
+        dialog.bind("<Key>", self._forward_card_key)
         body = ctk.CTkFrame(dialog, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=28, pady=24)
         self._label(body, "Cameras & card readers", (SEMI_BOLD, 22), INK, anchor="w").pack(fill="x")
@@ -2524,7 +2528,11 @@ class GateMonitorWindow:
         # itself (see _KeyBurst).
         dialog_has_focus = (self._sign_in_dialog is not None and focused is not None
                             and str(focused).startswith(str(self._sign_in_dialog)))
-        if (focused is not self._card_input and not student_has_focus and not dialog_has_focus
+        # Never while the "Cameras & card readers" window is open: taking the
+        # keyboard back closed its drop-down lists the moment they opened (an
+        # open list's focus even reads as "none"). It forwards taps instead.
+        setup_open = self._setup_dialog is not None
+        if (focused is not self._card_input and not student_has_focus and not dialog_has_focus and not setup_open
                 and not self._typing_elsewhere(focused)):
             self._card_input.focus_force()
         self.window.after(FOCUS_CHECK_MS, self._keep_focus)

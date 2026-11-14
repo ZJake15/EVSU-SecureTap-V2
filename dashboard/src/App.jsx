@@ -10,7 +10,8 @@ import Reports from "./pages/Reports";
 import SystemSettings from "./pages/SystemSettings";
 import AccountManagement from "./pages/AccountManagement";
 import AuditLog from "./pages/AuditLog";
-import PrintableForms from "./pages/PrintableForms";
+import About from "./pages/About";
+import Help from "./pages/Help";
 import GateCameras from "./pages/GateCameras";
 
 export default function App() {
@@ -62,14 +63,10 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="forms"
-          element={
-            <ProtectedRoute roles={["admin", "saso"]}>
-              <PrintableForms />
-            </ProtectedRoute>
-          }
-        />
+        {/* The printable forms moved into About (Admin and SASO only see that tab). */}
+        <Route path="forms" element={<Navigate to="/about#forms" replace />} />
+        <Route path="about" element={<About />} />
+        <Route path="help" element={<Help />} />
         <Route
           path="accounts"
           element={

@@ -202,7 +202,9 @@ function GateNotice({ fields, policy }) {
   );
 }
 
-export default function PrintableForms() {
+// embedded: drawn inside About's "Printable forms" tab - the page title
+// comes from About, so only the form switch and Print button are drawn here.
+export default function PrintableForms({ embedded = false }) {
   const { policy } = useAuth();
   const [doc, setDoc] = useState("consent");
   const [fields, setFields] = useState(loadFields);
@@ -220,19 +222,33 @@ export default function PrintableForms() {
   return (
     <div className="flex flex-col gap-s5">
       <div className="print:hidden">
-        <PageHeader eyebrow="Privacy" title="Printable forms">
-          <Segmented
-            value={doc}
-            onChange={setDoc}
-            options={[
-              { value: "consent", label: "Consent form", icon: "signature" },
-              { value: "notice", label: "Gate notice", icon: "sign-in" },
-            ]}
-          />
-          <button type="button" className="btn-primary" onClick={() => window.print()}>
-            <Icon name="printer" bold size={18} /> Print
-          </button>
-        </PageHeader>
+        {(() => {
+          const controls = (
+            <>
+              <Segmented
+                value={doc}
+                onChange={setDoc}
+                options={[
+                  { value: "consent", label: "Consent form", icon: "signature" },
+                  { value: "notice", label: "Gate notice", icon: "sign-in" },
+                ]}
+              />
+              <button type="button" className="btn-primary" onClick={() => window.print()}>
+                <Icon name="printer" bold size={18} /> Print
+              </button>
+            </>
+          );
+          return embedded ? (
+            <div className="flex flex-wrap items-center justify-between gap-s3">
+              <span className="t-section">Printable forms</span>
+              <div className="flex flex-wrap items-center gap-s3">{controls}</div>
+            </div>
+          ) : (
+            <PageHeader eyebrow="Privacy" title="Printable forms">
+              {controls}
+            </PageHeader>
+          );
+        })()}
       </div>
 
       <div className="card flex flex-col gap-s4 p-s5 print:hidden">

@@ -15,10 +15,12 @@ const ALL_LINKS = [
   { to: "/users", label: "User Management", icon: "users", roles: ["admin", "saso"] },
   { to: "/reports", label: "Reports", icon: "chart-bar", roles: ["admin", "saso"] },
   { to: "/audit-log", label: "Audit Log", icon: "clipboard-text", roles: ["admin", "saso"] },
-  { to: "/forms", label: "Printable forms", icon: "printer", roles: ["admin", "saso"] },
   { to: "/accounts", label: "Accounts", icon: "user-gear", roles: ["admin"] },
   // SASO sees only Settings > Semester Enrollment's enrolled list.
   { to: "/settings", label: "Settings", icon: "gear-six", roles: ["admin", "saso"] },
+  // Everyone. About's "Printable forms" tab is Admin and SASO only.
+  { to: "/about", label: "About", icon: "info", roles: ["admin", "saso", "security_officer"] },
+  { to: "/help", label: "Help", icon: "question", roles: ["admin", "saso", "security_officer"] },
 ];
 
 const ROLE_LABELS = {

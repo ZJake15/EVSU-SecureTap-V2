@@ -1152,7 +1152,19 @@ the page's main action beside it. See §8.1 for the visual design system.
   (manual overrides) already shows up distinctly in Logs, not here. See §13.
   Filterable by actor and action; each action shows with its own icon, a
   permanent deletion in red, and a manual override with a brass left edge.
-- **Printable forms** *(admin/SASO)* — the two papers the privacy policy
+- **About** *(every role)* — three tabs (`/about#system`, `#university`,
+  `#forms`): **EVSU SecureTap** (what the system does, how a gate decides,
+  whether the server is reachable and its API version), **The university**
+  (from www.evsu.edu.ph: vision, mission, the E-V-S-U core values, history
+  from 1907 to the 2004 conversion into EVSU, campuses, contacts) and, for
+  Admin and SASO only, **Printable forms** (below). The old `/forms` address
+  opens that tab.
+- **Help** *(every role)* — searchable how-to guides for the pages that role
+  can open (Getting started, Live Monitoring, Logs, and for Admin/SASO User
+  Management, Semester enrollment, Reports, Audit Log; Cameras, Accounts and
+  Settings for Admin), what each box on the gate monitor means, and
+  troubleshooting.
+- **Printable forms** *(About tab, admin/SASO)* — the two papers the privacy policy
   requires before real use, each one A4 page printed with the browser's Print
   (the menu and the page's own controls are left off the paper): the **consent
   form** each student or employee signs before their face is registered (what's

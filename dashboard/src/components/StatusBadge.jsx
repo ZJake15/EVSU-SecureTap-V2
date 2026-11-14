@@ -3,11 +3,13 @@ import { Icon } from "./ui";
 // Status is always an icon + a word in its status color - never color alone.
 const STATUS_STYLES = {
   success: { label: "Success", icon: "check-circle", className: "text-verified" },
-  failed: { label: "Failed", icon: "x-circle", className: "text-danger" },
-  // Distinct from a plain "Failed" (unrecognized face) - this is a security
+  // Status "failed": not recognized - called Unknown everywhere (gate monitor,
+  // Live Monitoring, Logs, Reports), in Unknown's amber.
+  failed: { label: "Unknown", icon: "user-circle-dashed", className: "text-caution" },
+  // Distinct from a plain Unknown (unrecognized face) - this is a security
   // event (liveness/anti-spoofing check failed), not a recognition miss.
   spoof_suspected: { label: "Spoof suspected", icon: "warning-octagon", className: "text-danger" },
-  // Also distinct from "Failed" - the mouth/nose read as covered before the
+  // Also distinct from Unknown - the mouth/nose read as covered before the
   // face was ever compared against anyone, so this was never a genuine
   // non-match. Prompt blue: it's an instruction to the person, not an alarm.
   occlusion_detected: { label: "Face covered", icon: "hand-palm", className: "text-prompt" },
@@ -19,7 +21,7 @@ const STATUS_STYLES = {
 // Left-edge bar color on a log row - only non-routine rows get one.
 export const STATUS_BAR = {
   success: "#FFFFFF",
-  failed: "#C62828",
+  failed: "#9A5B00", // Unknown - caution amber, as on the gate monitor
   spoof_suspected: "#C62828",
   occlusion_detected: "#1D5FA8",
   not_enrolled: "#C62828",

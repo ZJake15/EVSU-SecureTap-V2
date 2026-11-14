@@ -220,7 +220,7 @@ export default function Logs() {
       log.direction === "exit" ? "Exit" : "Entry",
       log.entered_at || "",
       log.verification_method,
-      log.status,
+      log.status === "failed" ? "unknown" : log.status, // called Unknown everywhere on screen
       log.match_confidence != null ? Math.round(log.match_confidence * 100) : "",
       log.failure_reason,
       log.gate_location,
@@ -293,7 +293,7 @@ export default function Logs() {
           <select value={filters.status} onChange={handleFilterChange("status")} className="input">
             <option value="">All</option>
             <option value="success">Success</option>
-            <option value="failed">Failed</option>
+            <option value="failed">Unknown</option>
             <option value="spoof_suspected">Spoof suspected</option>
             <option value="occlusion_detected">Face covered</option>
             <option value="not_enrolled_let_in">Not enrolled (let in)</option>

@@ -66,7 +66,7 @@ const GUIDES = [
   {
     key: "reports", icon: "chart-bar", title: "Reports", to: "/reports", roles: MANAGERS,
     steps: [
-      "Today, last 7 or last 30 days: entries, failed verifications, the busiest hours, every outcome by method, and the confidence of matches.",
+      "Today, last 7 or last 30 days: entries, unknown attempts, the busiest hours, every outcome by method, and the confidence of matches.",
       "Export CSV saves the by-method numbers for a spreadsheet.",
     ],
   },

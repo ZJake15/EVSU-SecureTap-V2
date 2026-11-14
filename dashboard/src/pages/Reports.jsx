@@ -60,7 +60,7 @@ const METHODS = [
   { key: "face_nfc", label: "Face + card", color: "#1baf7a" }, // aqua
   { key: "card", label: "Card", color: "#eb6834" }, // orange
   { key: "manual", label: "Manual override", color: "#6250d6" }, // violet
-  { key: "failed", label: "Failed", color: "#e34948" }, // red
+  { key: "failed", label: "Unknown", color: "#e34948" }, // red
   { key: "spoof", label: "Spoof suspected", color: "#eda100" }, // yellow
   { key: "occluded", label: "Face covered", color: "#008300" }, // green
   { key: "not_enrolled", label: "Not enrolled (refused)", color: "#e87ba4" }, // magenta
@@ -445,7 +445,7 @@ export default function Reports() {
             <span className="t-stat">{summary.exits_today ?? 0}</span>
           </div>
           <div className="flex flex-col gap-s2 border-l border-line px-s5 pb-0.5">
-            <span className={`t-eyebrow ${summary.failed_today > 0 ? "text-danger" : ""}`}>Failed verifications</span>
+            <span className={`t-eyebrow ${summary.failed_today > 0 ? "text-danger" : ""}`}>Unknown today</span>
             <span className={`t-stat ${summary.failed_today > 0 ? "text-danger" : ""}`}>{summary.failed_today}</span>
           </div>
           <div className="flex flex-col gap-s2 border-l border-line px-s5 pb-0.5">

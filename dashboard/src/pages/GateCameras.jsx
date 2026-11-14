@@ -1,15 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import apiClient, { API_BASE_URL, tokenStore } from "../api/client";
-import { Checkbox, Icon, Notice, PageHeader } from "../components/ui";
+import { Checkbox, Icon, Notice, PageHeader, Segmented } from "../components/ui";
 
-// Admin only: every gate's camera, live, like a CCTV monitor. Nothing is
-// recorded. The gates send their picture only while this page is open (and
+// Admin only: every gate camera, live, laid out like a CCTV monitor wall -
+// one row per gate, its entrance camera then its exit camera (CAM 01, CAM 02,
+// ...). The gates named in Settings › Camera ("Cameras page: Gate 1 / Gate 2")
+// always have their slots; another gate that reports gets a row below. Nothing
+// is recorded. The gates send their picture only while this page is open (and
 // visible) - see backend logs/camera_monitor.py and entry-agent/monitor_stream.py.
 
 const LIST_REFRESH_MS = 10000;
 const RECONNECT_AFTER_ERROR_MS = 2000;
 const RECONNECT_AFTER_END_MS = 200; // the backend ends each stream after a few minutes
 const SHOW_BOXES_KEY = "securetap_cameras_show_boxes";
+const LAYOUT_KEY = "securetap_cameras_layout";
+const LAYOUTS = [
+  { value: "quad", label: "2 × 2" },
+  { value: "big", label: "1 + 3" },
+];
+const WALL_BG = "#0B0C0D";
 
 // The gate monitor's box colours (entry-agent/ui.py), from the dashboard palette.
 const BOX_COLORS = {
@@ -23,11 +33,19 @@ const BOX_COLORS = {
   refused: "#C62828", // refused - not enrolled this semester
 };
 
-function readSavedShowBoxes() {
+function readSaved(key, fallback) {
   try {
-    return localStorage.getItem(SHOW_BOXES_KEY) !== "off";
+    return localStorage.getItem(key) ?? fallback;
   } catch {
-    return true;
+    return fallback;
+  }
+}
+
+function save(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Remembering the choice is only a convenience.
   }
 }
 
@@ -58,18 +76,18 @@ async function readMessages(response, onMessage) {
   }
 }
 
-// One connection for every gate shown. Reconnects by itself; a 401 refreshes
+// One connection for every camera shown. Reconnects by itself; a 401 refreshes
 // the sign-in through apiClient first.
-function useCameraStream(gateNames, active, onFrame) {
+function useCameraStream(cameraNames, active, onFrame) {
   const [status, setStatus] = useState({});
   const [connection, setConnection] = useState("connecting");
   const onFrameRef = useRef(onFrame);
   onFrameRef.current = onFrame;
-  const key = gateNames.join("\n");
+  const key = cameraNames.join("\n");
 
   useEffect(() => {
-    const gates = key ? key.split("\n") : [];
-    if (!active || gates.length === 0) {
+    const cameras = key ? key.split("\n") : [];
+    if (!active || cameras.length === 0) {
       setConnection(active ? "idle" : "paused");
       return undefined;
     }
@@ -79,7 +97,7 @@ function useCameraStream(gateNames, active, onFrame) {
 
     const connect = async () => {
       controller = new AbortController();
-      const query = gates.map((gate) => `gate=${encodeURIComponent(gate)}`).join("&");
+      const query = cameras.map((camera) => `gate=${encodeURIComponent(camera)}`).join("&");
       let delay = RECONNECT_AFTER_ERROR_MS;
       try {
         const response = await fetch(`${API_BASE_URL}/gate-cameras/stream?${query}`, {
@@ -166,102 +184,164 @@ function timeAgo(value) {
   return new Date(value).toLocaleDateString();
 }
 
-function CameraTile({ gate, live, register, focused, onFocus, onUnfocus }) {
-  const tileRef = useRef(null);
+function useClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
+
+// A slot with no picture: grey static, like a CCTV channel with no signal.
+// Drawn small and stretched (pixelated), about 12 times a second.
+function NoSignal({ title, detail, compact }) {
   const canvasRef = useRef(null);
-  const [hasPicture, setHasPicture] = useState(false);
-
-  useEffect(
-    () =>
-      register(gate.gate_location, {
-        canvas: () => canvasRef.current,
-        shown: () => setHasPicture(true),
-      }),
-    [gate.gate_location, register]
-  );
-
-  const fullscreen = () => {
-    const element = tileRef.current;
-    if (!element) return;
-    if (document.fullscreenElement) document.exitFullscreen?.();
-    else element.requestFullscreen?.();
-  };
-
-  const isLive = Boolean(live?.live);
-  let badge;
-  if (isLive) {
-    badge = (
-      <span className="flex items-center gap-s2 text-sm font-bold text-verified">
-        <span className="h-2 w-2 bg-verified" />
-        LIVE{live.fps ? <span className="font-mono font-medium text-ink-600">{Math.round(live.fps)} fps</span> : null}
-      </span>
-    );
-  } else if (gate.online) {
-    badge = (
-      <span className="flex items-center gap-s2 text-sm font-bold text-ink-600">
-        <Icon name="circle-notch" bold className="animate-spin" /> Connecting
-      </span>
-    );
-  } else {
-    badge = (
-      <span className="flex items-center gap-s2 text-sm font-bold text-caution">
-        <Icon name="video-camera-slash" bold /> Offline
-      </span>
-    );
-  }
-
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const ctx = canvas.getContext("2d");
+    const image = ctx.createImageData(canvas.width, canvas.height);
+    let frame = null;
+    let last = 0;
+    const draw = (time) => {
+      frame = requestAnimationFrame(draw);
+      if (time - last < 80) return;
+      last = time;
+      const data = image.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const v = 40 + Math.random() * 110;
+        data[i] = v;
+        data[i + 1] = v;
+        data[i + 2] = v;
+        data[i + 3] = 255;
+      }
+      ctx.putImageData(image, 0, 0);
+    };
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, []);
   return (
-    <div ref={tileRef} className="card flex min-w-0 flex-col overflow-hidden bg-surface">
-      <div className="flex h-11 flex-none items-center gap-s3 border-b border-line px-s4">
-        <Icon name="video-camera" bold size={18} className="text-ink-600" />
-        <span className="min-w-0 flex-1 truncate font-bold">{gate.label || gate.gate_location}</span>
-        {badge}
-        {focused ? (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onUnfocus} title="Back to all cameras">
-            <Icon name="squares-four" bold /> All
-          </button>
-        ) : (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onFocus} title="Show this camera alone">
-            <Icon name="arrows-out-simple" bold /> Enlarge
-          </button>
-        )}
-        <button type="button" className="btn btn-ghost btn-sm" onClick={fullscreen} title="Full screen">
-          <Icon name="corners-out" bold />
-        </button>
-      </div>
-      <div className="relative flex flex-1 items-center justify-center bg-ink">
-        <canvas
-          ref={canvasRef}
-          className={`block h-auto w-full object-contain ${hasPicture ? "" : "aspect-video"} ${
-            focused ? "max-h-[calc(100vh-240px)]" : "max-h-full"
+    <div className="absolute inset-0">
+      <canvas ref={canvasRef} width={160} height={90} className="h-full w-full [image-rendering:pixelated]" />
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-s1 px-s3 text-center">
+        <span
+          className={`bg-black/80 px-s3 py-s1 font-mono font-semibold tracking-[0.2em] text-white ${
+            compact ? "text-xs" : "text-lg"
           }`}
-        />
-        {!isLive && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-s2 bg-ink/70 px-s5 text-center text-white">
-            <Icon name={gate.online ? "hourglass-medium" : "video-camera-slash"} size={32} />
-            <span className="font-bold">{gate.online ? "Waiting for the picture…" : "No signal"}</span>
-            <span className="max-w-[360px] text-sm text-ink-400">
-              {gate.online
-                ? "The gate monitor starts sending within a second or two."
-                : `The gate monitor isn't open${gate.last_seen ? ` (last seen ${timeAgo(gate.last_seen)})` : ""}.`}
-            </span>
-          </div>
-        )}
+        >
+          {title}
+        </span>
+        {detail && !compact && <span className="bg-black/70 px-s2 font-mono text-xs text-ink-400">{detail}</span>}
       </div>
     </div>
   );
 }
 
+// One CCTV channel: the live picture with the gate's face boxes, the camera
+// number and name over its top-left corner, its state over the top-right -
+// or NO SIGNAL static while there's no picture.
+function CctvSlot({ slot, number, gate, live, register, compact = false, fill = false, onClick, title }) {
+  const slotRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [hasPicture, setHasPicture] = useState(false);
+
+  useEffect(
+    () =>
+      register(slot.lane, {
+        canvas: () => canvasRef.current,
+        shown: () => setHasPicture(true),
+      }),
+    [slot.lane, register]
+  );
+
+  const fullscreen = () => {
+    const element = slotRef.current;
+    if (!element) return;
+    if (document.fullscreenElement === element) document.exitFullscreen?.();
+    else element.requestFullscreen?.();
+  };
+
+  const isLive = Boolean(live?.live) && hasPicture;
+  const side = slot.direction === "exit" ? "EXIT" : "ENTRANCE";
+  const camera = `CAM ${String(number).padStart(2, "0")}`;
+  let state;
+  if (isLive) {
+    state = (
+      <span className="flex items-center gap-s1 text-white">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-[#E53935]" />
+        LIVE{live.fps && !compact ? <span className="text-ink-400"> {Math.round(live.fps)} FPS</span> : null}
+      </span>
+    );
+  } else if (slot.online) {
+    state = <span className="text-ink-400">CONNECTING</span>;
+  } else {
+    state = <span className="text-[#E8A33D]">OFFLINE</span>;
+  }
+  const detail = slot.online
+    ? "The gate monitor starts sending within a second or two."
+    : slot.reported
+      ? `Gate monitor not open · last seen ${timeAgo(slot.last_seen)}`
+      : slot.direction === "exit"
+        ? "No exit camera reported - choose one in that gate monitor's Cameras & card readers."
+        : "This gate's monitor hasn't reported yet.";
+
+  return (
+    <div
+      ref={slotRef}
+      onClick={onClick}
+      onDoubleClick={fullscreen}
+      title={title}
+      className={`group relative min-h-0 overflow-hidden border border-[#24272B] bg-black ${
+        fill ? "h-full w-full" : "aspect-video w-full"
+      } ${onClick ? "cursor-pointer" : ""}`}
+    >
+      <canvas
+        ref={canvasRef}
+        className={`absolute inset-0 h-full w-full object-contain ${isLive ? "" : "invisible"}`}
+      />
+      {!isLive && <NoSignal title={slot.online ? "CONNECTING" : "NO SIGNAL"} detail={detail} compact={compact} />}
+      <div
+        className={`pointer-events-none absolute left-0 right-0 top-0 flex items-start justify-between gap-s2 font-mono font-semibold uppercase ${
+          compact ? "p-s1 text-[10px]" : "p-s2 text-xs"
+        }`}
+      >
+        <span className="min-w-0 truncate bg-black/70 px-s1 text-white">
+          <span className="text-brass">{camera}</span> · {gate} · {side}
+        </span>
+        <span className="flex-none bg-black/70 px-s1">{state}</span>
+      </div>
+      {!compact && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            fullscreen();
+          }}
+          className="absolute bottom-s2 right-s2 hidden rounded-sm bg-black/70 p-s1 text-white group-hover:block"
+          title="Full screen (or double-click)"
+        >
+          <Icon name="corners-out" bold size={16} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function GateCameras() {
-  const [gates, setGates] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [listError, setListError] = useState("");
   const [settings, setSettings] = useState(null);
-  const [showBoxes, setShowBoxes] = useState(readSavedShowBoxes);
-  const [focusedGate, setFocusedGate] = useState(null);
+  const [showBoxes, setShowBoxes] = useState(() => readSaved(SHOW_BOXES_KEY, "on") !== "off");
+  const [layout, setLayout] = useState(() => (readSaved(LAYOUT_KEY, "quad") === "big" ? "big" : "quad"));
+  const [bigLane, setBigLane] = useState(null);
   const [visible, setVisible] = useState(() => !document.hidden);
+  const [wall, setWall] = useState(false);
+  const wallRef = useRef(null);
+  const now = useClock();
 
-  // gate -> {canvas(), shown()} of its tile; gate -> newest picture and faces.
+  // lane -> {canvas(), shown()} of its slot; lane -> newest picture and faces.
   const tiles = useRef(new Map());
   const latest = useRef(new Map());
   const showBoxesRef = useRef(showBoxes);
@@ -273,21 +353,11 @@ export default function GateCameras() {
       try {
         const { data } = await apiClient.get("/gate-cameras");
         if (cancelled) return;
-        // A gate's exit camera is listed as "<gate> · Exit" (backend
-        // logs/lanes.py); its entrance camera, the plain gate name, is then
-        // labelled "· Entrance" so the two read as a pair - side by side,
-        // since the list is sorted by name.
-        const names = new Set((data.gates || []).map((gate) => gate.gate_location));
-        setGates(
-          (data.gates || []).map((gate) => ({
-            ...gate,
-            label: names.has(`${gate.gate_location} · Exit`) ? `${gate.gate_location} · Entrance` : gate.gate_location,
-          })),
-        );
+        setRows(data.rows || []);
         setSettings({ fps: data.fps, width: data.width });
         setListError("");
       } catch {
-        if (!cancelled) setListError("Couldn't load the list of gates — retrying…");
+        if (!cancelled) setListError("Couldn't load the list of cameras — retrying…");
       } finally {
         if (!cancelled) setLoaded(true);
       }
@@ -307,16 +377,21 @@ export default function GateCameras() {
     return () => document.removeEventListener("visibilitychange", onChange);
   }, []);
 
+  // Wall mode is the browser's full screen on the wall itself (Esc leaves it).
   useEffect(() => {
-    try {
-      localStorage.setItem(SHOW_BOXES_KEY, showBoxes ? "on" : "off");
-    } catch {
-      // Remembering the choice is only a convenience.
-    }
-    for (const [gate, picture] of latest.current) {
-      drawFrame(tiles.current.get(gate)?.canvas(), picture.bitmap, picture.faces, showBoxes);
+    const onChange = () => setWall(document.fullscreenElement === wallRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  useEffect(() => {
+    save(SHOW_BOXES_KEY, showBoxes ? "on" : "off");
+    for (const [lane, picture] of latest.current) {
+      drawFrame(tiles.current.get(lane)?.canvas(), picture.bitmap, picture.faces, showBoxes);
     }
   }, [showBoxes]);
+
+  useEffect(() => save(LAYOUT_KEY, layout), [layout]);
 
   // Free the decoded pictures when leaving the page.
   useEffect(
@@ -327,15 +402,15 @@ export default function GateCameras() {
     []
   );
 
-  const register = useCallback((gate, tile) => {
-    tiles.current.set(gate, tile);
-    const picture = latest.current.get(gate);
+  const register = useCallback((lane, tile) => {
+    tiles.current.set(lane, tile);
+    const picture = latest.current.get(lane);
     if (picture) {
       drawFrame(tile.canvas(), picture.bitmap, picture.faces, showBoxesRef.current);
       tile.shown();
     }
     return () => {
-      if (tiles.current.get(gate) === tile) tiles.current.delete(gate);
+      if (tiles.current.get(lane) === tile) tiles.current.delete(lane);
     };
   }, []);
 
@@ -362,34 +437,40 @@ export default function GateCameras() {
     }
   }, []);
 
-  const shownGates = focusedGate ? gates.filter((gate) => gate.gate_location === focusedGate) : gates;
-  const streamGates = shownGates.map((gate) => gate.gate_location);
-  const { status, connection } = useCameraStream(streamGates, visible, onFrame);
+  // Every channel in order - CAM 01 is gate 1's entrance, CAM 02 its exit, ...
+  const channels = rows.flatMap((row) => row.slots.map((slot) => ({ slot, gate: row.gate })));
+  channels.forEach((channel, index) => {
+    channel.number = index + 1;
+  });
+  const { status, connection } = useCameraStream(
+    channels.map((channel) => channel.slot.lane),
+    visible,
+    onFrame,
+  );
+  const liveCount = channels.filter((channel) => status[channel.slot.lane]?.live).length;
+  const big = channels.find((channel) => channel.slot.lane === bigLane) || channels[0];
+  const others = channels.filter((channel) => channel !== big);
 
-  useEffect(() => {
-    if (focusedGate && loaded && !gates.some((gate) => gate.gate_location === focusedGate)) setFocusedGate(null);
-  }, [focusedGate, gates, loaded]);
-
-  // Counted over the gates on screen - an enlarged gate's neighbours aren't streamed.
-  const liveCount = shownGates.filter((gate) => status[gate.gate_location]?.live).length;
-  const columns =
-    focusedGate || shownGates.length <= 1
-      ? "grid-cols-1"
-      : shownGates.length <= 4
-        ? "grid-cols-1 lg:grid-cols-2"
-        : "grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3";
+  const toggleWall = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else wallRef.current?.requestFullscreen?.();
+  };
 
   const connectionText = {
-    live: focusedGate
-      ? liveCount
-        ? "Live"
-        : "Waiting for the picture…"
-      : `${liveCount} of ${gates.length} gate${gates.length === 1 ? "" : "s"} live`,
+    live: `${liveCount} of ${channels.length} cameras live`,
     connecting: "Connecting…",
     retrying: "Reconnecting…",
     paused: "Paused while this tab is hidden",
-    idle: "No gates",
+    idle: "No cameras",
   }[connection];
+
+  const slotProps = (channel) => ({
+    slot: channel.slot,
+    number: channel.number,
+    gate: channel.gate,
+    live: status[channel.slot.lane],
+    register,
+  });
 
   return (
     <div className="flex flex-col">
@@ -402,7 +483,12 @@ export default function GateCameras() {
           />
           <span>{connectionText}</span>
         </div>
-        <Checkbox checked={showBoxes} onChange={(event) => setShowBoxes(event.target.checked)} label="Show face boxes" />
+        <Segmented options={LAYOUTS} value={layout} onChange={setLayout} />
+        <Checkbox checked={showBoxes} onChange={(event) => setShowBoxes(event.target.checked)} label="Face boxes" />
+        <button type="button" onClick={toggleWall} className="btn-secondary">
+          <Icon name="frame-corners" size={16} />
+          Wall mode
+        </button>
       </PageHeader>
 
       {listError && (
@@ -411,36 +497,74 @@ export default function GateCameras() {
         </Notice>
       )}
 
-      {loaded && gates.length === 0 && !listError ? (
+      {loaded && channels.length === 0 && !listError ? (
         <div className="card mt-s6 flex flex-col justify-center gap-s4 p-s7">
           <Icon name="video-camera" size={44} className="text-ink-600" />
-          <span className="font-display stretch-semi text-[28px] font-extrabold leading-tight">No gates yet</span>
+          <span className="font-display stretch-semi text-[28px] font-extrabold leading-tight">No gates set</span>
           <span className="max-w-[520px] text-base leading-normal text-ink-600">
-            A gate appears here once its gate monitor has been opened (on any computer connected to this one). Its
-            camera then shows live whenever this page is open.
+            Name EVSU&apos;s gates in <Link to="/settings#camera" className="font-bold text-maroon underline">Settings › Camera</Link>{" "}
+            (Cameras page: Gate 1 and Gate 2) - each gets an entrance and an exit camera here.
           </span>
         </div>
       ) : (
-        <div className={`mt-s6 grid gap-s5 ${columns}`}>
-          {shownGates.map((gate) => (
-            <CameraTile
-              key={gate.gate_location}
-              gate={gate}
-              live={status[gate.gate_location]}
-              register={register}
-              focused={focusedGate === gate.gate_location}
-              onFocus={() => setFocusedGate(gate.gate_location)}
-              onUnfocus={() => setFocusedGate(null)}
-            />
-          ))}
+        <div
+          ref={wallRef}
+          className={`mt-s5 flex flex-col gap-1 rounded-md p-1 ${wall ? "h-screen rounded-none p-2" : ""}`}
+          style={{ background: WALL_BG }}
+        >
+          {/* The DVR strip along the top: what this is, how many are live, the time. */}
+          <div className="flex flex-none items-center justify-between gap-s3 px-s2 py-s1 font-mono text-xs font-semibold uppercase text-ink-400">
+            <span>
+              <span className="text-brass">EVSU SecureTap</span> · CCTV · {liveCount}/{channels.length} live
+            </span>
+            {wall && <span className="hidden sm:inline">Esc to leave wall mode · double-click a camera for full screen</span>}
+            <span className="text-white">
+              {now.toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit" })}{" "}
+              {now.toLocaleTimeString("en-US", { hour12: false })}
+            </span>
+          </div>
+
+          {layout === "quad" ? (
+            <div
+              className={`grid min-h-0 grid-cols-1 gap-1 sm:grid-cols-2 ${wall ? "flex-1 auto-rows-fr" : ""}`}
+            >
+              {channels.map((channel) => (
+                <CctvSlot key={channel.slot.lane} {...slotProps(channel)} fill={wall} />
+              ))}
+            </div>
+          ) : (
+            <div
+              className={`grid min-h-0 grid-cols-1 gap-1 md:grid-cols-[minmax(0,3fr)_minmax(0,1fr)] ${
+                wall ? "flex-1" : ""
+              }`}
+            >
+              {big && <CctvSlot key={big.slot.lane} {...slotProps(big)} fill={wall} />}
+              {/* As tall as the big camera (h-0 + min-h-full in its grid row), scrolling past 3. */}
+              <div className="grid min-h-0 grid-cols-3 gap-1 md:flex md:h-0 md:min-h-full md:flex-col md:overflow-y-auto">
+                {others.map((channel) => (
+                  <CctvSlot
+                    key={channel.slot.lane}
+                    {...slotProps(channel)}
+                    compact
+                    onClick={() => setBigLane(channel.slot.lane)}
+                    title="Show this camera large"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {settings && gates.length > 0 && (
-        <span className="mt-s5 text-sm text-ink-600">
-          Each gate sends up to {settings.fps} pictures a second, {settings.width} px wide, only while this page is
-          open — Settings › Camera › Cameras page smoothness / picture width. Boxes show the gate&apos;s own face
-          checks, a moment behind the picture.
+      {settings && channels.length > 0 && (
+        <span className="mt-s4 text-sm text-ink-600">
+          Gates and their order:{" "}
+          <Link to="/settings#camera" className="font-bold text-maroon underline">
+            Settings › Camera
+          </Link>{" "}
+          (Cameras page: Gate 1 / Gate 2); another gate that reports gets its own row. Each camera sends up to{" "}
+          {settings.fps} pictures a second, {settings.width} px wide, only while this page is open. Boxes show the
+          gate&apos;s own face checks, a moment behind the picture.
         </span>
       )}
     </div>

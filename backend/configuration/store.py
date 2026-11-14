@@ -21,9 +21,13 @@ from django.utils import timezone
 
 from audit.utils import log_action
 
-from .registry import BOOL, BY_KEY, CHOICE, DAYS, DEFINITIONS, FIXED, INT, MORE_OPTIONS, SECTIONS, TIME, WEEKDAYS
+from .registry import (
+    BOOL, BY_KEY, CHOICE, DAYS, DEFINITIONS, FIXED, INT, MORE_OPTIONS, SECTIONS, TEXT, TIME, WEEKDAYS,
+)
 
-TEXT_KINDS = (CHOICE, TIME, DAYS)  # kept in SystemSetting.text_value
+TEXT_KINDS = (CHOICE, TIME, DAYS, TEXT)  # kept in SystemSetting.text_value
+# Kinds where an empty text is a real, saved value - bool_value marks it saved.
+EMPTY_ALLOWED = (DAYS, TEXT)
 _TIME_PATTERN = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 
 CACHE_SECONDS = 5.0
@@ -66,7 +70,7 @@ def _decode(definition, row):
         return float(row.number_value)
     if kind in (CHOICE, TIME) and row.text_value:
         return row.text_value
-    if kind == DAYS and row.bool_value is not None:  # bool_value marks "saved" - no days is a valid value
+    if kind in EMPTY_ALLOWED and row.bool_value is not None:  # bool_value marks "saved" - empty is valid
         return row.text_value
     return definition.default_value()
 
@@ -77,9 +81,9 @@ def _encode(definition, value, row):
     row.text_value = ""
     if definition.kind == BOOL:
         row.bool_value = bool(value)
-    elif definition.kind == DAYS:
+    elif definition.kind in EMPTY_ALLOWED:
         row.text_value = str(value)
-        row.bool_value = True  # see _decode: an empty set of days is still a saved value
+        row.bool_value = True  # see _decode: no days, or an empty name, is still a saved value
     elif definition.kind in TEXT_KINDS:
         row.text_value = str(value)
     else:
@@ -167,6 +171,14 @@ def validate(definition, raw):
         if picked - set(known):
             return None, "Must be days of the week: " + ", ".join(known) + "."
         return ",".join(key for key in known if key in picked), None  # always in Mon..Sun order
+    if kind == TEXT:
+        if not isinstance(raw, str):
+            return None, "Must be text."
+        text = " ".join(raw.split())  # no stray spaces - a gate name has to match exactly
+        limit = int(definition.maximum or 100)
+        if len(text) > limit:
+            return None, f"Must be at most {limit} characters."
+        return text, None
 
     if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
         return None, "Must be a number."

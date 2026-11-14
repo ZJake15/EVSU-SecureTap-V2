@@ -17,6 +17,8 @@ INT, FLOAT, BOOL, CHOICE, FIXED = "int", "float", "bool", "choice", "fixed"
 # A time of day, "HH:MM" (24-hour), and a set of weekdays, "mon,tue,..." -
 # both kept as text, in WEEKDAYS order (see store.validate).
 TIME, DAYS = "time", "days"
+# A short line of text (a name) - up to `maximum` characters, may be empty.
+TEXT = "text"
 WEEKDAYS = (("mon", "Mon"), ("tue", "Tue"), ("wed", "Wed"), ("thu", "Thu"), ("fri", "Fri"), ("sat", "Sat"),
             ("sun", "Sun"))
 
@@ -326,6 +328,20 @@ DEFINITIONS = [
         "monitor_size", "camera", "Cameras page picture width",
         "How wide each gate's picture is on the Cameras page. Wider is sharper, but uses more network.",
         CHOICE, "960", choices=(("640", "640 px"), ("960", "960 px"), ("1280", "1280 px")),
+    ),
+    # The Cameras page's CCTV wall: one row per gate - its entrance camera,
+    # then its exit camera. These two gates come first, in this order; any
+    # other gate that reports gets a row of its own below them.
+    SettingDef(
+        "cameras_gate_1", "camera", "Cameras page: Gate 1",
+        "The gate shown first on the Cameras page (CAM 01 entrance, CAM 02 exit). Type its name exactly as its "
+        "gate monitor uses it (the launcher's gate name).",
+        TEXT, "Main Gate", maximum=100,
+    ),
+    SettingDef(
+        "cameras_gate_2", "camera", "Cameras page: Gate 2",
+        "The second gate (CAM 03 entrance, CAM 04 exit). Leave empty if there's only one.",
+        TEXT, "Gate 2", maximum=100,
     ),
     SettingDef(
         "camera_exposure", "camera", "Exposure (shutter speed)",

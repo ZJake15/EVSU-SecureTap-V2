@@ -334,26 +334,50 @@ class GateMonitorFrameView(APIView):
 
 
 class GateCamerasView(APIView):
-    """The gates the Cameras page shows: every gate whose monitor reported
-    its camera in the last week (logs/camera_status.py), and whether it is
-    open now. Admin only."""
+    """The Cameras page's CCTV wall: one row per gate, each with two slots -
+    its entrance camera, then its exit camera (logs/lanes.py). The two gates
+    named in Settings > Camera ("Cameras page: Gate 1 / Gate 2") come first,
+    in that order, and always have their slots (NO SIGNAL until their gate
+    monitor reports); any other gate that reported in the last week gets a
+    row below them. Each slot says whether its camera is open now (from its
+    camera report - logs/camera_status.py). Admin only."""
 
     permission_classes = [IsAdmin]
 
     def get(self, request):
         now = timezone.now()
-        gates = [
-            {
-                "gate_location": gate.gate_location,
-                "online": now - gate.updated_at <= camera_status.FRESH_FOR,
-                "last_seen": gate.updated_at,
-                "resolution": (gate.report or {}).get("resolution"),
-                "zoom": (gate.report or {}).get("zoom"),
+        reported = {
+            camera.gate_location: camera
+            for camera in GateCamera.objects.filter(updated_at__gte=now - camera_status.SHOW_FOR)
+        }
+        configured = [system_settings.get("cameras_gate_1"), system_settings.get("cameras_gate_2")]
+        order = []
+        for name in configured:
+            if name and name not in order:
+                order.append(name)
+        for name in sorted({lanes.gate_of(lane_name) for lane_name in reported}):
+            if name not in order:
+                order.append(name)
+
+        def slot(gate, direction):
+            lane_name = lanes.lane(gate, direction)
+            camera = reported.get(lane_name)
+            return {
+                "lane": lane_name,
+                "direction": direction,
+                "reported": camera is not None,
+                "online": camera is not None and now - camera.updated_at <= camera_status.FRESH_FOR,
+                "last_seen": camera.updated_at if camera else None,
+                "resolution": (camera.report or {}).get("resolution") if camera else None,
+                "zoom": (camera.report or {}).get("zoom") if camera else None,
             }
-            for gate in GateCamera.objects.filter(updated_at__gte=now - camera_status.SHOW_FOR).order_by(
-                "gate_location")
+
+        rows = [
+            {"gate": gate, "configured": gate in configured,
+             "slots": [slot(gate, lanes.ENTRY), slot(gate, lanes.EXIT)]}
+            for gate in order
         ]
-        return Response({"gates": gates, **_monitor_settings()})
+        return Response({"rows": rows, **_monitor_settings()})
 
 
 # One "Viewed gate cameras" audit entry per Admin per this long - the page

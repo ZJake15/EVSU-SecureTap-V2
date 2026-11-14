@@ -1043,12 +1043,20 @@ the page's main action beside it. See §8.1 for the visual design system.
   — or, in caution colour, "Nobody signed in" and who was last on duty until
   when — plus today's entries, how many were Unattended, and the assigned
   officers. With guard sign-in switched off it says so instead (§13.4).
-- **Cameras** (Admin only) — every gate's camera live, like a CCTV monitor: one
-  tile per gate whose gate monitor reported its camera in the last week
-  (`/api/gate-cameras`), each with LIVE and its frames a second, "Connecting",
-  or "No signal" with when the gate was last seen. **Enlarge** shows one gate
-  alone (and streams only that one), the corner button goes full screen, and
-  **Show face boxes** draws the gate's own face-check results on the picture —
+- **Cameras** (Admin only) — every gate camera live on a CCTV wall
+  (`/api/gate-cameras` returns its `rows`): one row per gate, its **entrance**
+  camera then its **exit** camera, numbered CAM 01, CAM 02, ... The two gates
+  named in Settings › Camera (**Cameras page: Gate 1 / Gate 2**, typed exactly
+  as their gate monitors' gate names) come first and always have their four
+  slots; any other gate that reported in the last week gets a row of its own
+  below. Each slot shows "CAM 01 · MAIN GATE · ENTRANCE" over its top-left,
+  LIVE with its frames a second (or CONNECTING / OFFLINE) over its top-right,
+  and grey static with **NO SIGNAL** (and why - not open since when, or no exit
+  camera chosen) while there's no picture. Two layouts, remembered in the
+  browser: **2 × 2** and **1 + 3** (one camera large, the others in a column
+  beside it - click one to make it large). **Wall mode** puts the whole wall
+  in full screen with no sidebar (Esc leaves); a double-click (or the corner
+  button) puts one camera alone in full screen. **Face boxes** draws the gate's own face-check results on the picture —
   the same labels and colours as the gate monitor (name and confidence, UNKNOWN,
   SPOOF, CHECKING, TAP CARD, PLEASE UNCOVER), from the gate's latest
   `/api/identify` answer, so a moment behind the picture.

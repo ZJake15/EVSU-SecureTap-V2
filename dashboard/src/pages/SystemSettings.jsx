@@ -28,6 +28,7 @@ export function parseDraft(setting, raw) {
   if (setting.kind === "time" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(raw))) {
     return { error: "Enter a time, like 06:30." };
   }
+  if (setting.kind === "text") return { value: String(raw ?? "").replace(/\s+/g, " ").trim() };
   if (!NUMBER_KINDS.has(setting.kind)) return { value: raw };
   if (String(raw).trim() === "") return { error: "Enter a number." };
   const number = Number(raw);
@@ -140,6 +141,19 @@ function Control({ setting, raw, onChange, invalid }) {
   }
   if (setting.kind === "choice") {
     return <Segmented options={setting.choices} value={raw} onChange={onChange} className="min-w-[260px]" />;
+  }
+  if (setting.kind === "text") {
+    return (
+      <input
+        type="text"
+        value={raw ?? ""}
+        maxLength={setting.maximum || 100}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label={setting.label}
+        aria-invalid={invalid}
+        className={`input w-[260px] ${invalid ? "border-danger focus:border-danger focus:ring-danger" : ""}`}
+      />
+    );
   }
   if (setting.kind === "fixed") {
     return (

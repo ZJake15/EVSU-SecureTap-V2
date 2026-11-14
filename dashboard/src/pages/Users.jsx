@@ -11,6 +11,43 @@ import { groupedUnits, useOrgLists } from "../lib/orgUnits";
 // so changing a school to an office also clears the old department.
 const AFFILIATION_KEYS = ["org_unit", "department", "staff_type", "job_title", "year_level"];
 
+// The people list's order - newest registration first unless chosen otherwise
+// (the choice is remembered in this browser).
+const SORT_KEY = "securetap_users_sort";
+const byName = (a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" });
+const byNewest = (a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id;
+const SORTS = {
+  newest: { label: "Newest first", compare: byNewest },
+  oldest: { label: "Oldest first", compare: (a, b) => -byNewest(a, b) },
+  name_az: { label: "Name (A-Z)", compare: byName },
+  name_za: { label: "Name (Z-A)", compare: (a, b) => byName(b, a) },
+  id: {
+    label: "ID number",
+    compare: (a, b) => a.student_or_employee_id.localeCompare(b.student_or_employee_id, undefined, { numeric: true }),
+  },
+  unit: {
+    label: "School / office",
+    // People without one yet go last.
+    compare: (a, b) =>
+      (a.org_unit_name ? 0 : 1) - (b.org_unit_name ? 0 : 1) ||
+      (a.org_unit_name || "").localeCompare(b.org_unit_name || "") ||
+      byName(a, b),
+  },
+};
+
+function readSavedSort() {
+  try {
+    const saved = localStorage.getItem(SORT_KEY);
+    return SORTS[saved] ? saved : "newest";
+  } catch {
+    return "newest";
+  }
+}
+
+function addedOn(value) {
+  return value ? new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+}
+
 const emptyForm = {
   full_name: "",
   role: "student",
@@ -140,7 +177,7 @@ const emptyConfusableForm = { person_a: "", person_b: "" };
 
 const emptyEnrollment = { mode: "guided", isReady: false, primaryPhoto: null, extraPhotos: [] };
 
-const PEOPLE_COLS = "minmax(0,2.3fr) 72px 110px 100px minmax(0,1.3fr) 90px 190px";
+const PEOPLE_COLS = "minmax(0,2.3fr) 72px 110px 100px minmax(0,1.3fr) 100px 90px 190px";
 
 // DRF field validation errors come back as {"photo": ["reason"], ...} - not
 // {"detail": "..."} - so pull out the first field's actual message instead
@@ -255,6 +292,7 @@ export default function Users() {
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [photosFilter, setPhotosFilter] = useState("");
+  const [sortBy, setSortBy] = useState(readSavedSort);
   const [unitFilter, setUnitFilter] = useState("");
   const [staffTypeFilter, setStaffTypeFilter] = useState("");
   const { org } = useOrgLists();
@@ -292,11 +330,25 @@ export default function Users() {
 
   const [loadError, setLoadError] = useState("");
 
-  const loadPeople = () => {
-    apiClient
-      .get("/users/", { params: { page_size: 100 } })
-      .then(({ data }) => setPeople(data.results || data))
-      .catch(() => setLoadError("Could not load the user list. Try refreshing the page."));
+  // Everyone, page by page (the server sends at most 200 at a time) - the
+  // sorting and filters below work on the whole list, so "Newest first"
+  // really shows the newest, not just the newest of the first page.
+  const loadPeople = async () => {
+    try {
+      const everyone = [];
+      let page = 1;
+      for (;;) {
+        // eslint-disable-next-line no-await-in-loop
+        const { data } = await apiClient.get("/users/", { params: { page_size: 200, page } });
+        everyone.push(...(data.results || data));
+        if (!data.next || !data.results) break;
+        page += 1;
+      }
+      setPeople(everyone);
+      setLoadError("");
+    } catch {
+      setLoadError("Could not load the user list. Try refreshing the page.");
+    }
   };
 
   // Admin-only: the maker-checker queue of SASO-filed deactivation requests
@@ -324,7 +376,9 @@ export default function Users() {
       .catch(() => setConfusableError("Could not load confusable pairs. Try refreshing the page."));
   };
 
-  useEffect(loadPeople, []);
+  useEffect(() => {
+    loadPeople();
+  }, []);
   useEffect(loadPendingRequests, [isAdmin]);
   useEffect(loadConfusablePairs, []);
 
@@ -655,7 +709,16 @@ export default function Users() {
     return [person.full_name, person.student_or_employee_id, person.nfc_id, person.affiliation]
       .filter(Boolean)
       .some((value) => value.toLowerCase().includes(query));
-  });
+  }).sort(SORTS[sortBy].compare);
+
+  const chooseSort = (value) => {
+    setSortBy(value);
+    try {
+      localStorage.setItem(SORT_KEY, value);
+    } catch {
+      // Remembering the choice is only a convenience.
+    }
+  };
 
   const eyebrows = {
     people: isAdmin ? "People · Admin view" : "People · SASO view",
@@ -735,6 +798,24 @@ export default function Users() {
                 className="input pl-9"
               />
             </span>
+            <label className="flex items-center gap-s2">
+              <span className="flex items-center gap-s1 text-sm font-bold text-ink-600">
+                <Icon name="sort-descending" bold size={16} />
+                Sort
+              </span>
+              <select
+                value={sortBy}
+                onChange={(e) => chooseSort(e.target.value)}
+                className="input w-[170px]"
+                aria-label="Sort people"
+              >
+                {Object.entries(SORTS).map(([key, sort]) => (
+                  <option key={key} value={key}>
+                    {sort.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="input w-[150px]">
               <option value="">All roles</option>
               <option value="student">Student</option>
@@ -790,7 +871,7 @@ export default function Users() {
 
           <div className="card mt-s4 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[980px]">
+              <div className="min-w-[1080px]">
                 <div
                   className="table-head grid h-9 items-center gap-s3 border-b border-line px-s4"
                   style={{ gridTemplateColumns: PEOPLE_COLS }}
@@ -800,6 +881,7 @@ export default function Users() {
                   <span>ID</span>
                   <span>NFC ID</span>
                   <span>School / office · role</span>
+                  <span>Added</span>
                   <span>Status</span>
                   <span className="text-right">Actions</span>
                 </div>
@@ -838,6 +920,9 @@ export default function Users() {
                         title={person.affiliation || "Not set yet - edit to choose the school or office"}
                       >
                         {person.affiliation || "Not set yet"}
+                      </span>
+                      <span className="whitespace-nowrap font-mono text-xs text-ink-600" title={person.created_at}>
+                        {addedOn(person.created_at)}
                       </span>
                       {person.is_active ? (
                         <span className="flex items-center gap-s1 font-bold text-verified">

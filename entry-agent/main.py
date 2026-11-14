@@ -264,6 +264,9 @@ def _build_recognition(direction, result, api_client, photo_cache):
         # An odd entry/exit pattern (backend EntryLog.PatternFlag) - the live
         # log tags the row so the guard can ask.
         "pattern_flag": result.get("pattern_flag") or "",
+        # STUDENT/STAFF, school or office, department, role - as Settings >
+        # Live Log Details has them on (backend users/live_details.py).
+        "details": result.get("person_details") or {},
     }
 
 
@@ -294,6 +297,7 @@ def _build_profile(api_client, result, card_id, direction):
         "photos_due": bool(result.get("photos_due")),
         "not_enrolled": bool(result.get("not_enrolled")),
         "pattern_flag": result.get("pattern_flag") or "",
+        "details": result.get("person_details") or {},
     }
 
 

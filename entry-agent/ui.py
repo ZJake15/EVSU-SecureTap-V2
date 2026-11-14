@@ -540,6 +540,16 @@ class _KeyBurst:
         return card or None
 
 
+# The STUDENT / STAFF tag on a live-log row (Settings > Live Log Details).
+KIND_COLORS = {"Student": MAROON, "Staff": INK_600}
+
+
+def details_line(details):
+    """ "School of Engineering · Civil Engineering Department · 3rd year" from
+    the parts Settings > Live Log Details has on (backend users/live_details.py)."""
+    return " · ".join(details[part] for part in ("unit", "department", "role") if (details or {}).get(part))
+
+
 # The odd entry/exit patterns (backend EntryLog.PatternFlag) on a live-log
 # row: (the row's word, the line under the name).
 PATTERN_WORDS = {
@@ -992,6 +1002,10 @@ class _ExitWindow:
         width = m._px(230)
         m._label(text, _ellipsize(name_font, entry["name"], width), (FONT, 18, "bold"), INK, anchor="w",
                  fg_color=bg).pack(fill="x")
+        details = ctk.CTkFrame(text, fg_color=bg, corner_radius=0)
+        m._show_details(entry.get("details"), details,
+                        m._label(details, "", (COND_HEAVY, 12), "white", corner_radius=3, height=18),
+                        m._label(details, "", (FONT, 13), INK_600, anchor="w", fg_color=bg), width, (FONT, 13))
         m._label(text, _ellipsize(meta_font, m._meta(entry), width), (FONT_MONO_MEDIUM, 13), INK_600, anchor="w",
                  fg_color=bg).pack(fill="x")
         word = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
@@ -1727,7 +1741,7 @@ class GateMonitorWindow:
         self._band_h = s["band"]
         # Tall enough for a name wrapped onto two lines plus the ID line
         # under it, not just the photo - long Filipino names wrap often.
-        text_h = round(s["feat_name"] * 1.3 * 2 + 18)
+        text_h = round(s["feat_name"] * 1.3 * 2 + 18 + 30)  # + the details line (Live Log Details)
         body_h = max(s["feat_thumb"], text_h) + 2 * s["feat_pad"]
         self.feat_card = ctk.CTkFrame(log, fg_color="transparent", corner_radius=0, height=self._band_h + body_h)
         self.feat_card.grid(row=1, column=0, sticky="ew")
@@ -1762,6 +1776,11 @@ class GateMonitorWindow:
         feat_text.grid(row=0, column=1, sticky="ew")
         self.feat_name = self._label(feat_text, "", (FONT, s["feat_name"], "bold"), INK, anchor="w", justify="left")
         self.feat_name.pack(fill="x", anchor="w")
+        # STUDENT/STAFF tag + "school · department · role" (Settings > Live
+        # Log Details) - only shown for a person who has any.
+        self.feat_details = ctk.CTkFrame(feat_text, fg_color="transparent")
+        self.feat_kind = self._label(self.feat_details, "", (COND_HEAVY, 14), "white", corner_radius=4, height=22)
+        self.feat_detail_text = self._label(self.feat_details, "", (FONT, 15), INK_600, anchor="w")
         self.feat_id = self._label(feat_text, "", (FONT_MONO_MEDIUM, 16), INK_600, anchor="w")
         self.feat_id.pack(fill="x", anchor="w", pady=(6, 0))
         self.feat_match = ctk.CTkFrame(self.feat_body, fg_color="transparent")
@@ -2638,7 +2657,7 @@ class GateMonitorWindow:
         self._push_log_row(
             kind=kind, name=name, id_text=profile.get("student_id") or "—", time=timestamp,
             word=word or strip_word, feature_word=feature_word or strip_word, photo_bytes=profile.get("photo_bytes"),
-            initials_seed=name, extra=extra, direction=direction.lower(),
+            initials_seed=name, extra=extra, direction=direction.lower(), details=profile.get("details"),
         )
 
     def _render_card_failure(self, reason, reason_code):
@@ -2838,7 +2857,8 @@ class GateMonitorWindow:
     # ---- live log ---------------------------------------------------------
 
     def _push_log_row(self, *, kind, name, id_text, time, word=None, feature_word=None,
-                      conf=None, photo_bytes=None, initials_seed=None, extra="", log_id=None, direction="entry"):
+                      conf=None, photo_bytes=None, initials_seed=None, extra="", log_id=None, direction="entry",
+                      details=None):
         """The one way anything reaches the live log. Both credentials go
         through here - a face event from the scan loop and an NFC tap render
         as the same kind of row, differing only in their kind - so the log
@@ -2848,7 +2868,7 @@ class GateMonitorWindow:
         if direction == "exit" and self._exit_window is not None:
             self._exit_window.add_row({
                 "kind": kind, "name": name, "id_text": id_text, "time": time, "conf": conf, "extra": extra,
-                "word": word or LOG_KINDS[kind]["word"],
+                "word": word or LOG_KINDS[kind]["word"], "details": details or {},
             })
             self._refresh_exit_counts()
             return
@@ -2865,6 +2885,8 @@ class GateMonitorWindow:
             "initials_seed": initials_seed,
             "extra": extra,
             "log_id": log_id,  # so an undone Unknown can be taken out again (_undo_unknowns)
+            # STUDENT/STAFF, school or office, department, role (Settings > Live Log Details).
+            "details": details or {},
         })
         # Only what changed is drawn: the new event takes the featured card,
         # the one it replaces becomes the top row of the list, and the oldest
@@ -2923,6 +2945,7 @@ class GateMonitorWindow:
                 kind="not_enrolled_refused", name=item["name"], id_text=item.get("student_id") or "—",
                 time=timestamp, feature_word="NOT ENROLLED · REFUSED", conf=item.get("confidence"),
                 photo_bytes=item.get("photo_bytes"), initials_seed=item["name"], extra=extra,
+                details=item.get("details"),
             )
         elif item["matched"]:
             # Settings > Scheduling: "Show at the gate" for someone whose face
@@ -2938,6 +2961,7 @@ class GateMonitorWindow:
                 word=word, feature_word=feature_word,
                 conf=item.get("confidence"), photo_bytes=item.get("photo_bytes"),
                 initials_seed=item["name"], extra=extra, direction=item.get("direction", "entry"),
+                details=item.get("details"),
             )
         else:
             self._push_log_row(
@@ -2968,6 +2992,28 @@ class GateMonitorWindow:
     def _meta(self, entry):
         conf = f" · {entry['conf']}%" if entry.get("conf") is not None else ""
         return f"{entry['id_text']} · {entry['time']}{conf}{entry['extra']}"
+
+    def _show_details(self, details, frame, kind_label, text_label, width, font, before=None):
+        """Fills a details line - the STUDENT/STAFF tag and "school ·
+        department · role" (Settings > Live Log Details) - and shows it, or
+        hides it when the person has none switched on."""
+        details = details or {}
+        kind = details.get("kind")
+        text = details_line(details)
+        if not kind and not text:
+            frame.pack_forget()
+            return
+        kind_label.pack_forget()
+        text_label.pack_forget()
+        if kind:
+            kind_label.configure(text=f" {kind.upper()} ", fg_color=KIND_COLORS.get(kind, INK_600))
+            kind_label.pack(side="left", padx=(0, 8))
+        if text:
+            tag_w = self._tkfont(COND_HEAVY, 14).measure(f" {kind.upper()} ") + self._px(16) if kind else 0
+            text_label.configure(text=_ellipsize(self._tkfont(*font[:2]), text, max(self._px(60), width - tag_w)))
+            text_label.pack(side="left", fill="x")
+        if not frame.winfo_manager():
+            frame.pack(fill="x", anchor="w", pady=(4, 0), **({"before": before} if before is not None else {}))
 
     def _render_featured(self, entry):
         s = self._s
@@ -3000,6 +3046,8 @@ class GateMonitorWindow:
         else:
             name = _ellipsize(name_font, entry["name"], self._px(wrap))
         self.feat_name.configure(text=name, wraplength=wrap)
+        self._show_details(entry.get("details"), self.feat_details, self.feat_kind, self.feat_detail_text,
+                           self._px(wrap), (FONT, 15), before=self.feat_id)
         self.feat_id.configure(text=entry["id_text"] + entry["extra"])
         if entry.get("conf") is not None:
             self.feat_conf.configure(text=f"{entry['conf']}%")
@@ -3097,6 +3145,11 @@ class GateMonitorWindow:
             anchor="w", fg_color=bg,
         )
         name.pack(fill="x", anchor="w")
+        # STUDENT/STAFF + school · department · role (Settings > Live Log Details).
+        details = ctk.CTkFrame(text, fg_color=bg, corner_radius=0)
+        kind = self._label(details, "", (COND_HEAVY, 12), "white", corner_radius=3, height=18)
+        detail_text = self._label(details, "", (FONT, 13), INK_600, anchor="w", fg_color=bg)
+        self._show_details(entry.get("details"), details, kind, detail_text, name_width, (FONT, 13))
         meta = self._label(
             text, _ellipsize(meta_font, self._meta(entry), name_width), (FONT_MONO_MEDIUM, 14), INK_600,
             anchor="w", fg_color=bg,

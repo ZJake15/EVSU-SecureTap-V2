@@ -31,7 +31,7 @@ from configuration import schedule
 from configuration import store as system_settings
 from configuration.registry import CAMERA_KEYS
 from securetap_project.code_fingerprint import code_fingerprint
-from users import flatness, insightface_utils, liveness_utils, occlusion_utils, reenrollment, semesters
+from users import flatness, insightface_utils, live_details, liveness_utils, occlusion_utils, reenrollment, semesters
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
@@ -80,6 +80,7 @@ def person_payload(person, request):
             "distinguishing_note": None,
             "photos_due": False,
             "not_enrolled": False,
+            "person_details": {},
         }
     photo_url = None
     if person.photo_reference:
@@ -106,6 +107,9 @@ def person_payload(person, request):
         # (Settings > Semester Enrollment) - shown to the guard unless that
         # says to keep it to the dashboard (a refusal is always shown).
         "not_enrolled": semesters.shown_at_gate() and semesters.not_enrolled(person),
+        # Student/Staff, school or office, department and role - the parts
+        # Settings > Live Log Details has on (users/live_details.py).
+        "person_details": live_details.shown(person),
     }
 
 
@@ -416,7 +420,8 @@ class EntryLogViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_class = EntryLogFilter
 
     def get_queryset(self):
-        queryset = EntryLog.real.select_related("person", "performed_by", "on_duty").all()  # no test entries
+        queryset = EntryLog.real.select_related(  # no test entries
+            "person", "person__org_unit", "person__department", "performed_by", "on_duty").all()
         if get_role(self.request.user) == AdminProfile.Role.SECURITY_OFFICER:
             gate = get_assigned_gate(self.request.user)
             today_start = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -433,7 +438,9 @@ class LiveLogsView(APIView):
         if since is None:
             since = timezone.now() - timezone.timedelta(minutes=1)
 
-        logs = EntryLog.real.select_related("person", "performed_by", "on_duty").filter(timestamp__gt=since)
+        logs = EntryLog.real.select_related(
+            "person", "person__org_unit", "person__department", "performed_by", "on_duty",
+        ).filter(timestamp__gt=since)
         if get_role(request.user) == AdminProfile.Role.SECURITY_OFFICER:
             # Same server-side gate-scoping as EntryLogViewSet above - a
             # missing assigned gate fails closed (matches nothing) rather

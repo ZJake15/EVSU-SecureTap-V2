@@ -18,6 +18,9 @@ class EntryLogSerializer(serializers.ModelSerializer):
     # On an exit: when the same person came in before it that day, so Logs
     # can show their time in and time inside. None for everything else.
     entered_at = serializers.SerializerMethodField()
+    # Student/Staff, school or office, department, role - as Settings > Live
+    # Log Details has them switched on (users/live_details.py).
+    person_details = serializers.SerializerMethodField()
 
     class Meta:
         model = EntryLog
@@ -46,7 +49,13 @@ class EntryLogSerializer(serializers.ModelSerializer):
             "person_affiliation",
             "pattern_flag",
             "entered_at",
+            "person_details",
         ]
+
+    def get_person_details(self, obj):
+        from users import live_details
+
+        return live_details.shown(obj.person)
 
     def get_entered_at(self, obj):
         if obj.direction != EntryLog.Direction.EXIT or not obj.person_id or obj.status != EntryLog.Status.SUCCESS:

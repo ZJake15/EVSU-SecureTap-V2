@@ -82,6 +82,32 @@ function attentionKind(event) {
   return { word: "Flagged · Unknown", icon: "user-circle-dashed", color: "#9A5B00", className: "text-caution" };
 }
 
+// STUDENT / STAFF and "school · department · role" - only the parts Settings ›
+// Live Log Details has switched on (the server leaves the rest out).
+function PersonDetails({ details, size = "sm" }) {
+  const parts = ["unit", "department", "role"].map((key) => details?.[key]).filter(Boolean);
+  if (!details?.kind && parts.length === 0) return null;
+  const line = parts.join(" · ");
+  return (
+    <span className={`flex min-w-0 max-w-full items-center gap-s2 ${size === "lg" ? "text-sm" : "text-xs"}`}>
+      {details.kind && (
+        <span
+          className={`flex-none rounded-sm px-s1 text-[11px] font-bold uppercase tracking-[0.04em] text-white ${
+            details.kind === "Staff" ? "bg-ink-600" : "bg-maroon"
+          }`}
+        >
+          {details.kind}
+        </span>
+      )}
+      {line && (
+        <span className="truncate text-ink-600" title={line}>
+          {line}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function SubStat({ label, icon, value, tone }) {
   // Only colored once there's something to see - a zero stays ink.
   const active = tone && Number(value) > 0;
@@ -106,11 +132,7 @@ function LatestPass({ event }) {
           {event.direction === "exit" ? "Latest exit" : "Latest entry"} &middot; {event.gate_location || "Gate"}
         </span>
         <span className="truncate text-[28px] font-bold leading-tight">{event.person_name}</span>
-        {event.person_affiliation && (
-          <span className="truncate text-sm text-ink-600" title={event.person_affiliation}>
-            {event.person_affiliation}
-          </span>
-        )}
+        <PersonDetails details={event.person_details} size="lg" />
         <div className="flex flex-wrap items-center gap-s4 text-sm">
           <span className="font-mono font-medium">{event.student_or_employee_id}</span>
           <span className="font-mono font-medium text-ink-600">{clockTime(event.timestamp)}</span>
@@ -151,11 +173,7 @@ function PassRow({ event }) {
       <Avatar src={event.person_photo} name={event.person_name} size={28} />
       <span className="flex min-w-0 flex-col items-start">
         <span className="max-w-full truncate font-bold">{event.person_name}</span>
-        {event.person_affiliation && (
-          <span className="max-w-full truncate text-xs text-ink-600" title={event.person_affiliation}>
-            {event.person_affiliation}
-          </span>
-        )}
+        <PersonDetails details={event.person_details} />
         <span className="flex flex-wrap gap-s1">
           <DirectionTag direction={event.direction} />
           <PatternTag flag={event.pattern_flag} />
@@ -232,7 +250,7 @@ function AttentionCard({ event }) {
           <span className="font-mono text-xs font-medium text-ink-600">{clockTime(event.timestamp)}</span>
         </div>
         <span className="text-base font-bold leading-tight">{event.person_name || "Unknown"}</span>
-        {event.person_affiliation && <span className="text-xs text-ink-600">{event.person_affiliation}</span>}
+        <PersonDetails details={event.person_details} />
         <span className="text-xs text-ink-600">{meta}</span>
         {isLookalike && event.distinguishing_note && (
           <span className="mt-s1 rounded-sm bg-canvas px-s2 py-s1 text-xs text-ink">Note: {event.distinguishing_note}</span>

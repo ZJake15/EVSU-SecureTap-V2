@@ -77,6 +77,9 @@ SECTIONS = [
      "What happens on a timetable: deleting old records, asking for new face photos, and the gate's opening hours."),
     ("security", "Security & Accounts", "Signing in to the dashboard and at the gate monitor."),
     ("alerts", "Alerts", "Warnings shown to the guard on the gate monitor."),
+    ("live_log", "Live Log Details",
+     "What's shown under each person's name in the gate monitor's live log and on the dashboard's Live "
+     "Monitoring page. Changes reach the gates within a few seconds."),
 ]
 
 # Fine-tuning most schools never need to change - shown at the bottom of
@@ -580,6 +583,27 @@ DEFINITIONS = [
         "repeated_unknown_minutes", "alerts", "Within",
         "The time span those sightings must fall within.",
         INT, 10, 1, 240, 1, unit="minutes", depends_on="alert_repeated_unknown",
+    ),
+    # ---- 10. Live Log Details (users/live_details.py) -------------------------
+    SettingDef(
+        "livelog_kind", "live_log", "Student / Staff tag",
+        "A small STUDENT or STAFF tag beside the name.",
+        BOOL, True,
+    ),
+    SettingDef(
+        "livelog_unit", "live_log", "School or office",
+        "Where they study or work, e.g. School of Engineering or Security Office.",
+        BOOL, True,
+    ),
+    SettingDef(
+        "livelog_department", "live_log", "Department",
+        "Their department, e.g. Civil Engineering Department (offices have none).",
+        BOOL, True,
+    ),
+    SettingDef(
+        "livelog_role", "live_log", "Role",
+        "Staff: their type and job title (Faculty · Instructor I). Students: their year level (3rd year).",
+        BOOL, True,
     ),
     # ---- Advanced (existing settings not in the brief) -------------------------
     SettingDef(

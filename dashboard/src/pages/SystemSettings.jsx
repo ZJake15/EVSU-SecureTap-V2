@@ -243,6 +243,7 @@ const SECTION_ICONS = {
   scheduling: "calendar-blank",
   security: "shield-check",
   alerts: "bell-ringing",
+  live_log: "list-dashes",
 };
 
 // Small headings inside a long group, shown above the setting they start with.

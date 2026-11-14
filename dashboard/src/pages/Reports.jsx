@@ -60,6 +60,53 @@ const METHODS = [
   { key: "not_enrolled", label: "Not enrolled (refused)", color: C.caution },
 ];
 
+// Successful entries by the school or office of whoever entered (reports/views.py
+// _entries_by_unit), students and staff apart, most first.
+function UnitBreakdown({ rows, rangeLabel }) {
+  const [showAll, setShowAll] = useState(false);
+  const max = Math.max(1, ...rows.map((row) => row.total));
+  const shown = showAll ? rows : rows.slice(0, 8);
+  return (
+    <div className="card mt-s6 flex flex-col gap-s4 p-s5">
+      <div className="flex flex-wrap items-baseline justify-between gap-s3">
+        <span className="t-section">Entries by school or office</span>
+        <span className="flex items-center gap-s4 text-xs text-ink-600">
+          <span className="flex items-center gap-s2">
+            <span className="h-[10px] w-[10px]" style={{ background: C.maroon }} /> Students
+          </span>
+          <span className="flex items-center gap-s2">
+            <span className="h-[10px] w-[10px]" style={{ background: C.brass }} /> Staff
+          </span>
+          <span>{rangeLabel.toLowerCase()}</span>
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-sm text-ink-600">No entries in this period.</p>
+      ) : (
+        <div className="flex flex-col gap-s2">
+          {shown.map((row) => (
+            <div key={row.unit} className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_48px] items-center gap-s3 text-sm">
+              <span className={`truncate ${row.unit === "Not set" ? "italic text-ink-600" : ""}`} title={row.unit}>
+                {row.unit}
+              </span>
+              <span className="flex h-3 bg-canvas" title={`${row.students} students, ${row.staff} staff`}>
+                <span style={{ width: `${(row.students / max) * 100}%`, background: C.maroon }} />
+                <span style={{ width: `${(row.staff / max) * 100}%`, background: C.brass }} />
+              </span>
+              <span className="text-right font-mono font-semibold">{row.total}</span>
+            </div>
+          ))}
+          {rows.length > 8 && (
+            <button type="button" className="link-action self-start" onClick={() => setShowAll((v) => !v)}>
+              {showAll ? "Show fewer" : `Show all ${rows.length}`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function exportMethodCsv(entriesByMethod) {
   const header = ["Date", ...METHODS.map((method) => method.label)];
   const rows = entriesByMethod.map((row) => [row.date, ...METHODS.map((method) => row[method.key] ?? 0)]);
@@ -267,6 +314,8 @@ export default function Reports() {
           </div>
         </div>
       </div>
+
+      <UnitBreakdown rows={summary.entries_by_unit || []} rangeLabel={rangeLabel} />
 
       <div className="mt-s6 grid grid-cols-1 gap-x-s6 gap-y-s5 xl:grid-cols-[minmax(0,8fr)_minmax(0,4fr)]">
         <ChartCard title={`Busiest hours · ${rangeLabel.toLowerCase()}`}>

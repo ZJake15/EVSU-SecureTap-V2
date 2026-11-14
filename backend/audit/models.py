@@ -70,6 +70,8 @@ class AuditLogEntry(models.Model):
         # (users/semesters.py) - who is flagged "Not enrolled" at the gate.
         SEMESTER_STARTED = "semester_started", "Semester started"
         SEMESTER_LIST_UPDATED = "semester_list_updated", "Semester list updated"
+        # Settings > Schools, Offices & Departments (users/org_views.py).
+        ORG_LIST_CHANGED = "org_list_changed", "Schools/offices list changed"
 
     # Nullable only in case a user account is later deleted out from under an
     # old entry (SET_NULL, not CASCADE) - the row (and its description of what

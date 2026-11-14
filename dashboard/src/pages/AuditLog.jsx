@@ -21,6 +21,7 @@ const ACTIONS = {
   cameras_viewed: { label: "Viewed gate cameras", icon: "video-camera" },
   semester_started: { label: "Semester started", icon: "graduation-cap" },
   semester_list_updated: { label: "Semester list updated", icon: "list-checks" },
+  org_list_changed: { label: "Schools/offices list changed", icon: "buildings" },
   account_locked: { label: "Account locked", icon: "lock-simple", danger: true },
 };
 

@@ -19,11 +19,12 @@ from configuration import store as system_settings
 
 from .confusable_utils import find_confusable_candidates, record_confusable_pairs
 from .insightface_utils import compute_face_embedding, ensure_supported_image_format, normalize_to_jpeg
-from .models import ConfusablePair, DeactivationRequest, FaceEmbedding, Person
+from .models import ConfusablePair, DeactivationRequest, FaceEmbedding, OrgUnit, Person
 from .serializers import (
     ConfusablePairSerializer,
     DeactivationRequestSerializer,
     PersonSerializer,
+    affiliation_errors,
     max_embeddings_for,
 )
 
@@ -35,6 +36,28 @@ RETAKE_GUIDED_PHOTOS = 5
 
 def _truthy(value):
     return str(value).strip().lower() in ("true", "1", "yes")
+
+
+def _cell(row, column):
+    """A spreadsheet cell as text - "" for a missing column or an empty cell."""
+    value = row.get(column, "")
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    text = str(value).strip()
+    return text[:-2] if text.endswith(".0") and text[:-2].isdigit() else text
+
+
+def _choice(text, choices, column):
+    """A choice by its value or its label, any letter case ("faculty", "Faculty",
+    "3", "3rd year") -> its value; "" stays ""."""
+    if not text:
+        return ""
+    wanted = text.lower()
+    for value, label in choices:
+        if wanted in (str(value).lower(), str(label).lower()):
+            return value
+    allowed = ", ".join(label for _, label in choices)
+    raise ValueError(f"{column} '{text}' isn't one of: {allowed}")
 BULK_PHOTOS_SUBDIR = os.path.join("seed_data", "photos")
 
 
@@ -362,6 +385,7 @@ class BulkImportView(APIView):
             raise ValueError(f"a person with ID '{student_id}' already exists")
         if Person.objects.filter(nfc_id=nfc_id).exists():
             raise ValueError(f"nfc_id '{nfc_id}' is already assigned to another person")
+        affiliation = BulkImportView._affiliation(row, role)
 
         photo_path = BulkImportView._find_photo(student_id)
         if photo_path is None:
@@ -377,8 +401,9 @@ class BulkImportView(APIView):
                 role=role,
                 student_or_employee_id=student_id,
                 nfc_id=nfc_id,
-                department_or_course=str(row.get("department_or_course", "") or "").strip(),
+                department_or_course=_cell(row, "department_or_course"),
                 photo_reference=normalize_to_jpeg(photo_fp),
+                **affiliation,
             )
             photo_fp.seek(0)
             # Bulk import only ever has the one photo the spreadsheet points
@@ -392,6 +417,32 @@ class BulkImportView(APIView):
             matches = find_confusable_candidates(embedding, exclude_person_id=person.id)
             warnings = record_confusable_pairs(person, matches) if matches else []
         return person, warnings
+
+    @staticmethod
+    def _affiliation(row, role):
+        """The row's school_or_office, department, staff_type, job_title and
+        year_level, matched by name against the lists (any letter case) and
+        checked like the registration form - everything is required."""
+        unit_name = _cell(row, "school_or_office")
+        unit = OrgUnit.objects.filter(name__iexact=unit_name).first() if unit_name else None
+        if unit_name and unit is None:
+            raise ValueError(f"school_or_office '{unit_name}' isn't in the list (Settings > Schools, Offices & "
+                             "Departments) - use its exact name")
+        dept_name = _cell(row, "department")
+        department = None
+        if dept_name and unit is not None:
+            department = unit.departments.filter(name__iexact=dept_name).first()
+            if department is None:
+                raise ValueError(f"department '{dept_name}' isn't in {unit.name}")
+        staff_type = _choice(_cell(row, "staff_type"), Person.StaffType.choices, "staff_type")
+        year_level = _choice(_cell(row, "year_level"), Person.YearLevel.choices, "year_level")
+        job_title = _cell(row, "job_title")
+        errors = affiliation_errors(role, unit, department, staff_type, job_title, year_level)
+        if errors:
+            raise ValueError("; ".join(errors.values()))
+        if role == Person.Role.STAFF:
+            return {"org_unit": unit, "department": department, "staff_type": staff_type, "job_title": job_title}
+        return {"org_unit": unit, "department": department, "year_level": year_level}
 
     @staticmethod
     def _find_photo(student_id):

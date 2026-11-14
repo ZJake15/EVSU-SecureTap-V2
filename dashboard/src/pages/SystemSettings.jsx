@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBlocker } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import OrgUnitsPanel from "../components/OrgUnitsPanel";
 import SemesterPanel from "../components/SemesterPanel";
 import { Icon, Notice, PageHeader, Segmented } from "../components/ui";
 
@@ -237,6 +238,7 @@ const SECTION_ICONS = {
   nfc: "identification-card",
   enrollment: "user-plus",
   semester: "graduation-cap",
+  organization: "buildings",
   privacy: "lock-key",
   scheduling: "calendar-blank",
   security: "shield-check",
@@ -719,7 +721,7 @@ function AdminSettings() {
         }}
         onDiscard={() => applyData(data)}
         onSave={() => save(false)}
-        extras={{ semester: <SemesterPanel key={saves} /> }}
+        extras={{ semester: <SemesterPanel key={saves} />, organization: <OrgUnitsPanel /> }}
       />
 
       {confirmResetAll && (

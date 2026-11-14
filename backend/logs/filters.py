@@ -9,6 +9,8 @@ class EntryLogFilter(django_filters.FilterSet):
     gate_location = django_filters.CharFilter(field_name="gate_location", lookup_expr="icontains")
     # Students let in who weren't on the semester's enrolled list.
     not_enrolled = django_filters.BooleanFilter(field_name="not_enrolled")
+    # The school or office of the person who entered.
+    org_unit = django_filters.NumberFilter(field_name="person__org_unit")
 
     class Meta:
         model = EntryLog

@@ -27,6 +27,7 @@ from reports.views import FarFrrView, SummaryView
 from securetap_project.media_views import protected_media_serve
 from securetap_project.spa_views import dashboard_index
 from configuration.views import SessionPolicyView, SettingsView
+from users.org_views import DepartmentDetailView, DepartmentListView, OrgUnitDetailView, OrgUnitListView
 from users.semester_views import (
     SemesterHandView,
     SemesterNotOnListView,
@@ -76,6 +77,11 @@ urlpatterns = [
     path("api/logs/manual-override", ManualOverrideView.as_view(), name="logs-manual-override"),
     path("api/users/bulk-import", BulkImportView.as_view(), name="users-bulk-import"),
     path("api/users/check-photo-quality", PhotoQualityCheckView.as_view(), name="users-check-photo-quality"),
+    # EVSU's schools, offices and departments (users/org_views.py).
+    path("api/org-units", OrgUnitListView.as_view(), name="org-units"),
+    path("api/org-units/<int:unit_id>", OrgUnitDetailView.as_view(), name="org-unit"),
+    path("api/org-units/<int:unit_id>/departments", DepartmentListView.as_view(), name="org-unit-departments"),
+    path("api/departments/<int:department_id>", DepartmentDetailView.as_view(), name="department"),
     # The Semester page: who is on this semester's enrolled list (users/semesters.py).
     path("api/semester", SemesterView.as_view(), name="semester"),
     path("api/semester/preview", SemesterPreviewView.as_view(), name="semester-preview"),

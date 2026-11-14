@@ -5,6 +5,11 @@ import WebcamCapture from "../components/WebcamCapture";
 import { Avatar, Checkbox, Field, Icon, Notice, PageHeader, Segmented } from "../components/ui";
 import { PHOTO_ACCEPT, photoFormatError, previewUrlFor, readPhotoInput } from "../lib/photoUpload";
 import { useAuth } from "../auth/AuthContext";
+import { groupedUnits, useOrgLists } from "../lib/orgUnits";
+
+// Where someone studies or works - always sent with the form (even empty),
+// so changing a school to an office also clears the old department.
+const AFFILIATION_KEYS = ["org_unit", "department", "staff_type", "job_title", "year_level"];
 
 const emptyForm = {
   full_name: "",
@@ -12,8 +17,124 @@ const emptyForm = {
   student_or_employee_id: "",
   nfc_id: "",
   department_or_course: "",
+  org_unit: "",
+  department: "",
+  staff_type: "",
+  job_title: "",
+  year_level: "",
   distinguishing_note: "",
 };
+
+function formFromPerson(person) {
+  return {
+    full_name: person.full_name,
+    role: person.role,
+    student_or_employee_id: person.student_or_employee_id,
+    nfc_id: person.nfc_id,
+    department_or_course: person.department_or_course || "",
+    org_unit: person.org_unit ? String(person.org_unit) : "",
+    department: person.department ? String(person.department) : "",
+    staff_type: person.staff_type || "",
+    job_title: person.job_title || "",
+    year_level: person.year_level || "",
+    distinguishing_note: person.distinguishing_note || "",
+  };
+}
+
+function appendForm(payload, form) {
+  Object.entries(form).forEach(([key, value]) => {
+    if (key === "department_or_course") return; // the old free text is only shown, never sent
+    if (AFFILIATION_KEYS.includes(key)) payload.append(key, value ?? "");
+    else if (value !== null && value !== "") payload.append(key, value);
+  });
+}
+
+// School or office, department, then staff type + job title (staff) or year
+// level (students) - all required (backend users/serializers.affiliation_errors).
+function AffiliationFields({ form, setForm, org, editingPerson }) {
+  const isStaff = form.role === "staff";
+  const set = (field) => (event) => setForm((prev) => ({ ...prev, [field]: event.target.value }));
+  const unit = org.units.find((u) => String(u.id) === String(form.org_unit));
+  const departments = (unit?.departments || []).filter(
+    (dept) => dept.is_active || String(dept.id) === String(form.department)
+  );
+  const chooseUnit = (event) => setForm((prev) => ({ ...prev, org_unit: event.target.value, department: "" }));
+  const groups = groupedUnits(org.units, { kind: isStaff ? null : "school", keepId: editingPerson?.org_unit });
+  const unitIsWrong = !isStaff && unit && unit.kind !== "school";
+
+  return (
+    <div className="col-span-2 flex flex-col gap-s3 rounded-md border border-line bg-canvas p-s4">
+      <span className="t-eyebrow">{isStaff ? "Where they work" : "Where they study"}</span>
+      {form.department_or_course && !form.org_unit && (
+        <span className="text-xs text-ink-600">
+          Previously typed: <span className="font-bold text-ink">{form.department_or_course}</span> - choose the
+          matching {isStaff ? "school or office" : "school"} below.
+        </span>
+      )}
+      <Field label={isStaff ? "School or office" : "School"}>
+        <select required value={unitIsWrong ? "" : form.org_unit} onChange={chooseUnit} className="input">
+          <option value="">{isStaff ? "Choose the school or office…" : "Choose the school…"}</option>
+          {groups.map(([label, units]) => (
+            <optgroup key={label} label={label}>
+              {units.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </Field>
+      {departments.length > 0 && !unitIsWrong && (
+        <Field label="Department">
+          <select required value={form.department} onChange={set("department")} className="input">
+            <option value="">Choose the department…</option>
+            {departments.map((dept) => (
+              <option key={dept.id} value={dept.id}>
+                {dept.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {isStaff ? (
+        <div className="grid grid-cols-2 gap-s3">
+          <Field label="Staff type">
+            <select required value={form.staff_type} onChange={set("staff_type")} className="input">
+              <option value="">Choose…</option>
+              {org.staff_types.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Job title">
+            <input
+              required
+              maxLength={150}
+              placeholder="e.g. Instructor I, Head, Security Office"
+              value={form.job_title}
+              onChange={set("job_title")}
+              className="input"
+            />
+          </Field>
+        </div>
+      ) : (
+        <Field label="Year level">
+          <select required value={form.year_level} onChange={set("year_level")} className="input">
+            <option value="">Choose…</option>
+            {org.year_levels.map((level) => (
+              <option key={level.value} value={level.value}>
+                {level.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+    </div>
+  );
+}
 
 const emptyConfusableForm = { person_a: "", person_b: "" };
 
@@ -134,6 +255,9 @@ export default function Users() {
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [photosFilter, setPhotosFilter] = useState("");
+  const [unitFilter, setUnitFilter] = useState("");
+  const [staffTypeFilter, setStaffTypeFilter] = useState("");
+  const { org } = useOrgLists();
   const [people, setPeople] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [requestNotes, setRequestNotes] = useState({});
@@ -299,9 +423,7 @@ export default function Users() {
     try {
       if (editingId) {
         const payload = new FormData();
-        Object.entries(form).forEach(([key, value]) => {
-          if (value !== null && value !== "") payload.append(key, value);
-        });
+        appendForm(payload, form);
         if (profilePhoto.file) payload.append("profile_picture", profilePhoto.file);
         await apiClient.put(`/users/${editingId}/`, payload, {
           headers: { "Content-Type": "multipart/form-data" },
@@ -314,9 +436,7 @@ export default function Users() {
           return;
         }
         const payload = new FormData();
-        Object.entries(form).forEach(([key, value]) => {
-          if (value !== null && value !== "") payload.append(key, value);
-        });
+        appendForm(payload, form);
         payload.append("photo", enrollment.primaryPhoto);
         if (enrollment.mode === "fallback") payload.append("fallback_enrollment", "true");
         if (profilePhoto.file) payload.append("profile_picture", profilePhoto.file);
@@ -347,14 +467,7 @@ export default function Users() {
           // this is expected" prompts right in front of whoever's
           // enrolling, not one extra click away.
           setEditingId(created.id);
-          setForm({
-            full_name: created.full_name,
-            role: created.role,
-            student_or_employee_id: created.student_or_employee_id,
-            nfc_id: created.nfc_id,
-            department_or_course: created.department_or_course,
-            distinguishing_note: created.distinguishing_note || "",
-          });
+          setForm(formFromPerson(created));
           setEnrollment(emptyEnrollment);
           setEnrollmentResetKey((k) => k + 1);
           setProfilePhoto(null);
@@ -380,14 +493,7 @@ export default function Users() {
     setEditingId(person.id);
     setFormError("");
     setAddPhotoError("");
-    setForm({
-      full_name: person.full_name,
-      role: person.role,
-      student_or_employee_id: person.student_or_employee_id,
-      nfc_id: person.nfc_id,
-      department_or_course: person.department_or_course,
-      distinguishing_note: person.distinguishing_note || "",
-    });
+    setForm(formFromPerson(person));
     setProfilePhoto(null); // clear any leftover preview from a previous edit session
     setIsDrawerOpen(true);
   };
@@ -543,8 +649,10 @@ export default function Users() {
     if (statusFilter === "active" && !person.is_active) return false;
     if (statusFilter === "inactive" && person.is_active) return false;
     if (!photosNeeded(person, photosFilter)) return false;
+    if (unitFilter === "none" ? person.org_unit : unitFilter && String(person.org_unit) !== unitFilter) return false;
+    if (staffTypeFilter && person.staff_type !== staffTypeFilter) return false;
     if (!query) return true;
-    return [person.full_name, person.student_or_employee_id, person.nfc_id]
+    return [person.full_name, person.student_or_employee_id, person.nfc_id, person.affiliation]
       .filter(Boolean)
       .some((value) => value.toLowerCase().includes(query));
   });
@@ -647,6 +755,37 @@ export default function Users() {
               <option value="due">Photos due ({people.filter((p) => photosNeeded(p, "due")).length})</option>
               <option value="due_soon">Due soon ({people.filter((p) => photosNeeded(p, "due_soon")).length})</option>
             </select>
+            <select
+              value={unitFilter}
+              onChange={(e) => setUnitFilter(e.target.value)}
+              className="input w-[260px]"
+              aria-label="School or office"
+            >
+              <option value="">All schools and offices</option>
+              <option value="none">Not set yet ({people.filter((p) => !p.org_unit).length})</option>
+              {groupedUnits(org.units).map(([label, units]) => (
+                <optgroup key={label} label={label}>
+                  {units.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <select
+              value={staffTypeFilter}
+              onChange={(e) => setStaffTypeFilter(e.target.value)}
+              className="input w-[200px]"
+              aria-label="Staff type"
+            >
+              <option value="">All staff types</option>
+              {org.staff_types.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="card mt-s4 overflow-hidden">
@@ -660,7 +799,7 @@ export default function Users() {
                   <span>Role</span>
                   <span>ID</span>
                   <span>NFC ID</span>
-                  <span>Department / course</span>
+                  <span>School / office · role</span>
                   <span>Status</span>
                   <span className="text-right">Actions</span>
                 </div>
@@ -694,7 +833,12 @@ export default function Users() {
                       <span className="capitalize">{person.role}</span>
                       <span className="truncate font-mono text-[13px] font-medium">{person.student_or_employee_id}</span>
                       <span className="truncate font-mono text-[13px] text-ink-600">{person.nfc_id}</span>
-                      <span className="truncate text-ink-600">{person.department_or_course}</span>
+                      <span
+                        className={`truncate ${person.org_unit ? "text-ink-600" : "italic text-caution"}`}
+                        title={person.affiliation || "Not set yet - edit to choose the school or office"}
+                      >
+                        {person.affiliation || "Not set yet"}
+                      </span>
                       {person.is_active ? (
                         <span className="flex items-center gap-s1 font-bold text-verified">
                           <Icon name="check-circle" bold size={14} />
@@ -934,7 +1078,12 @@ export default function Users() {
             </div>
             <p className="text-sm leading-normal text-ink-600">
               Columns: <span className="font-mono text-ink">full_name, role, student_or_employee_id, nfc_id,
-              department_or_course</span>. Photos must already be on the server in the bulk-photos folder, named{" "}
+              school_or_office, department</span>, then for staff{" "}
+              <span className="font-mono text-ink">staff_type, job_title</span> and for students{" "}
+              <span className="font-mono text-ink">year_level</span> - names exactly as in Settings › Schools, Offices
+              &amp; Departments (staff_type: Faculty, Non-teaching staff, Security personnel, Maintenance / utility,
+              University official; year_level: 1-5 or Graduate). Photos must already be on the server in the
+              bulk-photos folder, named{" "}
               <span className="font-mono text-ink">&lt;student_or_employee_id&gt;.jpg</span>. These enrollments are
               single-photo and flagged lower confidence.
             </p>
@@ -999,15 +1148,7 @@ export default function Users() {
                     ]}
                   />
                 </div>
-                <Field label="Department/course">
-                  <input
-                    placeholder="BSIT"
-                    value={form.department_or_course}
-                    onChange={handleChange("department_or_course")}
-                    className="input"
-                  />
-                </Field>
-                <Field label="NFC ID">
+                <Field label="NFC ID" className="col-span-2">
                   <input
                     required
                     placeholder="Tap a card to fill this in"
@@ -1016,6 +1157,7 @@ export default function Users() {
                     className="input border-dashed border-ink-400 font-mono"
                   />
                 </Field>
+                <AffiliationFields form={form} setForm={setForm} org={org} editingPerson={editingPerson} />
               </div>
 
               <Field label="Distinguishing note (optional)" hint="Visible to security staff, never used for matching.">

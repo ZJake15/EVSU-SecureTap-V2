@@ -102,6 +102,11 @@ function LatestPass({ event }) {
           Latest entry &middot; {event.gate_location || "Gate"}
         </span>
         <span className="truncate text-[28px] font-bold leading-tight">{event.person_name}</span>
+        {event.person_affiliation && (
+          <span className="truncate text-sm text-ink-600" title={event.person_affiliation}>
+            {event.person_affiliation}
+          </span>
+        )}
         <div className="flex flex-wrap items-center gap-s4 text-sm">
           <span className="font-mono font-medium">{event.student_or_employee_id}</span>
           <span className="font-mono font-medium text-ink-600">{clockTime(event.timestamp)}</span>
@@ -140,6 +145,11 @@ function PassRow({ event }) {
       <Avatar src={event.person_photo} name={event.person_name} size={28} />
       <span className="flex min-w-0 flex-col items-start">
         <span className="max-w-full truncate font-bold">{event.person_name}</span>
+        {event.person_affiliation && (
+          <span className="max-w-full truncate text-xs text-ink-600" title={event.person_affiliation}>
+            {event.person_affiliation}
+          </span>
+        )}
         {event.after_hours && <AfterHoursTag />}
         {event.not_enrolled && <NotEnrolledTag />}
         {note && (
@@ -210,6 +220,7 @@ function AttentionCard({ event }) {
           <span className="font-mono text-xs font-medium text-ink-600">{clockTime(event.timestamp)}</span>
         </div>
         <span className="text-base font-bold leading-tight">{event.person_name || "Unknown"}</span>
+        {event.person_affiliation && <span className="text-xs text-ink-600">{event.person_affiliation}</span>}
         <span className="text-xs text-ink-600">{meta}</span>
         {isLookalike && event.distinguishing_note && (
           <span className="mt-s1 rounded-sm bg-canvas px-s2 py-s1 text-xs text-ink">Note: {event.distinguishing_note}</span>

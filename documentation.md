@@ -1053,6 +1053,27 @@ the page's main action beside it. See §8.1 for the visual design system.
   method, so it's never mistaken for an automatic match. A Security Officer gets
   a **Manual override** panel beside the table instead of the export
   button/date filter, scoped to their own assigned gate.
+- **Where people study or work** — every person has a **school or office**
+  and, in a school, a **department** (the lists from www.evsu.edu.ph: the six
+  schools and their 28 departments, the Graduate School, and 51
+  administrative offices grouped under the President and the four Vice
+  Presidents — `users.models.OrgUnit` / `Department`, seeded by migration
+  users 0008). Staff also have a **staff type** (Faculty, Non-teaching staff,
+  Security personnel, Maintenance / utility, University official) and a
+  **job title**; students a **year level** (1st–5th, Graduate). All are
+  required when someone is added or their details are edited (a department
+  only where the school has departments). People registered before this keep
+  their typed text, shown as "previous: …", until edited. It appears as one
+  line — e.g. "Faculty · Instructor I · School of Engineering - Civil
+  Engineering Department" — on the gate monitor's card, in Logs (with a
+  school/office filter and export column), on Live Monitoring, in User
+  Management (column + school/office and staff-type filters) and in Reports
+  (entries by school or office, students and staff apart). An Admin edits the
+  lists in **Settings › Schools, Offices & Departments** (add, rename, hide —
+  never delete; a hidden entry can't be chosen for someone new, but people
+  already in it keep it; every change is in the Audit Log). Bulk import takes
+  the same fields as columns: `school_or_office`, `department`, `staff_type`,
+  `job_title`, `year_level`, matched by name.
 - **User Management** *(admin/SASO — no access at all for Security Officer, §13)*
   — organized as three tabs: **People** (the searchable, filterable list — name,
   role, ID, NFC ID, department, status — with a one-line flag under a name for

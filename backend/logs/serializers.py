@@ -13,6 +13,8 @@ class EntryLogSerializer(serializers.ModelSerializer):
     performed_by_username = serializers.SerializerMethodField()
     distinguishing_note = serializers.SerializerMethodField()
     on_duty_name = serializers.SerializerMethodField()
+    # "Faculty · Instructor I · School of Engineering - ..." (Person.affiliation).
+    person_affiliation = serializers.SerializerMethodField()
 
     class Meta:
         model = EntryLog
@@ -38,7 +40,11 @@ class EntryLogSerializer(serializers.ModelSerializer):
             "unattended",
             "after_hours",
             "not_enrolled",
+            "person_affiliation",
         ]
+
+    def get_person_affiliation(self, obj):
+        return obj.person.affiliation() if obj.person else None
 
     def get_person_name(self, obj):
         return obj.person.full_name if obj.person else None

@@ -77,6 +77,7 @@ class SummaryView(APIView):
                 "entries_by_day": entries_by_day,
                 "range_days": days,
                 "entries_by_method": self._entries_by_method(range_logs),
+                "entries_by_unit": self._entries_by_unit(range_logs),
                 "confidence_histogram": self._confidence_histogram(range_logs),
                 "busiest_hours": self._busiest_hours(range_logs),
             }
@@ -130,6 +131,20 @@ class SummaryView(APIView):
             elif status in status_bucket:
                 bucket[status_bucket[status]] += 1
         return [{"date": date_key, **counts} for date_key, counts in sorted(by_date.items())]
+
+    @staticmethod
+    def _entries_by_unit(range_logs):
+        """Successful entries in the range by the school or office of whoever
+        entered, most first - students and staff counted apart. People
+        registered before schools/offices were a list count as "Not set"."""
+        rows = {}
+        for unit, kind, role in range_logs.filter(status=EntryLog.Status.SUCCESS, person__isnull=False).values_list(
+                "person__org_unit__name", "person__org_unit__kind", "person__role"):
+            key = unit or "Not set"
+            row = rows.setdefault(key, {"unit": key, "kind": kind or "", "students": 0, "staff": 0, "total": 0})
+            row["students" if role == "student" else "staff"] += 1
+            row["total"] += 1
+        return sorted(rows.values(), key=lambda row: (-row["total"], row["unit"]))
 
     @staticmethod
     def _confidence_histogram(range_logs):

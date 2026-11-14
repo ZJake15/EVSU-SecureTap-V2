@@ -12,7 +12,7 @@ from .confusable_utils import (
     record_confusable_pairs,
 )
 from .insightface_utils import compute_face_embedding, ensure_supported_image_format, normalize_to_jpeg
-from .models import ConfusablePair, DeactivationRequest, FaceEmbedding, Person
+from .models import ConfusablePair, DeactivationRequest, FaceEmbedding, OrgUnit, Person
 
 # A guided multi-photo enrollment captures 3-5 near-frontal shots with slight
 # variation - matching gets no better past that, and each embedding is a
@@ -24,6 +24,40 @@ MAX_EMBEDDINGS_PER_PERSON = 5
 
 def max_embeddings_for(person):
     return MAX_EMBEDDINGS_PER_CONFUSABLE_PERSON if has_confusable_flag(person.id) else MAX_EMBEDDINGS_PER_PERSON
+
+
+def affiliation_errors(role, org_unit, department, staff_type, job_title, year_level, existing=None):
+    """Field -> message for what's missing or doesn't fit, for a person's school
+    or office, department, staff type, job title and year level - everything
+    is required (a department only where the school has departments). Shared
+    by the registration form and bulk import. A school, office or department
+    that's been hidden in Settings can't be chosen, unless the person already
+    has it."""
+    errors = {}
+    if org_unit is None:
+        errors["org_unit"] = "Choose the school or office." if role == Person.Role.STAFF else "Choose the school."
+        return errors
+    keeps = existing is not None and existing.org_unit_id == org_unit.id
+    if not org_unit.is_active and not keeps:
+        errors["org_unit"] = f"{org_unit.name} is no longer in the list."
+    if role == Person.Role.STUDENT and org_unit.kind != OrgUnit.Kind.SCHOOL:
+        errors["org_unit"] = "A student belongs to a school, not an office."
+    has_departments = org_unit.departments.filter(is_active=True).exists()
+    if department is not None:
+        if department.unit_id != org_unit.id:
+            errors["department"] = f"That department isn't part of {org_unit.name}."
+        elif not department.is_active and not (existing is not None and existing.department_id == department.id):
+            errors["department"] = f"{department.name} is no longer in the list."
+    elif has_departments:
+        errors["department"] = f"Choose the department in {org_unit.name}."
+    if role == Person.Role.STAFF:
+        if not staff_type:
+            errors["staff_type"] = "Choose the staff type."
+        if not (job_title or "").strip():
+            errors["job_title"] = "Type the job title, e.g. \"Instructor I\" or \"Head, Security Office\"."
+    elif role == Person.Role.STUDENT and not year_level:
+        errors["year_level"] = "Choose the year level."
+    return errors
 
 
 class FaceEmbeddingSerializer(serializers.ModelSerializer):
@@ -91,6 +125,11 @@ class PersonSerializer(serializers.ModelSerializer):
     # Settings > Scheduling > face re-enrollment: whether this person's face
     # photos are due to be retaken (see users/reenrollment.py).
     photos_status = serializers.SerializerMethodField()
+    # Where they study or work, for display ("Faculty · Instructor I · School
+    # of Engineering - Civil Engineering Department"); see Person.affiliation.
+    affiliation = serializers.SerializerMethodField()
+    org_unit_name = serializers.CharField(source="org_unit.name", read_only=True, default=None)
+    department_name = serializers.CharField(source="department.name", read_only=True, default=None)
 
     class Meta:
         model = Person
@@ -101,6 +140,14 @@ class PersonSerializer(serializers.ModelSerializer):
             "student_or_employee_id",
             "nfc_id",
             "department_or_course",
+            "org_unit",
+            "org_unit_name",
+            "department",
+            "department_name",
+            "staff_type",
+            "job_title",
+            "year_level",
+            "affiliation",
             "photo_reference",
             "photo",
             "profile_picture",
@@ -139,6 +186,37 @@ class PersonSerializer(serializers.ModelSerializer):
 
     def get_max_embeddings(self, obj):
         return max_embeddings_for(obj)
+
+    def get_affiliation(self, obj):
+        return obj.affiliation()
+
+    # Sent whenever a person's details are saved from the form (and by bulk
+    # import) - a partial update that doesn't touch them (a deactivation, an
+    # added photo) leaves an older record that predates the lists alone.
+    AFFILIATION_FIELDS = ("role", "org_unit", "department", "staff_type", "job_title", "year_level")
+
+    def validate(self, data):
+        data = super().validate(data)
+        if self.instance is not None and not any(field in data for field in self.AFFILIATION_FIELDS):
+            return data
+        errors = affiliation_errors(
+            role=data.get("role", getattr(self.instance, "role", None)),
+            org_unit=data.get("org_unit", getattr(self.instance, "org_unit", None)),
+            department=data.get("department", getattr(self.instance, "department", None)),
+            staff_type=data.get("staff_type", getattr(self.instance, "staff_type", "")),
+            job_title=data.get("job_title", getattr(self.instance, "job_title", "")),
+            year_level=data.get("year_level", getattr(self.instance, "year_level", "")),
+            existing=self.instance,
+        )
+        if errors:
+            raise serializers.ValidationError(errors)
+        # Only what fits the role is kept: no year level on staff, no job on a student.
+        if data.get("role", getattr(self.instance, "role", None)) == Person.Role.STAFF:
+            data["year_level"] = ""
+        else:
+            data["staff_type"] = ""
+            data["job_title"] = ""
+        return data
 
     def get_photos_status(self, obj):
         result = reenrollment.status(obj)

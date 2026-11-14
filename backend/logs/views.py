@@ -89,7 +89,10 @@ def person_payload(person, request):
         "person_photo": photo_url,
         "role": person.role,
         "student_or_employee_id": person.student_or_employee_id,
-        "department_or_course": person.department_or_course,
+        # Where they study or work, as one line - the gate monitor's card shows
+        # it under the name ("Faculty · Instructor I · School of Engineering -
+        # Civil Engineering Department"); see users.models.Person.affiliation.
+        "department_or_course": person.affiliation(),
         # A manual backstop for a confusable pair (see users.models.
         # ConfusablePair) - never used by matching itself, just handed
         # through to whatever's displaying this result (dashboard, entry-

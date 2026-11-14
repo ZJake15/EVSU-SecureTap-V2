@@ -2,6 +2,49 @@ from django.conf import settings
 from django.db import models
 
 
+class OrgUnit(models.Model):
+    """Where someone studies or works at EVSU: one of the schools (Engineering,
+    Education, ...) or an administrative office (Registrar, Security Office,
+    ...). Filled from www.evsu.edu.ph by migration users 0008; an Admin edits
+    the list in Settings > Schools, Offices & Departments. A unit that's no
+    longer used is hidden (is_active False) rather than deleted, so the
+    people already in it keep it."""
+
+    class Kind(models.TextChoices):
+        SCHOOL = "school", "School"
+        OFFICE = "office", "Office"
+
+    name = models.CharField(max_length=150, unique=True)
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    # The heading it's listed under, e.g. "Administration, Finance and Auxiliary Services".
+    group = models.CharField(max_length=150, blank=True)
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["kind", "sort_order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class Department(models.Model):
+    """A department of a school, e.g. School of Engineering > Civil Engineering
+    Department. Offices have none."""
+
+    unit = models.ForeignKey(OrgUnit, on_delete=models.CASCADE, related_name="departments")
+    name = models.CharField(max_length=150)
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+        constraints = [models.UniqueConstraint(fields=["unit", "name"], name="unique_department_per_unit")]
+
+    def __str__(self):
+        return f"{self.unit.name} - {self.name}"
+
+
 class Person(models.Model):
     """A student or staff member enrolled in SecureTap (NFC + face verification)."""
 
@@ -9,12 +52,36 @@ class Person(models.Model):
         STUDENT = "student", "Student"
         STAFF = "staff", "Staff"
 
+    class StaffType(models.TextChoices):
+        FACULTY = "faculty", "Faculty"
+        NON_TEACHING = "non_teaching", "Non-teaching staff"
+        SECURITY = "security", "Security personnel"
+        MAINTENANCE = "maintenance", "Maintenance / utility"
+        OFFICIAL = "official", "University official"
+
+    class YearLevel(models.TextChoices):
+        FIRST = "1", "1st year"
+        SECOND = "2", "2nd year"
+        THIRD = "3", "3rd year"
+        FOURTH = "4", "4th year"
+        FIFTH = "5", "5th year"
+        GRADUATE = "graduate", "Graduate"
+
     full_name = models.CharField(max_length=255)
     role = models.CharField(max_length=20, choices=Role.choices)
     student_or_employee_id = models.CharField(max_length=50, unique=True)
     # unique=True already gives this an index for fast tap-time lookups.
     nfc_id = models.CharField(max_length=100, unique=True)
+    # Free text from before schools/offices were a list - kept and shown as
+    # "previous: ..." until org_unit is set (see affiliation()).
     department_or_course = models.CharField(max_length=255, blank=True)
+    # Where they study or work - required for new registrations and on every
+    # edit of their details (users/serializers.PersonSerializer.validate).
+    org_unit = models.ForeignKey(OrgUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name="people")
+    department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, related_name="people")
+    staff_type = models.CharField(max_length=20, choices=StaffType.choices, blank=True)  # staff only
+    job_title = models.CharField(max_length=150, blank=True)  # staff only, e.g. "Instructor I"
+    year_level = models.CharField(max_length=10, choices=YearLevel.choices, blank=True)  # students only
     photo_reference = models.ImageField(upload_to="reference_photos/", null=True, blank=True)
     is_active = models.BooleanField(default=True)
     # A manual backstop for a confusable pair (see ConfusablePair below) - a
@@ -31,6 +98,27 @@ class Person(models.Model):
 
     def __str__(self):
         return f"{self.full_name} ({self.student_or_employee_id})"
+
+    def place(self):
+        """"School of Engineering - Civil Engineering Department", or the office."""
+        if not self.org_unit_id:
+            return ""
+        if self.department_id:
+            return f"{self.org_unit.name} - {self.department.name}"
+        return self.org_unit.name
+
+    def affiliation(self):
+        """One line for the gate monitor, Logs and Live Monitoring:
+        "Faculty · Instructor I · School of Engineering - Civil Engineering Department"
+        or "School of Education - Elementary Education Department · 3rd year".
+        Someone registered before the list existed shows their old text."""
+        if not self.org_unit_id:
+            return f"previous: {self.department_or_course}" if self.department_or_course else ""
+        if self.role == self.Role.STAFF:
+            parts = [self.get_staff_type_display() if self.staff_type else "", self.job_title, self.place()]
+        else:
+            parts = [self.place(), self.get_year_level_display() if self.year_level else ""]
+        return " · ".join(part for part in parts if part)
 
 
 class FaceEmbedding(models.Model):

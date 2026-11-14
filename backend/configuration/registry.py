@@ -65,6 +65,9 @@ SECTIONS = [
      "computer's speed mode (in the launcher) picks."),
     ("nfc", "NFC Card", "When the system asks for a card tap instead of deciding from the face alone."),
     ("enrollment", "Enrollment", "Registering a new student or staff member."),
+    ("organization", "Schools, Offices & Departments",
+     "Where students study and staff work - the lists the registration form uses, filled from www.evsu.edu.ph. "
+     "Add, rename or hide entries below; nothing is deleted, so people already in a hidden one keep it."),
     ("semester", "Semester Enrollment",
      "Students re-enroll every semester. A registered student who isn't on this semester's enrolled list (the "
      "registrar's file, uploaded below) is flagged NOT ENROLLED. Staff are never flagged."),

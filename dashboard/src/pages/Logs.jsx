@@ -3,9 +3,10 @@ import apiClient from "../api/client";
 import StatusBadge, { AfterHoursTag, NotEnrolledTag, STATUS_BAR } from "../components/StatusBadge";
 import { Checkbox, Field, Icon, Notice, PageHeader } from "../components/ui";
 import { useAuth } from "../auth/AuthContext";
+import { groupedUnits, useOrgLists } from "../lib/orgUnits";
 
 const PAGE_SIZE = 25;
-const emptyFilters = { date: "", user: "", gate: "", status: "" };
+const emptyFilters = { date: "", user: "", gate: "", status: "", org_unit: "" };
 // Entries only - SecureTap doesn't record exits, so there's no direction to
 // pick or show (the backend records every manual entry as an entry).
 const emptyOverrideForm = { student_or_employee_id: "", reason: "" };
@@ -126,6 +127,7 @@ function ManualOverrideForm({ username, onLogged }) {
 
 export default function Logs() {
   const { user } = useAuth();
+  const { org } = useOrgLists();
   const isSecurityOfficer = user?.role === "security_officer";
   const [filters, setFilters] = useState(emptyFilters);
   const [logs, setLogs] = useState([]);
@@ -146,6 +148,7 @@ export default function Logs() {
     if (filters.date) params.timestamp__date = filters.date;
     if (filters.user) params.person__full_name = filters.user;
     if (filters.gate) params.gate_location = filters.gate;
+    if (filters.org_unit) params.org_unit = filters.org_unit;
     // "Not enrolled (let in)" is a flag on successful entries; "(refused)" is
     // a status of its own (Settings > Semester Enrollment: Refuse entry).
     if (filters.status === "not_enrolled_let_in") {
@@ -180,10 +183,12 @@ export default function Logs() {
 
   const exportCsv = () => {
     const header = [
-      "Name", "Timestamp", "Method", "Status", "Confidence", "Reason", "Gate", "On duty", "After hours", "Not enrolled",
+      "Name", "School / office · role", "Timestamp", "Method", "Status", "Confidence", "Reason", "Gate", "On duty",
+      "After hours", "Not enrolled",
     ];
     const rows = visibleLogs.map((log) => [
       log.person_name,
+      log.person_affiliation,
       log.timestamp,
       log.verification_method,
       log.status,
@@ -265,6 +270,20 @@ export default function Logs() {
             <option value="not_enrolled">Not enrolled (refused)</option>
           </select>
         </Field>
+        <Field label="School / office" eyebrow className="w-[240px]">
+          <select value={filters.org_unit} onChange={handleFilterChange("org_unit")} className="input">
+            <option value="">All</option>
+            {groupedUnits(org.units).map(([label, units]) => (
+              <optgroup key={label} label={label}>
+                {units.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </Field>
         <Checkbox checked={hideUnknown} onChange={(e) => setHideUnknown(e.target.checked)} label="Hide unknown" />
       </div>
 
@@ -295,7 +314,14 @@ export default function Logs() {
                     className="grid min-h-10 items-center gap-s3 border-b border-l-[3px] border-b-line py-s1 pl-[13px] pr-s4 text-sm"
                     style={{ gridTemplateColumns: cols, borderLeftColor: bar }}
                   >
-                    <span className="truncate font-bold">{log.person_name || "Unknown"}</span>
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate font-bold">{log.person_name || "Unknown"}</span>
+                      {log.person_affiliation && (
+                        <span className="truncate text-xs text-ink-600" title={log.person_affiliation}>
+                          {log.person_affiliation}
+                        </span>
+                      )}
+                    </span>
                     <span className="whitespace-nowrap font-mono text-xs font-medium text-ink-600">
                       {formatTimestamp(log.timestamp)}
                     </span>

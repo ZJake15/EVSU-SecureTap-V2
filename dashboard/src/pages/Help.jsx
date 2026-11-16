@@ -116,7 +116,8 @@ const TROUBLE = [
   ["A real student is flagged SPOOF", "Strong backlight or glare can cause it. Check the lighting at the gate; an Admin can adjust Settings › Anti-Spoofing."],
   ["A student says they're enrolled but shows NOT ENROLLED", "Check Settings › Semester Enrollment: search their name under \"Registered, not on the list\" and Mark enrolled if they enrolled late."],
   ["A camera shows \"No signal\" on the Cameras page", "That gate's monitor isn't open, or the gate computer is off."],
-  ["Forgot your password", "Ask an Admin to set a new one in Accounts."],
+  ["Forgot your password", "Ask an Admin to set a temporary one in Accounts - it also unlocks a locked account. Sign in with it, then choose your own; nothing else opens until you do. At the gate the temporary password doesn't work - use your staff ID card or face."],
+  ["An Admin forgot their own password", "Another Admin resets it in Accounts - keep two Admin accounts for this. With no other Admin: on the server computer, in the EVSU SecureTap folder, run python\\python.exe backend\\manage.py changepassword <username>."],
 ];
 
 function Guide({ guide, open, onToggle }) {

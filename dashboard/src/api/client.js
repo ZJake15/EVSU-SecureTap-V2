@@ -39,6 +39,13 @@ apiClient.interceptors.response.use(
     const originalRequest = error.config;
     const status = error.response?.status;
 
+    // accounts/authentication.py: this account's password was set by an
+    // Admin - the app switches to "Choose a new password".
+    if (status === 403 && error.response?.data?.code === "password_change_required") {
+      window.dispatchEvent(new Event("securetap:password-change"));
+      return Promise.reject(error);
+    }
+
     if (status !== 401 || originalRequest._retry || !tokenStore.getRefresh()) {
       if (status === 401) {
         tokenStore.clear();

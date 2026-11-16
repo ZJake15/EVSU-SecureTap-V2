@@ -23,6 +23,8 @@ const ACTIONS = {
   semester_list_updated: { label: "Semester list updated", icon: "list-checks" },
   org_list_changed: { label: "Schools/offices list changed", icon: "buildings" },
   account_locked: { label: "Account locked", icon: "lock-simple", danger: true },
+  password_reset: { label: "Password reset", icon: "key" },
+  password_changed: { label: "Password changed", icon: "key" },
 };
 
 const COLS = "170px 140px minmax(0,1.3fr) minmax(0,1.6fr) minmax(0,1.6fr)";

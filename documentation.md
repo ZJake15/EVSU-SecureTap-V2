@@ -2218,6 +2218,9 @@ an answer.
   and the window then asks for **that card owner's** face, so a borrowed card
   can't sign someone else in (method `card_face`). **Card or face** - either
   one alone signs in.
+- **A password an Admin set** (a new account, or a forgotten password reset
+  on the Accounts page) can't sign in at the gate monitor
+  (`AdminProfile.must_change_password`, see §13.5) - card and face still can.
 - **Who may sign in where.** A Security Officer only at their assigned gate
   (the same exact-name match as §13.3); Admin and SASO at any gate. Wrong
   passwords count toward the failed login lockout, shared with the dashboard
@@ -2239,6 +2242,35 @@ an answer.
 - **Updates.** The launcher applies database updates (`manage.py migrate`)
   each time before it starts the backend, so installing a newer version over
   an older one adds the new fields by itself.
+
+### 13.5 Forgotten passwords
+
+There's no self-service "Forgot password?" - the system runs on the campus
+network with no email. An **Admin resets it** on the Accounts page: open the
+account, type a temporary password, keep **Make them choose their own
+password when they sign in** ticked, save.
+
+- **It unlocks the account** (Failed login lockout: `failed_login_count` and
+  `locked_until` cleared). The list shows **Locked** while an account is
+  locked, and the form says a new password unlocks it.
+- **Audit Log:** a **Password reset** entry (who reset whose, `unlocked`,
+  `must_change_password`) besides "Account updated"; a person changing their
+  own password is **Password changed**. Either way, every sign-in that used
+  the old password is ended (refresh tokens blacklisted -
+  `accounts/authentication.end_sessions`).
+- **Choose your own.** `AdminProfile.must_change_password` (also set for a
+  new account, by default) makes the dashboard show only **Choose a new
+  password** after sign-in. The server enforces it, not just the page:
+  `accounts/authentication.SecureTapJWTAuthentication` refuses every API
+  request but `/api/auth/change-password` with 403 `password_change_required`
+  - even with a token issued before the reset. Changing it needs the current
+  password (wrong ones count toward the lockout) and a new one that meets the
+  password rules (`AUTH_PASSWORD_VALIDATORS`: 10+ characters, not common, not
+  like the username) - now also checked when an Admin types one in. An Admin
+  setting their own password isn't asked to change it again.
+- **An Admin who forgets theirs:** another Admin resets it (keep two). With
+  no other Admin, on the server computer, from the install folder:
+  `python\python.exe backend\manage.py changepassword <username>`.
 
 ## 14. Running on a low-power laptop
 

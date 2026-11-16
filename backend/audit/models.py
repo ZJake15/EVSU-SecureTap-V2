@@ -72,6 +72,11 @@ class AuditLogEntry(models.Model):
         SEMESTER_LIST_UPDATED = "semester_list_updated", "Semester list updated"
         # Settings > Schools, Offices & Departments (users/org_views.py).
         ORG_LIST_CHANGED = "org_list_changed", "Schools/offices list changed"
+        # An Admin setting a new password for someone on the Accounts page
+        # (forgotten password) - it also unlocks the account - and the person
+        # then choosing their own (accounts/views.ChangePasswordView).
+        PASSWORD_RESET = "password_reset", "Password reset"
+        PASSWORD_CHANGED = "password_changed", "Password changed"
 
     # Nullable only in case a user account is later deleted out from under an
     # old entry (SET_NULL, not CASCADE) - the row (and its description of what

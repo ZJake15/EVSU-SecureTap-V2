@@ -70,6 +70,11 @@ class AdminProfile(models.Model):
     # in a row since the last successful sign-in, and when a lock ends.
     failed_login_count = models.PositiveSmallIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
+    # A password an Admin set for them (a new account, or "forgot my
+    # password") is only good for choosing their own: until they do, the
+    # dashboard API answers nothing else (accounts/authentication.py) and the
+    # gate monitor won't take it for signing in.
+    must_change_password = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.user.username} ({self.role})"

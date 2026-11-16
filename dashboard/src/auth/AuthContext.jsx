@@ -25,6 +25,9 @@ function decodeUser(accessToken) {
       // closed, not open" rule applies here: no gate claim means the pages
       // that scope by it should show nothing, not everything).
       gateLocation: claims.gate_location ?? null,
+      // Their password was set by an Admin: only "Choose a new password"
+      // until they do (the server refuses everything else anyway).
+      mustChangePassword: Boolean(claims.must_change_password),
     };
   } catch {
     return null;
@@ -47,10 +50,27 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  // Choosing their own password: fresh tokens come back, without the flag.
+  const changePassword = useCallback(async (currentPassword, newPassword) => {
+    const { data } = await apiClient.post("/auth/change-password", {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+    tokenStore.setTokens(data.access, data.refresh);
+    setUser(decodeUser(data.access));
+  }, []);
+
   useEffect(() => {
     const handleForcedLogout = () => setUser(null);
+    // The server says this account must choose a new password first (an
+    // Admin reset it while they were signed in, say).
+    const handlePasswordChange = () => setUser((prev) => (prev ? { ...prev, mustChangePassword: true } : prev));
     window.addEventListener("securetap:logout", handleForcedLogout);
-    return () => window.removeEventListener("securetap:logout", handleForcedLogout);
+    window.addEventListener("securetap:password-change", handlePasswordChange);
+    return () => {
+      window.removeEventListener("securetap:logout", handleForcedLogout);
+      window.removeEventListener("securetap:password-change", handlePasswordChange);
+    };
   }, []);
 
   // The few Settings-page values every signed-in page needs (inactivity
@@ -58,7 +78,7 @@ export function AuthProvider({ children }) {
   // Admin's change reaches people who are already signed in.
   const [policy, setPolicy] = useState(null);
   useEffect(() => {
-    if (!user) {
+    if (!user || user.mustChangePassword) {
       setPolicy(null);
       return undefined;
     }
@@ -100,7 +120,10 @@ export function AuthProvider({ children }) {
     };
   }, [user, idleMinutes]);
 
-  const value = useMemo(() => ({ user, login, logout, policy }), [user, login, logout, policy]);
+  const value = useMemo(
+    () => ({ user, login, logout, policy, changePassword }),
+    [user, login, logout, policy, changePassword]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -3,6 +3,7 @@ import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { useAuth } from "./auth/AuthContext";
 import Login from "./pages/Login";
+import ChoosePassword from "./pages/ChoosePassword";
 import LiveMonitoring from "./pages/LiveMonitoring";
 import Logs from "./pages/Logs";
 import Users from "./pages/Users";
@@ -16,6 +17,9 @@ import GateCameras from "./pages/GateCameras";
 
 export default function App() {
   const { user } = useAuth();
+
+  // A password an Admin set is only good for choosing their own.
+  if (user?.mustChangePassword) return <ChoosePassword />;
 
   return (
     <Routes>

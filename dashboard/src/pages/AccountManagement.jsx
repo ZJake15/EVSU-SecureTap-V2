@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import apiClient from "../api/client";
-import { Field, Icon, Notice, PageHeader } from "../components/ui";
+import { useAuth } from "../auth/AuthContext";
+import { Checkbox, Field, Icon, Notice, PageHeader } from "../components/ui";
 
 const emptyForm = {
   username: "",
@@ -11,6 +12,8 @@ const emptyForm = {
   staff_card_id: "",
   staff_record_id: "",
   password: "",
+  // With a password typed in: they choose their own at next sign-in.
+  require_password_change: true,
 };
 
 const ROLE_LABELS = {
@@ -51,6 +54,7 @@ function StaffRecordLine({ record }) {
 }
 
 export default function AccountManagement() {
+  const { user } = useAuth();
   const [accounts, setAccounts] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
@@ -64,6 +68,8 @@ export default function AccountManagement() {
   const usernameRef = useRef(null);
 
   const editingAccount = editingId ? accounts.find((account) => account.id === editingId) : null;
+  // Your own new password needs no "choose your own" step.
+  const editingOwnAccount = editingAccount?.username === user?.username;
 
   const loadAccounts = () => {
     apiClient
@@ -124,6 +130,7 @@ export default function AccountManagement() {
       staff_card_id: account.staff_card_id || "",
       staff_record_id: account.staff_record?.id_number || "",
       password: "",
+      require_password_change: true,
     });
   };
 
@@ -133,7 +140,10 @@ export default function AccountManagement() {
     setIsSubmitting(true);
     try {
       const payload = { ...form };
-      if (!payload.password) delete payload.password; // optional on edit
+      if (!payload.password) {
+        delete payload.password; // optional on edit
+        delete payload.require_password_change;
+      }
       if (editingId) {
         await apiClient.patch(`/accounts/${editingId}/`, payload);
       } else {
@@ -203,7 +213,12 @@ export default function AccountManagement() {
                     <span className="truncate font-bold">{account.full_name || "—"}</span>
                     <span className="truncate">{ROLE_LABELS[account.role] || account.role}</span>
                     <span className="truncate text-ink-600">{account.assigned_gate_location || "—"}</span>
-                    {account.is_active ? (
+                    {account.is_active && account.locked ? (
+                      <span className="flex items-center gap-s1 font-bold text-caution" title="Too many wrong passwords">
+                        <Icon name="lock-simple" bold size={14} />
+                        Locked
+                      </span>
+                    ) : account.is_active ? (
                       <span className="flex items-center gap-s1 font-bold text-verified">
                         <Icon name="check-circle" bold size={14} />
                         Active
@@ -262,6 +277,21 @@ export default function AccountManagement() {
               className="input"
             />
           </Field>
+          {editingAccount?.locked && (
+            <Notice tone="caution" icon="lock-simple">
+              Locked after too many wrong passwords. Type a new password and save to unlock it.
+            </Notice>
+          )}
+          {editingAccount?.must_change_password && !form.password && (
+            <p className="-mt-s2 text-sm text-ink-600">They haven&apos;t chosen their own password yet.</p>
+          )}
+          {form.password && !editingOwnAccount && (
+            <Checkbox
+              checked={form.require_password_change}
+              onChange={(event) => setForm((prev) => ({ ...prev, require_password_change: event.target.checked }))}
+              label="Make them choose their own password when they sign in"
+            />
+          )}
 
           <div className="flex flex-col gap-s2">
             <span className="field-label">Role</span>

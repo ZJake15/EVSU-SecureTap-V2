@@ -217,6 +217,11 @@ class GateSignInView(APIView):
             lockout.record_failure(profile)
             return Response({"detail": "Wrong username or password."}, status=http_status.HTTP_401_UNAUTHORIZED)
         lockout.clear_failures(profile)
+        if getattr(getattr(user, "admin_profile", None), "must_change_password", False):
+            # A password an Admin set is only good for choosing their own.
+            return Response({"detail": "This password was set by an Admin - choose your own on the dashboard "
+                                       "first, or sign in with your staff ID card or face."},
+                            status=http_status.HTTP_403_FORBIDDEN)
         refusal = gate_shifts.refusal(user, gate_location)
         if refusal:
             return Response({"detail": refusal}, status=http_status.HTTP_403_FORBIDDEN)

@@ -24,6 +24,10 @@ class RoleTokenObtainPairSerializer(TokenObtainPairSerializer):
         token["username"] = user.username
         token["full_name"] = user.get_full_name() or user.username
         token["gate_location"] = gate
+        # The dashboard shows only "Choose a new password" until this is
+        # false (the server enforces it - accounts/authentication.py).
+        token["must_change_password"] = bool(getattr(getattr(user, "admin_profile", None), "must_change_password",
+                                                     False))
         return token
 
     def validate(self, attrs):
@@ -59,15 +63,48 @@ class DashboardAccountSerializer(serializers.ModelSerializer):
     # photos let them sign in at the gate monitor by face. Blank unlinks it.
     staff_record_id = serializers.CharField(write_only=True, required=False, allow_blank=True)
     staff_record = serializers.SerializerMethodField()
+    # With a password typed in: make them choose their own at next sign-in
+    # (the dashboard's checkbox, on by default). Ignored for your own account.
+    require_password_change = serializers.BooleanField(write_only=True, required=False)
+    locked = serializers.SerializerMethodField()
 
     class Meta:
         model = AdminProfile
         fields = [
             "id", "username", "first_name", "last_name", "full_name",
             "role", "assigned_gate_location", "staff_card_id", "staff_record_id", "staff_record",
-            "is_active", "password", "created_at",
+            "is_active", "password", "require_password_change", "must_change_password", "locked", "created_at",
         ]
-        read_only_fields = ["id", "created_at"]
+        read_only_fields = ["id", "created_at", "must_change_password"]
+
+    def get_locked(self, profile):
+        """Locked out by too many wrong passwords right now (Settings: Failed
+        login lockout) - saving a new password unlocks it."""
+        from . import lockout
+
+        return bool(lockout.locked_message(profile))
+
+    def validate_password(self, value):
+        """The same rules as everywhere else (settings.AUTH_PASSWORD_VALIDATORS:
+        at least 10 characters, not a common password, not like the username).
+        Blank on an edit keeps the current password."""
+        if not value:
+            return value
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        user = self.instance.user if self.instance is not None else User(
+            username=self.initial_data.get("username", ""), first_name=self.initial_data.get("first_name", ""),
+            last_name=self.initial_data.get("last_name", ""))
+        try:
+            validate_password(value, user)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError(list(error.messages)) from error
+        return value
+
+    def _own_account(self, user):
+        request = self.context.get("request")
+        return request is not None and request.user.pk == user.pk
 
     def get_staff_record(self, profile):
         person = profile.staff_person
@@ -128,6 +165,9 @@ class DashboardAccountSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user_data = validated_data.pop("user")
         password = validated_data.pop("password", None)
+        # A new account's first password is the Admin's - by default the
+        # person picks their own the first time they sign in.
+        validated_data["must_change_password"] = validated_data.pop("require_password_change", True)
         if not password:
             raise serializers.ValidationError({"password": "A password is required for a new account."})
         user = User.objects.create(
@@ -150,12 +190,23 @@ class DashboardAccountSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         user_data = validated_data.pop("user", {})
         password = validated_data.pop("password", None)
+        require_change = validated_data.pop("require_password_change", True)
         user = instance.user
         for field in ("username", "first_name", "last_name", "is_active"):
             if field in user_data:
                 setattr(user, field, user_data[field])
         if password:
+            # A forgotten password: the new one also lifts a lockout, and
+            # (unless it's your own) is only good for choosing theirs.
+            from . import lockout
+
             user.set_password(password)
+            own = self._own_account(user)
+            instance.password_reset = {"was_locked": bool(lockout.locked_message(instance)), "own": own,
+                                       "must_change_password": bool(require_change and not own)}
+            instance.failed_login_count = 0
+            instance.locked_until = None
+            instance.must_change_password = bool(require_change and not own)
         if "role" in validated_data:
             user.is_staff = validated_data["role"] == AdminProfile.Role.ADMIN
             user.is_superuser = validated_data["role"] == AdminProfile.Role.ADMIN

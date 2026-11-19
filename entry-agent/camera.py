@@ -86,6 +86,9 @@ class Camera:
         self._cap = None
         self._lock = threading.Lock()
         self._latest_frame = None
+        # Counts frames as they arrive, so a screen that already drew this
+        # one can skip redrawing it (frame_number).
+        self._frame_number = 0
         self._running = False
         self._thread = None
         # An instance attribute (not a local in _run_loop) specifically so
@@ -351,6 +354,27 @@ class Camera:
             self._frame_times.append(time.monotonic())
             with self._lock:
                 self._latest_frame = frame
+                self._frame_number += 1
+
+    def frame_number(self):
+        """Which frame get_preview_frame() would return now - a number that
+        changes with every new frame, or None while there is none. The gate
+        monitor draws a picture only when this has changed (ui._Feed.refresh):
+        a camera slower than the screen's redraw rate would otherwise have the
+        same frame copied, shrunk and handed to Tk again for nothing."""
+        with self._lock:
+            return None if self._latest_frame is None else self._frame_number
+
+    def peek_preview_frame(self):
+        """get_preview_frame() without the copy - for a screen that only
+        reads the pixels. Safe because a frame is never written into once
+        it's handed out: every read() makes a new array, and this thread only
+        swaps which one is latest. The gate monitor's video panel draws from
+        this ~15 times a second; the copy was 6 MB (1080p) to 11 MB (1440p)
+        each time, for nothing."""
+        with self._lock:
+            frame = self._latest_frame
+        return None if frame is None else self._zoomed(frame)
 
     def get_preview_frame(self):
         """Latest frame (zoomed - see _zoomed), no overlay - the camera

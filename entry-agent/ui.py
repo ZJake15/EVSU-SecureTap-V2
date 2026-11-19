@@ -329,6 +329,16 @@ def _round_corners(image, radius):
     return image
 
 
+_RGB_CACHE = {}
+
+
+def _rgb(color):
+    """"#121416" -> (18, 20, 22), remembered - for filling numpy pixels."""
+    if color not in _RGB_CACHE:
+        _RGB_CACHE[color] = ImageColor.getrgb(color)[:3]
+    return _RGB_CACHE[color]
+
+
 def _rounded_rect_points(x0, y0, x1, y1, radius, steps_per_corner=12):
     """Points for a rounded rectangle as a Canvas polygon - each corner a
     real quarter-circle arc (steps_per_corner points), not the 2-points-per-
@@ -657,6 +667,17 @@ class _Feed:
         self._image = None
         self._cutouts_key = None
         self._cutouts = []
+        # The camera's frame counter (Camera.frame_number), when the frames
+        # come from a Camera - so an unchanged frame isn't drawn again.
+        camera = getattr(get_preview_frame, "__self__", None)
+        self._frame_number = getattr(camera, "frame_number", None)
+        # Drawing only reads the pixels - from a Camera, without copying them
+        # (Camera.peek_preview_frame).
+        self._read_frame = getattr(camera, "peek_preview_frame", None) or get_preview_frame
+        self._drawn_key = None  # what the picture on screen was drawn from (_draw_key)
+        self._buffer = None  # the panel's pixels, reused frame to frame (compose_panel)
+        self._drawn_rect = (0, 0, 1, 1)
+        self._drawn_placement = None
         self.setup()
 
     def setup(self, compact=False, show_strip=True, show_banner=True, show_tap=False, strip_stats=None,
@@ -688,6 +709,7 @@ class _Feed:
         self.canvas.bind("<Button-1>", lambda _e: self.on_click() if self.on_click else None)
         self._image = None
         self._cutouts_key = None
+        self._drawn_key = None  # a new canvas - draw the next frame in full
         self.background = background
 
     def strip_height(self):
@@ -707,11 +729,24 @@ class _Feed:
         return self.alert if self.show_banner else None
 
     def refresh(self):
-        frame = self.get_preview_frame()
+        # The camera hasn't delivered a new frame since the last one drawn
+        # (it runs slower than the screen redraws, e.g. in dim light): keep
+        # the picture already on screen and redraw only what's on top of it.
+        # Copying, shrinking and handing an unchanged 1-2 MP frame to Tk again
+        # was pure cost - and it all competes with the face scanning for the
+        # same CPU (and Python's GIL).
+        number = self._frame_number() if self._frame_number else None
+        if number is not None and not self.showing_no_camera and self._image is not None \
+                and self._drawn_key == self._draw_key(number):
+            self.last_frame_at = time.monotonic()
+            self.draw_frame(None)
+            return
+        frame = self._read_frame()
         if frame is not None:
             self.last_frame_at = time.monotonic()
             self.showing_no_camera = False
             self.draw_frame(frame)
+            self._drawn_key = self._draw_key(number) if number is not None else None
         elif time.monotonic() - self.last_frame_at >= self.m.CAMERA_GRACE_SECONDS:
             # No frame for a while now - either no camera ever connected, or
             # one did and then stopped (unplugged, driver crash - see
@@ -721,7 +756,16 @@ class _Feed:
             if not self.showing_no_camera:
                 self.showing_no_camera = True
                 self.m._refresh_in_frame()
+            self._drawn_key = None
             self.draw_no_camera_placeholder()
+
+    def _draw_key(self, number):
+        """Everything baked into the drawn picture: the frame, the panel's
+        size, the alarm color of the strip, and (Full camera) whether its
+        person card has a band behind it."""
+        banner = self.banner
+        return (number, self.panel_size(), self.strip_height(), banner["kind"] if banner else None,
+                bool(self.m._log_entries) if self.overlay is not None else None)
 
     def panel_size(self):
         return (self.canvas.winfo_width() or self.m.MIN_VIDEO_SIZE[0],
@@ -737,19 +781,23 @@ class _Feed:
         where the full, uncropped frame would sit, for mapping face boxes,
         which draw_box then clips to the visible feed.
 
-        Shrunk with OpenCV and turned RGB only after shrinking, and the
-        corners painted in the canvas color instead of an alpha mask over the
-        whole panel: measured at 1037x530, 5 ms a frame instead of 21."""
+        Built in one reused numpy buffer with OpenCV - shrunk, turned RGB
+        only after shrinking, the corners painted from small precomputed
+        masks - and turned into a PIL image once at the end."""
         import cv2  # already loaded by the camera; here so the launcher's `from ui import` doesn't load it
+        import numpy as np
 
         canvas_w, canvas_h = self.panel_size()
         rect = (0, 0, canvas_w, canvas_h)
-        strip_h = self.strip_height()
+        strip_h = min(self.strip_height(), canvas_h)
         feed_w, feed_h = canvas_w, max(1, canvas_h - strip_h)
         self.feed_bounds = (0, strip_h, feed_w, strip_h + feed_h)
-        panel = Image.new("RGB", (canvas_w, canvas_h), INK)
-        if self.banner:
-            ImageDraw.Draw(panel).rectangle((0, 0, canvas_w, strip_h), fill=ALERTS[self.banner["kind"]]["color"])
+        if self._buffer is None or self._buffer.shape[:2] != (canvas_h, canvas_w):
+            self._buffer = np.empty((canvas_h, canvas_w, 3), np.uint8)
+        panel = self._buffer
+        # Only what the picture won't cover is painted, with OpenCV's filled
+        # rectangle - numpy's `panel[:] = (r, g, b)` took 11 ms at 1920x850.
+        covered = False
         placement = None
         if frame is not None:
             src_h, src_w = frame.shape[:2]
@@ -758,39 +806,53 @@ class _Feed:
             scale = cover if crop <= self.MAX_FEED_CROP else min(feed_w / src_w, feed_h / src_h)
             img_w, img_h = max(1, round(src_w * scale)), max(1, round(src_h * scale))
             origin_x, origin_y = (feed_w - img_w) // 2, strip_h + (feed_h - img_h) // 2
-            # Bilinear, not Lanczos: on a moving video frame the difference
-            # isn't visible, and it's several times cheaper every frame.
-            resized = cv2.resize(frame, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
-            # Paste only the part inside the feed area, so a cropped frame
-            # can't spill up into the strip.
+            # Only the part inside the feed area is shrunk and pasted, so a
+            # cropped frame can't spill up into the strip. Bilinear, not
+            # Lanczos: on a moving video frame the difference isn't visible,
+            # and it's several times cheaper every frame.
             left, top = max(0, -origin_x), max(0, strip_h - origin_y)
             right, bottom = min(img_w, feed_w - origin_x), min(img_h, strip_h + feed_h - origin_y)
-            visible = cv2.cvtColor(resized[top:bottom, left:right], cv2.COLOR_BGR2RGB)
-            panel.paste(Image.fromarray(visible), (max(0, origin_x), max(strip_h, origin_y)))
+            if right > left and bottom > top:
+                x0, y0 = max(0, origin_x), max(strip_h, origin_y)
+                covered = (x0, y0, right - left, bottom - top) == (0, strip_h, feed_w, feed_h)
+                if not covered:
+                    cv2.rectangle(panel, (0, 0), (canvas_w - 1, canvas_h - 1), _rgb(INK), -1)
+                resized = cv2.resize(frame, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
+                panel[y0:y0 + bottom - top, x0:x0 + right - left] = cv2.cvtColor(
+                    resized[top:bottom, left:right], cv2.COLOR_BGR2RGB)
+            else:
+                cv2.rectangle(panel, (0, 0), (canvas_w - 1, canvas_h - 1), _rgb(INK), -1)
             placement = (origin_x, origin_y, img_w, img_h)
+        if placement is None:
+            cv2.rectangle(panel, (0, 0), (canvas_w - 1, canvas_h - 1), _rgb(INK), -1)
+        if strip_h:
+            strip_color = ALERTS[self.banner["kind"]]["color"] if self.banner else INK
+            cv2.rectangle(panel, (0, 0), (canvas_w - 1, strip_h - 1), _rgb(strip_color), -1)
         if self.overlay is not None:
             self.overlay.paint(self, panel)
         radius = self.m.VIDEO_PANEL_CORNER_RADIUS if self.radius is None else self.radius
         if radius:
-            background = ImageColor.getrgb(self.background)
-            for box, cutout in self.corner_cutouts(panel.size, self.m._px(radius)):
-                panel.paste(background, box, mask=cutout)
-        return panel, rect, placement
+            background = _rgb(self.background)
+            for (y0, y1, x0, x1), outside in self.corner_cutouts((canvas_w, canvas_h), self.m._px(radius)):
+                panel[y0:y1, x0:x1][outside] = background
+        return Image.fromarray(panel), rect, placement
 
     def corner_cutouts(self, size, radius):
-        """The four corners outside the rounded panel, as (box, mask) - built
-        once per panel size and painted each frame."""
+        """The four corners outside the rounded panel, as ((y0, y1, x0, x1),
+        boolean mask) - built once per panel size and painted each frame."""
+        import numpy as np
+
         key = (size, radius)
         if self._cutouts_key != key:
             mask = Image.new("L", size, 0)
             ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, fill=255)
-            outside = ImageOps.invert(mask)
+            outside = np.asarray(mask) == 0
             width, height = size
             r = max(1, min(radius, width, height))
-            boxes = ((0, 0, r, r), (width - r, 0, width, r), (0, height - r, r, height),
-                     (width - r, height - r, width, height))
+            boxes = ((0, r, 0, r), (0, r, width - r, width), (height - r, height, 0, r),
+                     (height - r, height, width - r, width))
             self._cutouts_key = key
-            self._cutouts = [(box, outside.crop(box)) for box in boxes]
+            self._cutouts = [(box, outside[box[0]:box[1], box[2]:box[3]].copy()) for box in boxes]
         return self._cutouts
 
     def show_panel(self, panel, rect):
@@ -802,6 +864,11 @@ class _Feed:
             image.paste(panel)
         else:
             self._image = ImageTk.PhotoImage(panel)
+        self._show_image(rect)
+
+    def _show_image(self, rect):
+        """The canvas, emptied, with the current picture on it - what's drawn
+        on top (boxes, strip, pill) is drawn again after this."""
         self.canvas.delete("all")
         self.canvas.create_image(rect[0], rect[1], image=self._image, anchor="nw")
 
@@ -952,8 +1019,17 @@ class _Feed:
         self.draw_overlays(rect)
 
     def draw_frame(self, frame):
-        panel, rect, placement = self.compose_panel(frame)
-        self.show_panel(panel, rect)
+        """A new camera frame - or, with frame None, the picture already
+        drawn, with the boxes, strip and pill drawn again on top of it."""
+        if frame is None:
+            rect, placement = self._drawn_rect, self._drawn_placement
+            self._show_image(rect)
+        else:
+            panel, rect, placement = self.compose_panel(frame)
+            self.show_panel(panel, rect)
+            self._drawn_rect, self._drawn_placement = rect, placement
+            # How smooth the video really is: new pictures a second.
+            self.draw_times.append(time.monotonic())
 
         src_w, src_h = self.image_size
         if src_w > 0 and src_h > 0 and placement:
@@ -971,9 +1047,8 @@ class _Feed:
         camera = (f"camera {camera_size[0]}×{camera_size[1]}" + (f" {camera_fps:.0f} fps" if camera_fps else "")
                   + " · ") if camera_size else ""
         checked = f"checked {src_w}×{src_h}" if src_w > 1 and src_h > 1 else "checked –"
-        # How smooth the video really is: redraws a second (each shows the
-        # camera's latest picture, so it can't look smoother than the camera).
-        self.draw_times.append(time.monotonic())
+        # New pictures a second (counted above) - it can't look smoother than
+        # the camera, and a frame drawn once isn't counted again.
         times = self.draw_times
         screen = (f" · screen {(len(times) - 1) / (times[-1] - times[0]):.0f} fps"
                   if len(times) >= 10 and times[-1] > times[0] else "")
@@ -2386,6 +2461,13 @@ class GateMonitorWindow:
         sign-in window now asks its owner to look at the camera."""
         self._queue.put(("face_step", (name, pending)))
 
+    def face_in_view(self):
+        """Whether the entrance camera's latest scan answer had a face in it
+        - safe from any thread (it only reads). The sign-in window's face scan
+        (main.face_sign_in_loop) asks before sending a frame."""
+        feed = self._feeds.get("entry")
+        return bool(feed is not None and feed.recognitions)
+
     def show_face_sign_in(self, result):
         """One face-scan answer from the backend ({"reason", "reason_code",
         "name"?}) - shown under the sign-in window's camera view."""
@@ -2577,7 +2659,7 @@ class GateMonitorWindow:
     # backend, which doesn't say, always allowed.
     DEFAULT_SIGN_IN_WAYS = {"password": True, "card": True, "face": False, "card_then_face": False}
     FACE_VIEW_SIZE = (380, 214)  # logical px, 16:9
-    FACE_PREVIEW_MS = 80
+    FACE_PREVIEW_MS = 125  # 8 a second - enough to aim a face, light on the CPU
 
     def _sign_in_ways(self):
         return {**self.DEFAULT_SIGN_IN_WAYS, **(self._sign_in.get("methods") or {})}
@@ -2702,8 +2784,19 @@ class GateMonitorWindow:
         if frame is not None:
             import cv2  # loaded by the camera already (see _Feed)
 
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            self._face_photo = ImageTk.PhotoImage(ImageOps.fit(Image.fromarray(rgb), (width, height)))
+            # Cropped to the view's shape and shrunk with OpenCV, then pasted
+            # into the same Tk image - cheap, since the face scan is running
+            # on this computer at the same time.
+            src_h, src_w = frame.shape[:2]
+            scale = max(width / src_w, height / src_h)
+            crop_w, crop_h = min(src_w, round(width / scale)), min(src_h, round(height / scale))
+            x0, y0 = (src_w - crop_w) // 2, (src_h - crop_h) // 2
+            small = cv2.resize(frame[y0:y0 + crop_h, x0:x0 + crop_w], (width, height), interpolation=cv2.INTER_AREA)
+            picture = Image.fromarray(cv2.cvtColor(small, cv2.COLOR_BGR2RGB))
+            if self._face_photo is not None and (self._face_photo.width(), self._face_photo.height()) == (width, height):
+                self._face_photo.paste(picture)
+            else:
+                self._face_photo = ImageTk.PhotoImage(picture)
             canvas.create_image(0, 0, image=self._face_photo, anchor="nw")
             oval_w, oval_h = width * 0.30, height * 0.78
             canvas.create_oval(width / 2 - oval_w / 2, height / 2 - oval_h / 2, width / 2 + oval_w / 2,

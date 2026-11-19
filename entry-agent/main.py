@@ -530,6 +530,7 @@ def handle_sign_in(config, api_client, ui, username, password):
 
 
 FACE_SIGN_IN_PACE_SECONDS = 0.7
+FACE_SIGN_IN_IDLE_SECONDS = 0.3  # how often to look again while nobody's in view
 
 
 def face_sign_in_loop(config, api_client, camera, ui, stop, pending=None):
@@ -537,7 +538,20 @@ def face_sign_in_loop(config, api_client, camera, ui, stop, pending=None):
     scan"), off the Tk thread: a frame from the entrance camera goes to the
     backend about every FACE_SIGN_IN_PACE_SECONDS until it signs the guard
     in, says to stop, or the window closes (stop is set)."""
+    told_no_face = False
     while not stop.is_set():
+        # Only while the entrance camera actually sees a face (the gate's
+        # own scan keeps running behind the sign-in window and knows). The
+        # window opens by itself whenever nobody is on duty, so sending every
+        # frame regardless kept the backend's face AI busy with an empty
+        # doorway - the same AI that checks everyone coming through the gate.
+        if not ui.face_in_view():
+            if not told_no_face:
+                ui.show_face_sign_in({"reason": "Look at the camera.", "reason_code": "no_face"})
+                told_no_face = True
+            stop.wait(FACE_SIGN_IN_IDLE_SECONDS)
+            continue
+        told_no_face = False
         try:
             image_bytes, _size = camera.capture_jpeg()
         except RuntimeError:

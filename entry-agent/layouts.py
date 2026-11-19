@@ -33,6 +33,8 @@ from ui import (
     details_line,
 )
 
+INK_RGB = tuple(int(INK[i:i + 2], 16) for i in (1, 3, 5))
+
 # Kinds with no person on record behind them - their "photo" is the camera's
 # own crop (or an icon), and they have no photo on file.
 NO_RECORD = {"unknown", "spoof", "covered", "card_rejected", "card_offline"}
@@ -254,8 +256,15 @@ class _View:
         self.refresh_log()
 
     def refresh_stats(self):
+        """Every counter shown - each label touched only when its number
+        changed (this runs on every scan answer, ~5 times a second per
+        camera, and redrawing an unchanged CTk label still costs)."""
+        shown = self.__dict__.setdefault("_shown_stats", {})
         for key, label in self.stat_labels.items():
-            label.configure(text=self.m._stat_text(key))
+            text = self.m._stat_text(key)
+            if shown.get(key) != text:
+                shown[key] = text
+                label.configure(text=text)
 
     def on_alert(self, alert):
         """The alarm banner started or ended (None)."""
@@ -616,19 +625,23 @@ class FullOverlay:
 
     def paint(self, feed, panel):
         """See-through dark bands, blended into the picture itself (a Tk
-        canvas has no transparency)."""
+        canvas has no transparency). `panel` is the frame's RGB pixels
+        (numpy) - darkened in place with OpenCV: pixel * (1 - a) + ink * a."""
+        import cv2
+
         m, s = self.m, self.m._s
-        width, height = panel.size
+        height, width = panel.shape[:2]
         boxes = [((0, 0, width, m._px(s["f_top"])), 0.74),
                  ((0, height - m._px(s["tick_h"]), width, height), 0.84)]
         if m._log_entries:
             boxes.append((tuple(round(v) for v in self.card_box((0, 0, width, height))), 0.8))
+        ink = sum(INK_RGB) / 3  # the ink is a near-neutral dark grey
         for (x0, y0, x1, y1), alpha in boxes:
             x0, y0, x1, y1 = max(0, x0), max(0, y0), min(width, x1), min(height, y1)
             if x1 <= x0 or y1 <= y0:
                 continue
-            region = panel.crop((x0, y0, x1, y1))
-            panel.paste(Image.blend(region, Image.new("RGB", region.size, INK), alpha), (x0, y0))
+            region = panel[y0:y1, x0:x1]
+            region[:] = cv2.convertScaleAbs(region, alpha=1 - alpha, beta=ink * alpha)
 
     def photo(self, entry, size, ring=None):
         key = (id(entry), size, ring)

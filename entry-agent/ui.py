@@ -1462,8 +1462,10 @@ class GateMonitorWindow:
         # maximized anyway (see below); this is just the restore size.
         self.window.geometry("1200x720")
         self.window.minsize(820, 640)
-        self.window.protocol("WM_DELETE_WINDOW", self._handle_close)
-        self.window.bind("<Escape>", lambda _e: self._handle_close())
+        # Closing stops the gate's scanning and signs the guard on duty out -
+        # asked first, so a stray Escape can't do it (_confirm_close).
+        self.window.protocol("WM_DELETE_WINDOW", self._confirm_close)
+        self.window.bind("<Escape>", lambda _e: self._confirm_close())
         _apply_icon(self.window)
 
         work_width = self._fit_design_to_screen()
@@ -2822,6 +2824,9 @@ class GateMonitorWindow:
         """A staff card tap with "Card, then face": open (or switch) the
         sign-in window to its face step for that card's owner."""
         self._cancel_sign_in_reminder()
+        # The card was the first step - the pill says what comes next (it
+        # would otherwise still say "Checking card…").
+        self._set_tap(f"{name} · now look at the camera", "user-focus", PROMPT)
         ways = self._sign_in_ways()
         if not ways["card_then_face"]:  # the backend says so - this gate's copy was behind
             self._sign_in = {**self._sign_in, "methods": {**ways, "card": True, "face": True,
@@ -3590,6 +3595,17 @@ class GateMonitorWindow:
                 return CAUTION, "warning", f"{label} · NOT ENROLLED"
             return VERIFIED, "sign-out" if item.get("direction") == "exit" else "sign-in", label
         return CAUTION, "user-circle-dashed", "UNKNOWN"
+
+    def _confirm_close(self):
+        """Escape or the window's X: close only when the guard says so."""
+        if self._closed:
+            return
+        on_duty = (self._sign_in.get("on_duty") or {}).get("name")
+        detail = "Face scanning and card taps stop at this gate until it's opened again."
+        if on_duty:
+            detail += f" {on_duty} is signed out of duty."
+        if messagebox.askyesno("Close the gate monitor?", detail, icon="warning", default="no", parent=self.window):
+            self._handle_close()
 
     def _handle_close(self):
         self._closed = True

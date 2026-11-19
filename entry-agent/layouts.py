@@ -807,7 +807,7 @@ class FilmView(_View):
     cards below it, newest on the left."""
 
     def build(self):
-        m, s = self.m, self.s
+        s = self.s
         box = self.padded()
         box.grid_columnconfigure(0, weight=1)
         box.grid_rowconfigure(1, weight=1)

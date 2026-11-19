@@ -421,17 +421,19 @@ action, not a continuous background process.
    `EntryLog(status=failed)` row is written too — a rejected card is still a
    security-relevant event worth keeping visible — with a specific reason code
    (`not_registered` / `deactivated` / `read_error`).
-7. **Rendering.** The gate monitor's card-scanner strip shows the result (photo,
-   name, role, course, ID, card ID, direction, timestamp) on success, so the
-   guard can visually cross-check the tapped card against the person standing
-   in front of them; on rejection it turns red with the failure headline ("Not
-   registered", "Deactivated", ...) and `CARD REJECTED`; a tap queued while
-   offline turns amber ("Offline — tap queued, will sync automatically"). The
-   strip's left edge takes the same status color. Either way it auto-resets
-   back to "Tap a card" after 8 seconds. The same outcome is simultaneously added
-   to the live log beside it (`CARD · ENTRY` / `CARD · EXIT` on success,
-   `CARD REJECTED` or `QUEUED` otherwise), so a tap is as visible in the gate's
-   running record as a face event.
+7. **Rendering.** The card reader's state is a pill in the bottom-right corner
+   of the entrance camera (`_Feed.draw_tap`): "Tap a card", then "Card accepted
+   · name" (green; amber when NOT ENROLLED, after hours or an odd pattern),
+   "Card not registered" or another failure headline in red, or "Tap queued —
+   will sync" in amber while offline - back to "Tap a card" after 8 seconds.
+   The tap itself lands in the live log like a face event (`CARD · ENTRY` /
+   `CARD · EXIT` on success, `CARD REJECTED` or `QUEUED` otherwise), with the
+   person's photo, name, school/department and ID, so the guard cross-checks
+   the card against the person there; what the card adds - NOT ENROLLED this
+   semester, the person's distinguishing note, photos due for update, or the
+   backend's reason for a rejection - shows as an amber line on that entry
+   (the newest card in every layout). (Before the redesign's Layout menu this
+   was a separate "card scanner" strip under the camera.)
 
 ### 2.3 Entrance and exit (two cameras per gate)
 
@@ -441,15 +443,41 @@ is chosen in the gate monitor's **Cameras & card readers** window (status bar);
 until one is, the gate records entries only, exactly as before. The choice is
 remembered by camera name (`camera_choice.json`: `name` and `exit_name`).
 
-- **Layout** (same window, remembered per computer in `gate_layout.json`):
-  **Side by side**; **Big + small** - one camera large, the other a small inset
-  in its corner (thinner strip, no caption), a click on the inset swaps them;
-  or **Separate window** - the exit camera in its own window with its own exit
-  log and exit counters (`_ExitWindow`), fullscreen on the last extra monitor
-  (the student display takes the first free one, so with three screens each
-  gets its own; F11 / Escape / double-click toggle fullscreen); exit events
-  then go to that window's log instead of the main one. Closing it puts the
-  exit camera back side by side.
+- **Layout** - the **Layout** button in the status bar opens a menu with a
+  picture of each layout (`entry-agent/layouts.py`, from
+  `docs/Redesign UI/Gate Monitor.dc.html`); the choice is remembered per
+  computer in `gate_layout.json` (`layout`, and `dual` for Entrance + Exit).
+  - **Split** (default) - stats and the camera left, the live log right: the
+    newest event as a big card, everything earlier listed below.
+  - **Verify wall** - the 4 newest people as cards, the photo on file beside
+    the face the camera saw (cropped from the frame when the event was logged;
+    "No record" for an unknown), the camera small in the bottom-right corner -
+    a click on it shows that camera big, with the newest person in the corner.
+  - **Full camera** - the video edge to edge; a see-through stats bar along the
+    top, the alarm under it, the newest person bottom-left and earlier people
+    as a ticker along the bottom (`FullOverlay`, blended into the picture -
+    a Tk canvas has no transparency).
+  - **Filmstrip** - camera on top, a row of person cards below, newest left.
+  - **Entrance + Exit** - both cameras across the top, **Side by side** or
+    **Big + small** (a click on the small one swaps them), each with its own
+    counters in its strip; one merged log below, every row tagged IN or OUT.
+    Without an exit camera, the second panel says so.
+  - **Compact rail** - the camera takes nearly everything; the log is a column
+    of round avatars ringed in their status color - hover or click one for
+    its row.
+  - **Separate window** - Split, with the exit camera in its own window with its
+    own exit log and exit counters (`_ExitWindow`), fullscreen on the last
+    extra monitor (the student display takes the first free one; F11 / Escape /
+    double-click toggle fullscreen); exit events then go to that window's log.
+    Closing it goes back to Split.
+
+  In the one-camera layouts a gate's exit camera is a small inset top-right of
+  the entrance camera (click to swap) - top-right so it never hides the card
+  pill. Verify wall and Entrance + Exit show the alarm as a bar of its own
+  above the content; the others in the camera's own top strip. Sizes come
+  from the design's 1920 × 990 window area, scaled down for a 1366 × 698 one.
+  A `gate_layout.json` from before the menu still loads (side by side → Split,
+  big + small → Entrance + Exit big + small).
 - **Gate monitor.** The two feeds sit side by side (or as the layout says), each labelled ENTRANCE /
   EXIT in its top strip; the header pill reads ENTRY + EXIT; the stats row has
   an EXITS counter. Each camera has its own scan loop, its own backend

@@ -1,3 +1,4 @@
+import functools
 import io
 import math
 import os
@@ -172,6 +173,14 @@ ICONS = {
     "lock-simple": "\ue308",
     # Settings > Scheduling > Gate opening hours
     "moon": "\ue330",
+    # The Layout menu and its layouts (layouts.py)
+    "layout": "\ue6d6",
+    "caret-up": "\ue13c",
+    "calendar-blank": "\ue10a",
+    "arrows-left-right": "\ue0a0",
+    "columns": "\ue546",
+    "picture-in-picture": "\ue64c",
+    "user": "\ue4c2",
 }
 
 
@@ -364,33 +373,70 @@ def _ellipsize(font, text, max_px):
 # widget scaling (see _fit_design_to_screen) - so on a 1080p monitor the
 # layout comes out at the design's proportions whatever Windows' display
 # scaling is set to, instead of every element growing 25% at 125% scaling.
-DESIGN_WIDTH, DESIGN_HEIGHT = 1920, 1080
+# The window area of a maximized window on a 1080p screen (minus the title bar
+# and taskbar) - what the redesign draws (docs/Redesign UI, Gate Monitor).
+DESIGN_WIDTH, DESIGN_HEIGHT = 1920, 990
 # Floor for that fit, so a small laptop screen shrinks the layout but never
 # to the point of unreadable text.
 MIN_DESIGN_FIT = 0.6
 
-# Size profile, in design pixels: the full 1920x1080 design ("WIDE") and its
-# narrow 1100x700-window variant ("NARROW"). Every size in between is
+# Size profile, in design pixels: the full 1920x990 design ("WIDE") and its
+# 1366x698 variant for a 768p laptop ("NARROW"). Every size in between is
 # interpolated from the available width, so an un-maximized window still
-# fits instead of overflowing at the full-screen sizes.
+# fits instead of overflowing at the full-screen sizes. The layout keys are
+# for the Layout menu's views (layouts.py).
+NARROW_WIDTH = 1366
 NARROW_SIZES = {
-    "header": 84, "pad": 26, "seal": 44, "title": 28, "clock": 28, "badge": 22,
-    "hero": 56, "stat": 44, "stat_top": 16, "col_gap": 26, "strip": 52, "banner_title": 22,
-    "banner_sub": 16, "scan": 112, "scan_label": 150, "photo": 64, "feat_thumb": 72,
-    "feat_name": 28, "feat_conf": 28, "feat_pad": 10, "band": 40, "feat_word": 18,
-    "row_name": 20, "row_word": 16, "tab": 16, "tile": 56, "tap_title": 24,
+    # header, stats, Split
+    "header": 72, "pad": 24, "pad_t": 12, "pad_b": 12, "seal": 40, "title": 26, "sub": 13, "clock": 26,
+    "date": 12, "badge": 20, "hero": 44, "stat": 34, "stat_label": 13, "stat_pad": 16, "col_gap": 20, "gap": 10,
+    "log_title": 17, "strip": 38, "banner_title": 22, "banner_sub": 16, "feat_thumb": 88, "feat_name": 24,
+    "feat_conf": 30, "feat_pad": 10, "band": 36, "feat_word": 17, "row_name": 19, "row_word": 16, "row_thumb": 56,
+    "row_pad": 7, "meta": 13, "dept": 13, "tag": 16, "tab": 15, "cap": 12, "strip_f": 14, "strip_stat_l": 12,
+    "strip_stat_v": 18,
+    # the card reader's pill on the camera
+    "tap_f": 20, "tap_i": 22, "tap_px": 14, "tap_py": 8, "tap_edge": 12,
+    # banner bar (Verify wall, Entrance + Exit), thin stats row
+    "banner_h": 46, "banner_t": 22, "banner_s": 16, "banner_i": 26, "thin_v": 22, "thin_gap": 22,
+    # Verify wall
+    "v_head": 38, "v_head_t": 17, "v_time": 13, "v_pad": 10, "v_gap": 12, "v_tile_w": 105, "v_tile_h": 140,
+    "v_name": 21, "v_id": 14, "v_dept": 13, "pip_w": 236, "pip_h": 156, "pip_strip": 24, "pip_photo": 52,
+    # Full camera
+    "f_top": 48, "f_stat_v": 22, "f_banner": 60, "f_banner_t": 26, "f_card_w": 460, "f_photo": 84, "f_name": 24,
+    "f_conf": 26, "tick_h": 76, "chip_p": 48, "chip_f": 14,
+    # Filmstrip
+    "film_h": 208, "film_w": 164, "film_gap": 10, "film_photo": 78, "film_name": 16, "film_bar": 28, "film_tag": 13,
+    # Entrance + Exit
+    "dual_h": 356, "inset_w": 300, "inset_h": 190, "m_row_thumb": 52, "m_row_name": 17, "m_pad": 7, "dir_w": 46,
+    "dir_f": 15,
+    # Compact rail
+    "rail_w": 96, "rail_gap": 10, "av": 58, "ring": 4, "rail_n": 5, "rail_pop_w": 500,
+    # status bar
+    "foot_h": 44, "foot_f": 13,
 }
 WIDE_SIZES = {
-    "header": 112, "pad": 42, "seal": 56, "title": 44, "clock": 44, "badge": 28,
-    "hero": 72, "stat": 56, "stat_top": 26, "col_gap": 42, "strip": 64, "banner_title": 28,
-    "banner_sub": 20, "scan": 150, "scan_label": 190, "photo": 76, "feat_thumb": 112,
-    "feat_name": 36, "feat_conf": 44, "feat_pad": 20, "band": 48, "feat_word": 22,
-    "row_name": 28, "row_word": 20, "tab": 20, "tile": 64, "tap_title": 28,
+    "header": 96, "pad": 42, "pad_t": 20, "pad_b": 16, "seal": 52, "title": 40, "sub": 16, "clock": 40,
+    "date": 14, "badge": 26, "hero": 64, "stat": 52, "stat_label": 14, "stat_pad": 28, "col_gap": 42, "gap": 14,
+    "log_title": 20, "strip": 48, "banner_title": 28, "banner_sub": 20, "feat_thumb": 150, "feat_name": 36,
+    "feat_conf": 48, "feat_pad": 16, "band": 46, "feat_word": 22, "row_name": 26, "row_word": 20, "row_thumb": 80,
+    "row_pad": 10, "meta": 16, "dept": 15, "tag": 20, "tab": 20, "cap": 14, "strip_f": 16, "strip_stat_l": 13,
+    "strip_stat_v": 22,
+    "tap_f": 26, "tap_i": 28, "tap_px": 20, "tap_py": 12, "tap_edge": 20,
+    "banner_h": 56, "banner_t": 28, "banner_s": 20, "banner_i": 32, "thin_v": 30, "thin_gap": 34,
+    "v_head": 48, "v_head_t": 22, "v_time": 16, "v_pad": 16, "v_gap": 22, "v_tile_w": 180, "v_tile_h": 240,
+    "v_name": 30, "v_id": 18, "v_dept": 16, "pip_w": 340, "pip_h": 222, "pip_strip": 30, "pip_photo": 72,
+    "f_top": 64, "f_stat_v": 30, "f_banner": 76, "f_banner_t": 34, "f_card_w": 640, "f_photo": 124, "f_name": 34,
+    "f_conf": 36, "tick_h": 100, "chip_p": 64, "chip_f": 17,
+    "film_h": 272, "film_w": 212, "film_gap": 12, "film_photo": 118, "film_name": 20, "film_bar": 36, "film_tag": 16,
+    "dual_h": 556, "inset_w": 420, "inset_h": 262, "m_row_thumb": 64, "m_row_name": 22, "m_pad": 10, "dir_w": 56,
+    "dir_f": 18,
+    "rail_w": 124, "rail_gap": 14, "av": 78, "ring": 5, "rail_n": 6, "rail_pop_w": 640,
+    "foot_h": 48, "foot_f": 14,
 }
 
 
 def _size_profile(design_width):
-    t = max(0.0, min(1.0, (design_width - 1100) / (DESIGN_WIDTH - 1100)))
+    t = max(0.0, min(1.0, (design_width - NARROW_WIDTH) / (DESIGN_WIDTH - NARROW_WIDTH)))
     return {key: round(NARROW_SIZES[key] + (WIDE_SIZES[key] - NARROW_SIZES[key]) * t) for key in NARROW_SIZES}
 
 
@@ -583,8 +629,8 @@ class _Feed:
         self.m = monitor
         self.direction = direction
         self.canvas = tk.Canvas(parent, bg=CANVAS, highlightthickness=0)
-        # The small inset of the "Big + small" layout: a thinner top strip, no
-        # caption, smaller box labels (see GateMonitorWindow._layout_feeds).
+        # A small inset (layouts.py): a thinner top strip, no caption,
+        # smaller box labels - see setup().
         self.compact = False
         self.get_preview_frame = get_preview_frame
         # () -> (width, height) of the camera's own frames, before zoom and
@@ -611,19 +657,42 @@ class _Feed:
         self._image = None
         self._cutouts_key = None
         self._cutouts = []
+        self.setup()
+
+    def setup(self, compact=False, show_strip=True, show_banner=True, show_tap=False, strip_stats=None,
+              overlay=None, radius=None, tap_bottom=0, background=CANVAS):
+        """How this panel is drawn in the current layout (layouts.py):
+        compact - a small inset (thin strip, short labels); show_strip - the
+        LIVE row along the top; show_banner - the alarm in that strip (some
+        layouts show it as a bar of their own); show_tap - the card reader's
+        pill, bottom-right; strip_stats - [(label, () -> value, dot color)]
+        after the camera's name; overlay - layouts.FullOverlay, drawn over
+        the video; radius - corner rounding (0 = square); tap_bottom - room
+        kept under the pill; background - what's behind the rounded corners."""
+        self.compact = compact
+        self.show_strip = show_strip
+        self.show_banner = show_banner
+        self.show_tap = show_tap and self.direction == "entry"
+        self.strip_stats = strip_stats
+        self.overlay = overlay
+        self.radius = radius
+        self.tap_bottom = tap_bottom
+        self.background = background
+        self.on_click = None
 
     def reparent(self, parent, background=CANVAS):
-        """Moves this feed to another window's frame (the "Separate window"
-        layout and back): a fresh canvas there, drawn from the next frame."""
+        """Moves this feed into another frame (a layout change, or the exit
+        camera's own window): a fresh canvas there, drawn from the next frame."""
         self.canvas.destroy()
-        self.canvas = tk.Canvas(parent, bg=background, highlightthickness=0)
+        self.canvas = tk.Canvas(parent, bg=background, highlightthickness=0, cursor="")
+        self.canvas.bind("<Button-1>", lambda _e: self.on_click() if self.on_click else None)
         self._image = None
         self._cutouts_key = None
         self.background = background
 
-    background = CANVAS  # what's behind the panel's rounded corners
-
     def strip_height(self):
+        if not self.show_strip and not self.banner:
+            return 0
         return round(self.m._strip_height() * (0.62 if self.compact else 1))
 
     @property
@@ -631,6 +700,11 @@ class _Feed:
         """The alarm banner, if it's about this camera."""
         alert = self.m._alert
         return alert if alert and alert.get("direction", "entry") == self.direction else None
+
+    @property
+    def banner(self):
+        """The alarm, if it's about this camera and shows in its own strip."""
+        return self.alert if self.show_banner else None
 
     def refresh(self):
         frame = self.get_preview_frame()
@@ -674,8 +748,8 @@ class _Feed:
         feed_w, feed_h = canvas_w, max(1, canvas_h - strip_h)
         self.feed_bounds = (0, strip_h, feed_w, strip_h + feed_h)
         panel = Image.new("RGB", (canvas_w, canvas_h), INK)
-        if self.alert:
-            ImageDraw.Draw(panel).rectangle((0, 0, canvas_w, strip_h), fill=ALERTS[self.alert["kind"]]["color"])
+        if self.banner:
+            ImageDraw.Draw(panel).rectangle((0, 0, canvas_w, strip_h), fill=ALERTS[self.banner["kind"]]["color"])
         placement = None
         if frame is not None:
             src_h, src_w = frame.shape[:2]
@@ -694,9 +768,13 @@ class _Feed:
             visible = cv2.cvtColor(resized[top:bottom, left:right], cv2.COLOR_BGR2RGB)
             panel.paste(Image.fromarray(visible), (max(0, origin_x), max(strip_h, origin_y)))
             placement = (origin_x, origin_y, img_w, img_h)
-        background = ImageColor.getrgb(self.background)
-        for box, cutout in self.corner_cutouts(panel.size, self.m._px(self.m.VIDEO_PANEL_CORNER_RADIUS)):
-            panel.paste(background, box, mask=cutout)
+        if self.overlay is not None:
+            self.overlay.paint(self, panel)
+        radius = self.m.VIDEO_PANEL_CORNER_RADIUS if self.radius is None else self.radius
+        if radius:
+            background = ImageColor.getrgb(self.background)
+            for box, cutout in self.corner_cutouts(panel.size, self.m._px(radius)):
+                panel.paste(background, box, mask=cutout)
         return panel, rect, placement
 
     def corner_cutouts(self, size, radius):
@@ -734,11 +812,48 @@ class _Feed:
         )
 
     def draw_overlays(self, rect):
+        """Everything drawn over the picture, on every redraw (so a banner's
+        appear/disappear timing needs no redraw call of its own): the top
+        strip, the card reader's pill, and the layout's own overlay."""
+        if self.show_strip or self.banner:
+            self.draw_strip(rect)
+        if self.show_tap:
+            self.draw_tap()
+        if self.overlay is not None:
+            self.overlay.draw(self, rect)
+
+    def draw_tap(self):
+        """The card reader's state as a pill, bottom-right of the picture:
+        "Tap a card", "Card accepted · name", "Card not registered"... (the
+        redesign's replacement for the card scanner strip)."""
+        m = self.m
+        s = m._s
+        tap = m._tap
+        k = 0.6 if self.compact else 1
+        font_px = round(s["tap_f"] * k)
+        icon_px = round(s["tap_i"] * k)
+        feed_x0, _feed_y0, feed_x1, feed_y1 = self.feed_bounds
+        font = m._tkfont(SEMI_HEAVY, font_px)
+        glyph = _icon(tap["icon"])
+        icon_w = m._px(icon_px + 10) if glyph else 0
+        pad_x, pad_y = m._px(s["tap_px"] * k), m._px(s["tap_py"] * k)
+        text = _ellipsize(font, tap["text"], (feed_x1 - feed_x0) * 0.7 - icon_w - 2 * pad_x)
+        width = icon_w + font.measure(text) + 2 * pad_x
+        height = max(font.metrics("linespace"), m._px(icon_px)) + 2 * pad_y
+        x1 = feed_x1 - m._px(s["tap_edge"] * k)
+        y1 = feed_y1 - m._px(s["tap_edge"] * k + self.tap_bottom)
+        self.canvas.create_polygon(_rounded_rect_points(x1 - width, y1 - height, x1, y1, m._px(8)),
+                                   fill=tap["color"], outline="")
+        cy = y1 - height / 2
+        if glyph:
+            self.text(x1 - width + pad_x, cy, glyph, ICON_FONT_BOLD, icon_px, "white")
+        self.text(x1 - width + pad_x + icon_w, cy, text, SEMI_HEAVY, font_px, "white")
+
+    def draw_strip(self, rect):
         """The top strip's contents - either the LIVE row (a square status
-        dot, LIVE / NO SIGNAL, which camera, and the caption) or the alarm
-        banner's icon, title, subtitle, speaker mark and time - drawn straight
-        onto the canvas over the composited panel. Runs on every redraw, so
-        the banner's appear/disappear timing needs no redraw call of its own."""
+        dot, LIVE / NO SIGNAL, which camera, the layout's counters and the
+        caption) or the alarm banner's icon, title, subtitle, speaker mark
+        and time."""
         m = self.m
         s = m._s
         k = 0.62 if self.compact else 1  # the small inset's strip is thinner
@@ -746,7 +861,7 @@ class _Feed:
         strip_h = self.strip_height()
         cy = panel_y + strip_h / 2
         x = panel_x + m._px(26 * k)
-        alert_state = self.alert
+        alert_state = self.banner
         if alert_state:
             alert = ALERTS[alert_state["kind"]]
             glyph = _icon(alert["icon"])
@@ -791,10 +906,23 @@ class _Feed:
         lane_id = self.text(x, cy, LANE_LABELS.get(self.direction, ""), COND_HEAVY, word_px, BRASS)
         if self.compact:
             return  # no room for the caption on the small inset
-        caption_x = self.canvas.bbox(lane_id)[2] + m._px(16)
-        caption_font = m._tkfont(FONT_MONO, 14)
-        caption = _ellipsize(caption_font, self.caption, panel_x + panel_w - m._px(16) - caption_x)
-        self.text(caption_x, cy, caption, FONT_MONO, 14, INK_400)
+        x = self.canvas.bbox(lane_id)[2] + m._px(16)
+        right = panel_x + panel_w - m._px(16)
+        # The layout's counters for this camera (Entrance + Exit, Compact rail).
+        for label, value, dot_color in self.strip_stats or ():
+            if right - x < m._px(260):
+                break
+            self.canvas.create_line(x, cy - m._px(10), x, cy + m._px(10), fill=INK_600)
+            x += m._px(14)
+            self.canvas.create_rectangle(x, cy - m._px(4), x + m._px(8), cy + m._px(4), fill=dot_color, outline="")
+            item = self.text(x + m._px(15), cy, label, COND_BOLD, s["strip_stat_l"], LINE)
+            item = self.text(self.canvas.bbox(item)[2] + m._px(7), cy, value(), SEMI_HEAVY, s["strip_stat_v"],
+                             "white")
+            x = self.canvas.bbox(item)[2] + m._px(14)
+        caption_font = m._tkfont(FONT_MONO, s["cap"])
+        caption = _ellipsize(caption_font, self.caption, right - x)
+        if right - x > m._px(40):
+            self.text(right, cy, caption, FONT_MONO, s["cap"], INK_400, anchor="e")
 
     def draw_no_camera_placeholder(self):
         m = self.m
@@ -1089,7 +1217,7 @@ class GateMonitorWindow:
     # enough that a real webcam's normal startup delay never trips it.
     CAMERA_GRACE_SECONDS = 3.0
     MAX_LOG_ROWS = 60
-    LIST_THUMB_SIZE = 48
+    REBUILD_ROWS = 25  # rows drawn when the Split view is (re)built
     ALERT_DISPLAY_MS = 6000
 
     FAILURE_HEADLINES = {
@@ -1130,13 +1258,27 @@ class GateMonitorWindow:
                  camera_options=None, on_camera_change=None, initial_camera_index=None,
                  video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0,
                  get_camera_size=None, get_camera_fps=None, on_exit_camera_change=None, on_reader_setup=None,
-                 layout="side_by_side", on_layout_change=None, on_face_scan=None):
-        # How the two cameras are shown once the gate has an exit camera
-        # (LAYOUTS) - picked in "Cameras & card readers", remembered by
-        # main.py through on_layout_change(layout).
-        self._layout = layout if layout in self.LAYOUTS else "side_by_side"
+                 layout="split", on_layout_change=None, on_face_scan=None, dual_mode="side"):
+        # The screen layout (LAYOUTS, layouts.py) - picked from the Layout
+        # menu in the status bar, remembered by main.py through
+        # on_layout_change(layout, dual_mode). A value saved before the
+        # Layout menu existed maps onto its nearest new layout.
+        layout, dual_mode = self.OLD_LAYOUTS.get(layout, (layout, dual_mode))
+        self._layout = layout if layout in self.LAYOUTS else "split"
+        # Entrance + Exit: "side" (side by side) or "big" (big + small).
+        self._dual_mode = dual_mode if dual_mode in ("side", "big") else "side"
         self._on_layout_change = on_layout_change
-        self._big = "entry"  # "Big + small": which camera is the big one
+        # With an exit camera: which one is big and which the small inset.
+        self._inset_big = "entry"
+        # Verify wall: None (the cards), or the camera shown big instead.
+        self._verify_swap = None
+        self._view = None  # the current layout's view (layouts.py)
+        self._layout_menu = None  # the Layout menu, while open
+        self._alert_key = None  # the alarm the view last heard about
+        self._in_frame_text = "0"
+        # The card reader's pill on the entrance camera (_Feed.draw_tap).
+        self._tap = {"text": "Tap a card", "icon": "identification-card", "color": INK}
+        self._left_column = None
         self._exit_window = None  # the "Separate window" layout's _ExitWindow, while open
         self.exit_stats = {"unknown": 0, "spoof": 0}  # for the exit window's header
         # The entrance camera's feed - get_preview_frame, its camera zoom (the
@@ -1257,10 +1399,8 @@ class GateMonitorWindow:
         self.window.grid_rowconfigure(2, weight=1)
 
         self._build_header()
-        self._build_main_area()
+        self._build_body()
         self._build_status_bar()
-        self._rebuild_log_list()
-        self._show_card_waiting()
 
         # The reader types into whatever has OS keyboard focus, so park a
         # hidden field off-screen and keep it focused (see _keep_focus).
@@ -1377,12 +1517,12 @@ class GateMonitorWindow:
 
         wordmark = ctk.CTkFrame(header, fg_color="transparent")
         wordmark.pack(side="left", padx=(0, 26))
-        self._label(wordmark, "EVSU", (WIDE_BLACK, 20), "white", height=22).pack(anchor="w")
-        self._label(wordmark, "SecureTap", (SEMI_BOLD, 20), "white", height=22).pack(anchor="w")
+        self._label(wordmark, "EVSU", (WIDE_BLACK, 13), "white", height=15).pack(anchor="w")
+        self._label(wordmark, "SecureTap", (SEMI_BOLD, 18), "white", height=21).pack(anchor="w")
 
         # Plain tk.Frame - a 1px CTkFrame draws nothing, which is why this
         # divider used to be missing.
-        tk.Frame(header, bg=BRASS, width=max(1, self._px(1))).pack(side="left", fill="y", pady=26)
+        tk.Frame(header, bg=BRASS, width=max(1, self._px(1))).pack(side="left", fill="y", pady=20)
 
         # Right side packs right-to-left: the ENTRY pill ("ENTRY + EXIT" once
         # the gate has an exit camera), then the clock. Turns into a caution
@@ -1400,7 +1540,7 @@ class GateMonitorWindow:
         clock.pack(side="right")
         self.clock_label = self._label(clock, "", (FONT_MONO_MEDIUM, s["clock"]), "white", height=s["clock"] + 4)
         self.clock_label.pack(anchor="e")
-        self.date_label = self._label(clock, "", (FONT_MONO, 14), "white", height=18)
+        self.date_label = self._label(clock, "", (FONT_MONO, s["date"]), BRASS, height=s["date"] + 4)
         self.date_label.pack(anchor="e")
 
         title = ctk.CTkFrame(header, fg_color="transparent")
@@ -1410,9 +1550,9 @@ class GateMonitorWindow:
             title, self._title_full, (SEMI_HEAVY, s["title"]), "white", anchor="w", height=s["title"] + 6,
         )
         self._title_label.pack(fill="x", anchor="w")
-        self._label(title, "Face recognition + NFC card", (FONT, 16), "white", anchor="w", height=20).pack(
-            fill="x", anchor="w"
-        )
+        self._header_sub = self._label(title, "Face recognition + NFC card", (FONT, s["sub"]), "white", anchor="w",
+                                       height=s["sub"] + 4)
+        self._header_sub.pack(fill="x", anchor="w")
         self._title_frame = title
         self._title_width = None
         title.bind("<Configure>", self._fit_header_title)
@@ -1443,12 +1583,12 @@ class GateMonitorWindow:
         all sitting on one baseline."""
         s = self._s
         self.stats_strip = ctk.CTkFrame(parent, fg_color="transparent")
-        self.stats_strip.grid(row=0, column=0, sticky="ew", pady=(max(0, s["stat_top"] - 8), 16))
+        self.stats_strip.grid(row=0, column=0, sticky="ew", pady=(0, s["gap"]))
 
         hero = ctk.CTkFrame(self.stats_strip, fg_color="transparent")
-        hero.grid(row=0, column=0, sticky="sw", padx=(0, 68))
+        hero.grid(row=0, column=0, sticky="sw", padx=(0, 34))
         self._hero_frame = hero
-        self._label(hero, "TODAY", (COND_BOLD, 14), INK_600, height=18).pack(anchor="w")
+        self._label(hero, "TODAY", (COND_BOLD, s["stat_label"]), INK_600, height=18).pack(anchor="w")
         self.stat_tiles = {}
         self.stat_tiles["today"] = self._label(hero, "0", (WIDE_HEAVY, s["hero"]), INK, height=round(s["hero"] * 0.95))
         self.stat_tiles["today"].pack(anchor="w")
@@ -1459,11 +1599,11 @@ class GateMonitorWindow:
             # Plain tk.Frame - a CTkFrame this thin draws nothing at all.
             tk.Frame(tile, bg=LINE, width=max(1, self._px(1))).pack(side="left", fill="y")
             body = ctk.CTkFrame(tile, fg_color="transparent")
-            body.pack(side="left", anchor="s", padx=(26, 42))
+            body.pack(side="left", anchor="s", padx=(18, s["stat_pad"]))
             head = ctk.CTkFrame(body, fg_color="transparent")
             head.pack(anchor="w")
-            self._icon_label(head, icon, 16, color, height=18).pack(side="left", padx=(0, 6))
-            self._label(head, label, (COND_BOLD, 14), color, height=18).pack(side="left")
+            self._icon_label(head, icon, s["stat_label"], color, height=18).pack(side="left", padx=(0, 5))
+            self._label(head, label, (COND_BOLD, s["stat_label"]), color, height=18).pack(side="left")
             value = self._label(body, "0", (WIDE_BOLD, s["stat"]), color, height=round(s["stat"] * 0.95))
             value.pack(anchor="w")
             self.stat_tiles[key] = value
@@ -1499,127 +1639,101 @@ class GateMonitorWindow:
         self.window.after_idle(self._check_stats_wrap)
 
     def _check_stats_wrap(self):
-        if self._closed:
+        if self._closed or not getattr(self._view, "is_split", False) or self._left_column is None:
             return
-        width = self._left_column.winfo_width()
+        try:
+            width = self._left_column.winfo_width()
+        except tk.TclError:
+            return  # the layout changed meanwhile
         if width <= 1:
             return
         # The hero's right padding isn't part of its requested width.
-        needed = (self._hero_frame.winfo_reqwidth() + self._px(68)
+        needed = (self._hero_frame.winfo_reqwidth() + self._px(34)
                   + sum(t.winfo_reqwidth() for t in self._stat_tile_frames))
         wrapped = width < needed
         self._relayout_stats(self.STATS_COLUMNS_NARROW if wrapped else self.STATS_COLUMNS_WIDE)
 
-    def _build_main_area(self):
-        """Two columns under the header, 7:5. Left: the stats row, the video
-        feed (absorbing all spare height) and the card scanner strip. Right:
-        the live log, running the full height from the header to the status
-        bar - it's the running record, so it gets every row it can show."""
-        s = self._s
-        area = ctk.CTkFrame(self.window, fg_color="transparent")
-        area.grid(row=2, column=0, sticky="nsew", padx=s["pad"], pady=(8, 16))
-        area.grid_rowconfigure(0, weight=1)
-        area.grid_columnconfigure(0, weight=7, uniform="main")
-        area.grid_columnconfigure(1, weight=5, uniform="main")
+    # ---- layouts ----------------------------------------------------------
 
-        left = ctk.CTkFrame(area, fg_color="transparent")
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, s["col_gap"]))
-        left.grid_columnconfigure(0, weight=1)
-        left.grid_rowconfigure(1, weight=1)  # the feed absorbs all spare height
-        self._left_column = left
-
-        self._build_stats_strip(left)
-        self._build_video_panel(left)
-        self._build_card_panel(left)
-        self._build_log_panel(area)
-        left.bind("<Configure>", self._on_left_configure)
-
-    def _build_video_panel(self, parent):
-        """The camera feeds (_Feed): the entrance camera's, and the exit
-        camera's beside it once one is chosen (show_exit_feed) - side by side,
-        halves of the same space."""
-        self._video_area = ctk.CTkFrame(parent, fg_color="transparent")
-        self._video_area.grid(row=1, column=0, sticky="nsew")
-        self._video_area.grid_rowconfigure(0, weight=1)
-        self._feeds["entry"] = _Feed(self, self._video_area, "entry", **self._entry_feed_args)
-        self._layout_feeds()
-
-    # How the entrance and exit cameras are shown (once the gate has an exit
-    # camera) - the choice in "Cameras & card readers".
+    # The Layout menu (status bar): key -> (name, when to use it). The views
+    # themselves are in layouts.py.
     LAYOUTS = {
-        "side_by_side": "Side by side",
-        "big_small": "Big + small - click the small one to swap",
-        "separate": "Separate window - the exit camera on another monitor",
+        "split": ("Split", "Everyday default — camera and live log side by side."),
+        "verify": ("Verify wall", "Checking faces — photo on file next to the live face, camera in a corner."),
+        "full": ("Full camera", "Watching the crowd — video edge to edge, info floats on top."),
+        "film": ("Filmstrip", "Wide monitors and TVs — camera on top, people slide by below."),
+        "dual": ("Entrance + Exit", "Two-camera gates — both feeds, one merged log tagged IN / OUT."),
+        "rail": ("Compact rail", "Small laptop screens — camera first, log as a rail of avatars."),
+        "separate": ("Separate window", "Two monitors — the exit camera in its own window, with its own log."),
     }
+    # What a layout saved before the Layout menu becomes: (layout, dual mode).
+    OLD_LAYOUTS = {"side_by_side": ("split", "side"), "big_small": ("dual", "big"), "separate": ("separate", "side")}
 
-    def _layout_feeds(self):
-        """Arranges the feeds for the current layout: one camera fills the
-        area; "side_by_side" halves it; "big_small" shows one large with the
-        other as a small inset in its corner (a click on the inset swaps
-        them); "separate" moves the exit camera into its own window
-        (_ExitWindow) and leaves the entrance here."""
-        gap = self._s["col_gap"] // 2
-        entry, exit_ = self._feeds.get("entry"), self._feeds.get("exit")
-        layout = self._layout if exit_ is not None else "single"
+    def _build_body(self):
+        """Everything between the header and the status bar - the current
+        layout's view (layouts.py), rebuilt when the guard picks another."""
+        self._body = ctk.CTkFrame(self.window, fg_color="transparent", corner_radius=0)
+        self._body.grid(row=2, column=0, sticky="nsew")
+        self._feeds["entry"] = _Feed(self, self._body, "entry", **self._entry_feed_args)
+        self._apply_layout()
 
-        if layout == "separate" and self._exit_window is None:
-            self._exit_window = _ExitWindow(self, on_close=self._exit_window_closed)
-            exit_.reparent(self._exit_window.feed_area)
-            self._refresh_exit_counts()
-        elif layout != "separate" and self._exit_window is not None:
+    def _apply_layout(self):
+        """(Re)builds the body for the current layout."""
+        import layouts  # here, not at the top: layouts.py imports this module
+
+        if self._view is not None:
+            self._view.destroy()
+            self._view = None
+        for entry in self._log_entries:
+            entry.pop("_row", None)  # the Split view's list rows went with it
+        if self._layout != "separate" and self._exit_window is not None:
             self._exit_window.close(notify=False)
             self._exit_window = None
-        if exit_ is not None and layout != "separate" and exit_.canvas.master is not self._video_area:
-            exit_.reparent(self._video_area)
+        if self._inset_big not in self._feeds:
+            self._inset_big = "entry"
+        self._view = layouts.VIEWS[self._layout](self, self._body)
+        self._alert_key = self._alert_state_key()
+        self._view.on_alert(self._alert)
+        self._refresh_layout_button()
 
-        for feed in (entry, exit_):
-            if feed is not None:
-                feed.canvas.grid_forget()
-                feed.canvas.place_forget()
-                feed.compact = False
-                feed.canvas.bind("<Button-1>", lambda _e, d=feed.direction: self._feed_clicked(d))
-        for column in (0, 1):
-            self._video_area.grid_columnconfigure(column, weight=1 if column == 0 else 0, uniform="")
-
-        if layout == "side_by_side":
-            for column, feed in enumerate((entry, exit_)):
-                self._video_area.grid_columnconfigure(column, weight=1, uniform="feeds")
-                feed.canvas.grid(row=0, column=column, sticky="nsew", padx=(0, gap) if column == 0 else (gap, 0))
-        elif layout == "big_small":
-            big = self._feeds[self._big]
-            small = exit_ if big is entry else entry
-            big.canvas.grid(row=0, column=0, sticky="nsew")
-            small.compact = True
-            pad = self._px(14)
-            small.canvas.place(relx=1.0, rely=1.0, x=-pad, y=-pad, anchor="se", relwidth=0.34, relheight=0.34)
-            small.canvas.tk.call("raise", small.canvas._w)  # above the big one (Canvas.lift raises items)
-        else:  # one camera here: "single", or "separate" with the exit camera in its own window
-            entry.canvas.grid(row=0, column=0, sticky="nsew")
-            if layout == "separate":
-                exit_.canvas.grid(row=0, column=0, sticky="nsew")
-                exit_.canvas.bind("<Double-Button-1>", lambda _e: self._exit_window.toggle_fullscreen())
-
-    def _feed_clicked(self, direction):
-        if self._layout == "big_small" and "exit" in self._feeds and direction != self._big:
-            self._big = direction  # the small inset was clicked - swap
-            self._layout_feeds()
+    def _attach_feed(self, direction, parent, background=CANVAS, **options):
+        """Moves one camera's panel into a view's frame, drawn the way that
+        layout wants it (_Feed.setup) - None if there's no such camera."""
+        feed = self._feeds.get(direction)
+        if feed is None:
+            return None
+        feed.reparent(parent, background)
+        feed.setup(background=background, **options)
+        return feed
 
     def _set_layout(self, layout):
+        self._close_layout_menu()
         if layout not in self.LAYOUTS or layout == self._layout:
             return
         self._layout = layout
-        self._layout_feeds()
+        self._verify_swap = None
+        self._apply_layout()
+        self._remember_layout()
+
+    def _set_dual_mode(self, mode):
+        """Entrance + Exit: side by side, or big + small."""
+        if mode == self._dual_mode:
+            return
+        self._dual_mode = mode
+        self._apply_layout()
+        self._remember_layout()
+
+    def _remember_layout(self):
         if self._on_layout_change:
-            self._on_layout_change(layout)
+            self._on_layout_change(self._layout, self._dual_mode)
 
     def _exit_window_closed(self):
-        """The guard closed the exit camera's window - the exit camera comes
-        back beside the entrance."""
+        """The guard closed the exit camera's window - back to Split, with
+        the exit camera as the small inset."""
         self._exit_window = None
-        self._layout = "side_by_side"
-        self._layout_feeds()
-        if self._on_layout_change:
-            self._on_layout_change(self._layout)
+        self._layout = "split"
+        self._apply_layout()
+        self._remember_layout()
 
     def _refresh_exit_counts(self):
         if self._exit_window is not None:
@@ -1627,13 +1741,13 @@ class GateMonitorWindow:
 
     def show_exit_feed(self, get_preview_frame, get_camera_size=None, get_camera_fps=None, camera_zoom=1.0,
                        camera_index=None):
-        """Shows the exit camera's feed beside the entrance one (Tk thread -
+        """Adds the exit camera's feed to the current layout (Tk thread -
         main.py calls it from the camera choice, or at startup)."""
         self.hide_exit_feed()
-        self._feeds["exit"] = _Feed(self, self._video_area, "exit", get_preview_frame, get_camera_size,
+        self._feeds["exit"] = _Feed(self, self._body, "exit", get_preview_frame, get_camera_size,
                                     get_camera_fps, camera_zoom, camera_index)
         self._exit_camera_index = camera_index
-        self._layout_feeds()
+        self._apply_layout()
         self._render_mode_badge()
 
     def hide_exit_feed(self):
@@ -1644,90 +1758,32 @@ class GateMonitorWindow:
             self._exit_window = None
         if feed is not None:
             feed.canvas.destroy()
-            self._layout_feeds()
+            self._inset_big = "entry"
+            if self._verify_swap == "exit":
+                self._verify_swap = None
+            self._apply_layout()
             self._refresh_in_frame()
             self._render_mode_badge()
 
     def _refresh_in_frame(self):
         """IN FRAME: faces in view across the cameras - "—" with none working."""
         working = [feed for feed in self._feeds.values() if not feed.showing_no_camera]
-        self.stat_tiles["in_frame"].configure(
-            text=str(sum(len(feed.recognitions) for feed in working)) if working else "—"
-        )
+        self._in_frame_text = str(sum(len(feed.recognitions) for feed in working)) if working else "—"
+        if self._view is not None:
+            self._view.refresh_stats()
 
-    def _build_card_panel(self, parent):
-        """The compact card-scanner strip under the feed: a status bar on its
-        left edge, a fixed "CARD SCANNER · Reader ready" label block, then a
-        body that swaps between the tap prompt and the latest tap's result.
-        The outer frame is filled with the status color and the white inner
-        panel sits inset by the bar's width - CTk can't round just one side of
-        a frame, so this is how the colored edge follows the rounded corners."""
-        s = self._s
-        self.card_panel = ctk.CTkFrame(parent, fg_color=LINE, corner_radius=8, height=s["scan"])
-        self.card_panel.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        self.card_panel.grid_propagate(False)
-        self.card_panel.grid_rowconfigure(0, weight=1)
-        self.card_panel.grid_columnconfigure(0, weight=1)
+    def _stat_text(self, key):
+        """A counter as shown. TODAY is everyone through the gate today -
+        its entries and its exits."""
+        if key == "in_frame":
+            return self._in_frame_text
+        if key == "today":
+            return str(self.stats["entries"] + self.stats["exits"])
+        return str(self.stats[key])
 
-        inner = ctk.CTkFrame(self.card_panel, fg_color=SURFACE, corner_radius=7)
-        inner.grid(row=0, column=0, sticky="nsew", padx=(6, 1), pady=1)
-        inner.grid_rowconfigure(0, weight=1)
-        inner.grid_columnconfigure(2, weight=1)
-        self.card_inner = inner
-
-        label_block = ctk.CTkFrame(inner, fg_color="transparent", width=s["scan_label"])
-        # Inset vertically so its square canvas can't paint over the
-        # panel's rounded corners.
-        label_block.grid(row=0, column=0, sticky="ns", padx=(14, 16), pady=8)
-        label_block.grid_propagate(False)
-        label_block.grid_rowconfigure((0, 3), weight=1)
-        self._label(label_block, "CARD SCANNER", (COND_BOLD, 14), INK_600, anchor="w").grid(row=1, column=0, sticky="w")
-        ready = ctk.CTkFrame(label_block, fg_color="transparent")
-        ready.grid(row=2, column=0, sticky="w", pady=(4, 0))
-        self._icon_label(ready, "check-circle", 16, VERIFIED).pack(side="left", padx=(0, 6))
-        self.reader_label = self._label(ready, "Reader ready", (FONT, 14, "bold"), VERIFIED)
-        self.reader_label.pack(side="left")
-
-        ctk.CTkFrame(inner, fg_color=LINE, width=1, height=1, corner_radius=0).grid(row=0, column=1, sticky="ns")
-
-        # The swapping body. Its fg changes to a tint for a rejected/queued
-        # tap, so every widget inside is recolored explicitly on each render
-        # (see _set_card_body_color) - CTk only pushes a new parent color
-        # down one level.
-        self.card_body = ctk.CTkFrame(inner, fg_color=SURFACE, corner_radius=0)
-        self.card_body.grid(row=0, column=2, sticky="nsew", padx=(0, 6), pady=6)
-        self.card_body.grid_rowconfigure(0, weight=1)
-        self.card_body.grid_columnconfigure(1, weight=1)
-
-        tile = s["tile"]
-        self.card_tile = ctk.CTkLabel(self.card_body, text="", width=tile, height=tile, corner_radius=8)
-        self.card_tile.grid(row=0, column=0, padx=(20, 20))
-
-        text = ctk.CTkFrame(self.card_body, fg_color="transparent")
-        text.grid(row=0, column=1, sticky="ew")
-        self.card_text = text
-        self.card_title = self._label(text, "", (SEMI_HEAVY, s["tap_title"]), INK, anchor="w")
-        self.card_title.pack(fill="x", anchor="w")
-        self.card_sub = self._label(text, "", (FONT, 16), INK_600, anchor="w")
-        self.card_sub.pack(fill="x", anchor="w")
-        self.card_ids = self._label(text, "", (FONT_MONO_MEDIUM, 14), INK_600, anchor="w")
-        self.card_ids.pack(fill="x", anchor="w")
-        # A distinguishing note (see users.models.Person.distinguishing_note)
-        # only shows when this specific person has one on file.
-        self.card_note = self._label(text, "", (FONT, 13, "bold"), CAUTION, anchor="w")
-
-        right = ctk.CTkFrame(self.card_body, fg_color="transparent")
-        right.grid(row=0, column=2, sticky="e", padx=(12, 20))
-        self.card_right = right
-        word_row = ctk.CTkFrame(right, fg_color="transparent")
-        word_row.pack(anchor="e")
-        self.card_word_icon = self._icon_label(word_row, "identification-card", 24, VERIFIED)
-        self.card_word_icon.pack(side="left", padx=(0, 6))
-        self.card_word = self._label(word_row, "", (COND_HEAVY, 22), VERIFIED)
-        self.card_word.pack(side="left")
-        self.card_word_row = word_row
-        self.card_time = self._label(right, "", (FONT_MONO_MEDIUM, 16), INK_600, anchor="e")
-        self.card_time.pack(anchor="e")
+    def _alert_state_key(self):
+        alert = self._alert
+        return None if not alert else (alert["kind"], alert["time"], alert.get("direction"), alert.get("sub"))
 
     def _build_log_panel(self, parent):
         s = self._s
@@ -1740,7 +1796,7 @@ class GateMonitorWindow:
         head = ctk.CTkFrame(log, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         head.grid_columnconfigure(0, weight=1)
-        self._label(head, "Live log", (SEMI_BOLD, 20), INK, anchor="w").grid(row=0, column=0, sticky="w")
+        self._label(head, "Live log", (SEMI_BOLD, s["log_title"]), INK, anchor="w").grid(row=0, column=0, sticky="w")
         self.log_count_label = self._label(
             head, f"Newest first · last {self.MAX_LOG_ROWS}", (FONT_MONO, 14), INK_600, anchor="e"
         )
@@ -1754,7 +1810,8 @@ class GateMonitorWindow:
         self._band_h = s["band"]
         # Tall enough for a name wrapped onto two lines plus the ID line
         # under it, not just the photo - long Filipino names wrap often.
-        text_h = round(s["feat_name"] * 1.3 * 2 + 18 + 30)  # + the details line (Live Log Details)
+        # + the details line (Live Log Details) and a card tap's note line.
+        text_h = round(s["feat_name"] * 1.3 * 2 + 18 + 30 + 22)
         body_h = max(s["feat_thumb"], text_h) + 2 * s["feat_pad"]
         self.feat_card = ctk.CTkFrame(log, fg_color="transparent", corner_radius=0, height=self._band_h + body_h)
         self.feat_card.grid(row=1, column=0, sticky="ew")
@@ -1794,8 +1851,11 @@ class GateMonitorWindow:
         self.feat_details = ctk.CTkFrame(feat_text, fg_color="transparent")
         self.feat_kind = self._label(self.feat_details, "", (COND_HEAVY, 14), "white", corner_radius=4, height=22)
         self.feat_detail_text = self._label(self.feat_details, "", (FONT, 15), INK_600, anchor="w")
-        self.feat_id = self._label(feat_text, "", (FONT_MONO_MEDIUM, 16), INK_600, anchor="w")
+        self.feat_id = self._label(feat_text, "", (FONT_MONO_MEDIUM, s["meta"]), INK_600, anchor="w")
         self.feat_id.pack(fill="x", anchor="w", pady=(6, 0))
+        # What the card scanner strip used to say after a tap: NOT ENROLLED,
+        # the person's distinguishing note, photos due for update.
+        self.feat_note = self._label(feat_text, "", (FONT, s["dept"], "bold"), CAUTION, anchor="w", justify="left")
         self.feat_match = ctk.CTkFrame(self.feat_body, fg_color="transparent")
         self.feat_match.grid(row=0, column=2, sticky="e", padx=(12, 18))
         self._label(self.feat_match, "MATCH", (COND_BOLD, 14), INK_600, anchor="e").pack(anchor="e")
@@ -1806,8 +1866,8 @@ class GateMonitorWindow:
             log, "Waiting for the first scan or tap…", (FONT, 16), INK_600, anchor="w"
         )
 
-        self._label(log, "EARLIER", (COND_BOLD, 14), INK_600, anchor="w").grid(
-            row=3, column=0, sticky="w", pady=(20, 6)
+        self._label(log, "EARLIER", (COND_BOLD, 13), INK_600, anchor="w").grid(
+            row=3, column=0, sticky="w", pady=(s["gap"], 6)
         )
         self.log_list = ctk.CTkScrollableFrame(
             log, fg_color=SURFACE, corner_radius=8, border_width=1, border_color=LINE,
@@ -1837,8 +1897,8 @@ class GateMonitorWindow:
         used to rebuild the whole list a second time after every event,
         since adding a row nudges the width)."""
         self._log_relayout_job = None
-        if self._closed:
-            return
+        if self._closed or not getattr(self._view, "is_split", False):
+            return  # another layout now - its list is gone
         if self._log_entries:
             self._render_featured(self._log_entries[0])
         row_font, meta_font = self._log_fonts()
@@ -1852,7 +1912,7 @@ class GateMonitorWindow:
 
     def _build_status_bar(self):
         tk.Frame(self.window, bg=LINE, height=max(1, self._px(1))).grid(row=3, column=0, sticky="ew")
-        bar = ctk.CTkFrame(self.window, fg_color=SURFACE, corner_radius=0, height=48)
+        bar = ctk.CTkFrame(self.window, fg_color=SURFACE, corner_radius=0, height=self._s["foot_h"])
         bar.grid(row=4, column=0, sticky="ew")
         inner = ctk.CTkFrame(bar, fg_color="transparent")
         inner.pack(fill="x", padx=self._s["pad"], pady=6)
@@ -1874,6 +1934,7 @@ class GateMonitorWindow:
         self.camera_label.pack(side="left")
         self._build_setup_button(inner)
         self._build_student_toggle(inner)
+        self._build_layout_button(inner)
 
         identity = " · ".join(part for part in (self.officer_name, self.version) if part)
         self._identity_label = None
@@ -1979,18 +2040,10 @@ class GateMonitorWindow:
             entry_menu.configure(state="disabled")
             exit_menu.configure(state="disabled")
         camera_note = self._label(body, "", (FONT, 13, "bold"), DANGER, anchor="w", justify="left", wraplength=470)
-        camera_note.pack(fill="x", pady=(0, 10))
-
-        # How the two cameras are shown - remembered on this computer.
-        self._label(body, "LAYOUT", (COND_BOLD, 14), INK_600, anchor="w").pack(fill="x")
-        layout_names = {label: key for key, label in self.LAYOUTS.items()}
-        layout_menu = ctk.CTkOptionMenu(body, values=list(layout_names),
-                                        command=lambda label: self._set_layout(layout_names[label]), **menu_style)
-        layout_menu.set(self.LAYOUTS[self._layout])
-        layout_menu.pack(fill="x", pady=(4, 4))
-        self._label(body, "Used once the gate has an exit camera. A separate window opens fullscreen on another "
-                          "monitor when there is one (F11 or a double-click switches fullscreen off).",
-                    (FONT, 13), INK_600, anchor="w", justify="left", wraplength=470).pack(fill="x", pady=(0, 10))
+        camera_note.pack(fill="x", pady=(0, 4))
+        # How the cameras are shown is the Layout menu in the status bar.
+        self._label(body, "How they're shown on screen: the Layout button in the status bar.", (FONT, 13),
+                    INK_600, anchor="w", justify="left", wraplength=470).pack(fill="x", pady=(0, 10))
 
         tk.Frame(body, bg=LINE, height=max(1, self._px(1))).pack(fill="x", pady=(4, 14))
         self._label(body, "EXIT CARD READER", (COND_BOLD, 14), INK_600, anchor="w").pack(fill="x")
@@ -2070,7 +2123,6 @@ class GateMonitorWindow:
     def _render_reader_status(self):
         status = self._readers
         exit_reader = status.get("exit_reader")
-        self.reader_label.configure(text="Entrance + exit readers" if exit_reader else "Reader ready")
         if self._setup_dialog is None:
             return
         widgets = self._setup_widgets
@@ -2090,6 +2142,102 @@ class GateMonitorWindow:
         widgets["set"].configure(state="normal" if status.get("available") and not status.get("waiting")
                                  else "disabled")
         widgets["clear"].configure(state="normal" if exit_reader or status.get("waiting") else "disabled")
+
+    def _build_layout_button(self, bar):
+        """"Layout: Split ^" - opens the Layout menu (_open_layout_menu)."""
+        button = ctk.CTkFrame(bar, corner_radius=8, border_width=math.ceil(1 / self._scale), height=34,
+                              fg_color=SURFACE, border_color=INK_400, cursor="hand2")
+        button.pack(side="left", padx=(12, 0))
+        self._layout_icon = self._icon_label(button, "layout", 16, INK, height=20, cursor="hand2")
+        self._layout_icon.pack(side="left", padx=(12, 8), pady=6)
+        self._layout_word = self._label(button, "", (FONT, 14, "bold"), INK, height=20, cursor="hand2")
+        self._layout_word.pack(side="left", pady=6)
+        self._layout_caret = self._icon_label(button, "caret-up", 12, INK, height=20, cursor="hand2")
+        self._layout_caret.pack(side="left", padx=(8, 12), pady=6)
+        for widget in (button, self._layout_icon, self._layout_word, self._layout_caret):
+            widget.bind("<Button-1>", lambda _e: self._toggle_layout_menu())
+        self._layout_button = button
+        self._refresh_layout_button()
+
+    def _refresh_layout_button(self):
+        if getattr(self, "_layout_button", None) is None:
+            return  # the status bar is built after the first layout
+        is_open = self._layout_menu is not None
+        bg, fg = (INK, SURFACE) if is_open else (SURFACE, INK)
+        self._layout_button.configure(fg_color=bg, border_color=INK if is_open else INK_400)
+        for widget in (self._layout_icon, self._layout_word, self._layout_caret):
+            widget.configure(text_color=fg, fg_color=bg)
+        self._layout_word.configure(text=f"Layout: {self.LAYOUTS[self._layout][0]}")
+
+    def _toggle_layout_menu(self):
+        if self._layout_menu is not None:
+            self._close_layout_menu()
+        else:
+            self._open_layout_menu()
+
+    def _open_layout_menu(self):
+        """The Layout menu, popping up above its button: each layout with a
+        little picture of its shape, what it's for, and a check on the
+        current one. Picking one switches at once and is remembered."""
+        import layouts
+
+        menu = ctk.CTkFrame(self.window, fg_color=SURFACE, corner_radius=10, border_width=1, border_color=INK_400)
+        self._label(menu, "SCREEN LAYOUT", (COND_BOLD, 12), INK_600, anchor="w").pack(fill="x", padx=18,
+                                                                                  pady=(12, 4))
+        thumb_w, thumb_h = 92, 58
+        for key, (name, description) in self.LAYOUTS.items():
+            current = key == self._layout
+            bg = CANVAS if current else SURFACE
+            item = ctk.CTkFrame(menu, fg_color=bg, corner_radius=6, cursor="hand2")
+            item.pack(fill="x", padx=10, pady=1)
+            picture = layouts.layout_thumb(key, self._px(thumb_w), self._px(thumb_h))
+            thumb = ctk.CTkLabel(item, text="", image=self._layout_thumb_image(key, picture, thumb_w, thumb_h),
+                                 fg_color=bg)
+            thumb.pack(side="left", padx=8, pady=8)
+            check = self._icon_label(item, "check", 18, MAROON if current else bg, fg_color=bg)
+            check.pack(side="right", padx=(8, 12))
+            text = ctk.CTkFrame(item, fg_color=bg, corner_radius=0)
+            text.pack(side="left", fill="x", expand=True, padx=(6, 0))
+            self._label(text, name, (FONT, 15, "bold"), INK, anchor="w", fg_color=bg).pack(fill="x")
+            self._label(text, description, (FONT, 13), INK_600, anchor="w", justify="left", wraplength=320,
+                        fg_color=bg).pack(fill="x")
+            for widget in (item, thumb, check, text, *text.winfo_children()):
+                widget.bind("<Button-1>", lambda _e, chosen=key: self._set_layout(chosen))
+        ctk.CTkFrame(menu, fg_color="transparent", height=8).pack()
+        self._layout_menu = menu
+        self.window.update_idletasks()
+        x = self._layout_button.winfo_rootx() - self.window.winfo_rootx()
+        y = self._layout_button.winfo_rooty() - self.window.winfo_rooty() - self._px(10)
+        menu.place(x=x, y=y, anchor="sw")
+        menu.lift()
+        # A click anywhere else closes it.
+        self._layout_menu_click = self.window.bind("<Button-1>", self._layout_menu_click_away, add="+")
+        self._refresh_layout_button()
+
+    def _layout_thumb_image(self, key, picture, width, height):
+        image = ctk.CTkImage(light_image=picture, dark_image=picture, size=(width, height))
+        self._card_images[f"layout_{key}"] = image  # keep a reference or Tk drops it
+        return image
+
+    def _layout_menu_click_away(self, event):
+        menu = self._layout_menu
+        if menu is None:
+            return
+        widget = str(event.widget)
+        if widget.startswith(str(menu)) or widget.startswith(str(self._layout_button)):
+            return
+        self._close_layout_menu()
+
+    def _close_layout_menu(self):
+        if self._layout_menu is None:
+            return
+        try:
+            self.window.unbind("<Button-1>", self._layout_menu_click)
+        except tk.TclError:
+            pass
+        self._layout_menu.destroy()
+        self._layout_menu = None
+        self._refresh_layout_button()
 
     def _build_student_toggle(self, bar):
         """"Open student display" / "Student display open · Close" - opens
@@ -2319,7 +2467,7 @@ class GateMonitorWindow:
             reason, reason_code = payload
             self._render_card_failure(reason, reason_code)
         elif kind == "card_status":
-            self._show_card_waiting()
+            self._set_tap("Checking card…", "circle-notch", INK_600)
         elif kind == "queue_count":
             self.queue_label.configure(
                 text=f"Queue {payload}", text_color=CAUTION if payload else INK_600
@@ -2667,22 +2815,9 @@ class GateMonitorWindow:
             self._sign_in_dialog = None
 
     def _render_staff_signed_in(self, name):
-        """Card strip after a staff ID card tap signed its owner in."""
-        timestamp = datetime.now().strftime("%I:%M:%S %p")
-        tile = self._s["tile"]
-        self._set_card_body_color(SURFACE, VERIFIED)
-        self._set_card_tile(_glyph_tile(self._px(tile), VERIFIED, "user-focus", SURFACE, scale=0.56, bold=True),
-                            tile, 8)
-        self.card_title.configure(text=self._fit_card_text(name, (FONT, 28, "bold")), text_color=INK,
-                                  font=(FONT, 28, "bold"))
-        self.card_sub.configure(text=f"Signed in for duty at {self.gate_location}")
-        self._pack_card_lines(self.card_title, self.card_sub)
-        self.card_word_icon.configure(text=_icon("check-circle"), text_color=VERIFIED)
-        self.card_word.configure(text="ON DUTY", text_color=VERIFIED)
-        self.card_time.configure(text=timestamp)
-        self.card_time.pack(anchor="e")
-        self.card_right.grid()
-        self._schedule_card_reset()
+        """A staff ID card tap (or face scan) signed its owner in - the card
+        pill on the camera says so for a moment."""
+        self._set_tap(f"On duty · {name}", "user-focus", VERIFIED)
         self._close_sign_in_dialog()
 
     # ---- card scanner ---------------------------------------------------
@@ -2745,58 +2880,27 @@ class GateMonitorWindow:
         name = str(focused)
         return bool(is_text_box) and any(name.startswith(f"{window}.") for window in self._typing_windows)
 
-    def _set_card_body_color(self, color, bar_color):
-        self.card_panel.configure(fg_color=bar_color)
-        self.card_body.configure(fg_color=color)
-        for frame in (self.card_text, self.card_right, self.card_word_row):
-            frame.configure(bg_color=color)
-        for label in (self.card_tile, self.card_title, self.card_sub, self.card_ids, self.card_note,
-                      self.card_word_icon, self.card_word, self.card_time):
-            label.configure(fg_color=color)
-
-    def _set_card_tile(self, pil_image, size, radius):
-        """pil_image is already at real pixel size; size is logical."""
-        image = self._ctk_image(_round_corners(pil_image, self._px(radius)), size)
-        self._card_images["tile"] = image  # keep a reference or Tk drops it
-        self.card_tile.configure(image=image, width=size, height=size)
-
-    def _pack_card_lines(self, *labels):
-        """Shows exactly these text lines, in this order - re-packing from
-        scratch each time so a line hidden by the previous result can't end
-        up in the wrong place."""
-        for label in (self.card_title, self.card_sub, self.card_ids, self.card_note):
-            label.pack_forget()
-        for label in labels:
-            label.pack(fill="x", anchor="w")
+    def _set_tap(self, text, icon, color, hold=True):
+        """The card reader's pill on the entrance camera (_Feed.draw_tap) -
+        held for RESET_DELAY_MS, then back to "Tap a card"."""
+        self._tap = {"text": text, "icon": icon, "color": color}
+        if self._card_reset_job:
+            self.window.after_cancel(self._card_reset_job)
+            self._card_reset_job = None
+        if hold:
+            self._card_reset_job = self.window.after(RESET_DELAY_MS, self._reset_card)
 
     def _show_card_waiting(self):
-        tile = self._s["tile"]
-        self._set_card_body_color(SURFACE, LINE)
-        self._set_card_tile(_glyph_tile(self._px(tile), CANVAS, "identification-card", INK_600, scale=0.56), tile, 8)
-        self.card_title.configure(text="Tap a card", text_color=INK, font=(SEMI_HEAVY, self._s["tap_title"]))
-        self.card_sub.configure(text="Hold ID near the reader")
-        self._pack_card_lines(self.card_title, self.card_sub)
-        self.card_right.grid_remove()
+        self._set_tap("Tap a card", "identification-card", INK, hold=False)
 
     def _render_card_match(self, profile):
+        """A registered card: the pill says so, and the tap lands in the live
+        log like a face - with what the card scanner strip used to add
+        (NOT ENROLLED, the person's distinguishing note, photos due) on the
+        newest card there."""
         timestamp = datetime.now().strftime("%I:%M:%S %p")
         name = profile.get("name") or "Unknown"
-        direction = (profile.get("direction") or self.direction or "entry").upper()
-
-        self._set_card_body_color(SURFACE, VERIFIED)
-        photo_size = self._s["photo"]
-        photo = _avatar_image(profile.get("photo_bytes"), self._px(photo_size))
-        if photo is None:
-            photo = _initials_avatar(name, self._px(photo_size))
-        self._set_card_tile(photo, photo_size, 3)
-        self.card_title.configure(
-            text=self._fit_card_text(name, (FONT, 28, "bold")), text_color=INK, font=(FONT, 28, "bold")
-        )
-        role = (profile.get("role") or "").capitalize()
-        self.card_sub.configure(text=" · ".join(part for part in (role, profile.get("department")) if part) or "—")
-        self.card_ids.configure(
-            text=f"{profile.get('student_id') or '—'} · Card {profile.get('card_id') or '—'}", text_color=INK_600
-        )
+        direction = (profile.get("direction") or self.direction or "entry").lower()
         notes = []
         if profile.get("not_enrolled"):  # not on this semester's enrolled list (dashboard: Semester)
             notes.append("NOT ENROLLED this semester")
@@ -2804,75 +2908,35 @@ class GateMonitorWindow:
             notes.append(f"Note: {profile['distinguishing_note']}")
         if profile.get("photos_due"):  # Settings > Scheduling > "Show at the gate"
             notes.append("Photos due for update")
-        if notes:
-            self.card_note.configure(text=" · ".join(notes), text_color=CAUTION)
-            self._pack_card_lines(self.card_title, self.card_sub, self.card_ids, self.card_note)
-        else:
-            self._pack_card_lines(self.card_title, self.card_sub, self.card_ids)
         kind, word, feature_word, extra = self._pass_kind(
-            direction.lower(), profile.get("not_enrolled"), profile.get("pattern_flag"), "", card=True,
+            direction, profile.get("not_enrolled"), profile.get("pattern_flag"), "", card=True,
         )
-        strip_word = "CARD · AFTER HOURS" if self._after_hours else f"CARD · {direction}"
-        word_color = CAUTION if self._after_hours or kind == "pattern" else VERIFIED
-        self.card_word_icon.configure(
-            text=_icon("moon" if self._after_hours else "identification-card"), text_color=word_color
-        )
-        self.card_word.configure(text=strip_word, text_color=word_color)
-        self.card_time.configure(text=timestamp)
-        self.card_time.pack(anchor="e")
-        self.card_right.grid()
-        self._schedule_card_reset()
-        if self._student is not None and direction == "ENTRY":
+        strip_word = "CARD · AFTER HOURS" if self._after_hours else f"CARD · {direction.upper()}"
+        caution = self._after_hours or kind in ("pattern", "not_enrolled")
+        self._set_tap(f"Card accepted · {name}", "warning" if caution else "check-circle",
+                      CAUTION if caution else VERIFIED)
+        if self._student is not None and direction == "entry":
             # Their photo and full name, briefly, as for a recognized face.
             self._student.show_card_result("accepted", profile)
-
         self._push_log_row(
             kind=kind, name=name, id_text=profile.get("student_id") or "—", time=timestamp,
             word=word or strip_word, feature_word=feature_word or strip_word, photo_bytes=profile.get("photo_bytes"),
-            initials_seed=name, extra=extra, direction=direction.lower(), details=profile.get("details"),
+            initials_seed=name, extra=extra, direction=direction, details=profile.get("details"),
+            note=" · ".join(notes) or None,
         )
 
     def _render_card_failure(self, reason, reason_code):
         timestamp = datetime.now().strftime("%I:%M:%S %p")
         card_id = self._last_card_id
-        card_text = f"Card {card_id} · {timestamp}" if card_id else timestamp
-        tile = self._s["tile"]
-
         if reason_code == "offline":
             # Not a rejection - the backend just couldn't be reached, and the
             # tap is already sitting in the offline queue.
-            self._set_card_body_color(CAUTION_TINT, CAUTION)
-            self._set_card_tile(
-                _glyph_tile(self._px(tile), CAUTION, "cloud-slash", SURFACE, scale=0.56, bold=True), tile, 8
-            )
-            self.card_title.configure(
-                text="Offline — tap queued, will sync automatically", text_color=INK, font=(FONT, 20, "bold")
-            )
-            self.card_ids.configure(text=card_text, text_color=INK)
-            self._pack_card_lines(self.card_title, self.card_ids)
-            self.card_right.grid_remove()
+            self._set_tap("Tap queued — will sync", "cloud-slash", CAUTION)
             kind, label = "card_offline", "Tap queued"
         else:
             label = self.FAILURE_HEADLINES.get(reason_code, "Access denied")
-            self._set_card_body_color(DANGER_TINT, DANGER)
-            self._set_card_tile(
-                _glyph_tile(self._px(tile), DANGER, "identification-card", SURFACE, scale=0.56, bold=True), tile, 8
-            )
-            self.card_title.configure(text=label, text_color=DANGER, font=(SEMI_HEAVY, self._s["tap_title"]))
-            self.card_ids.configure(text=card_text, text_color=INK)
-            # The backend's own reason, when it says more than the headline
-            # (e.g. "Rejected: check SERVICE_TOKEN ...").
-            if reason and reason.rstrip(".") != label:
-                self.card_note.configure(text=reason, text_color=INK_600)
-                self._pack_card_lines(self.card_title, self.card_ids, self.card_note)
-            else:
-                self._pack_card_lines(self.card_title, self.card_ids)
-            self.card_word_icon.configure(text=_icon("x-circle"), text_color=DANGER)
-            self.card_word.configure(text="CARD REJECTED", text_color=DANGER)
-            self.card_time.pack_forget()
-            self.card_right.grid()
+            self._set_tap("Card not registered" if reason_code == "not_registered" else label, "x-circle", DANGER)
             kind = "card_rejected"
-        self._schedule_card_reset()
         if self._student is not None and not (reason_code or "").startswith("staff_"):
             # A guard's own staff card is none of the student display's
             # business. Only a card the system actually looked up and refused reads as
@@ -2880,26 +2944,16 @@ class GateMonitorWindow:
             outcome = {"offline": "queued", "not_registered": "rejected", "deactivated": "deactivated",
                        "not_enrolled": "not_enrolled"}.get(reason_code, "error")
             self._student.show_card_result(outcome)
-
+        # The backend's own reason, when it says more than the headline
+        # (e.g. "Rejected: check SERVICE_TOKEN ...").
+        note = reason if kind == "card_rejected" and reason and reason.rstrip(".") != label else None
         self._push_log_row(
             kind=kind, name=label if kind == "card_rejected" else "Card tap queued",
             id_text=f"Card {card_id}" if card_id else "Card", time=timestamp,
             word="CARD REJECTED" if kind == "card_rejected" else "QUEUED",
             feature_word=f"CARD REJECTED · {label}" if kind == "card_rejected" else "OFFLINE · TAP QUEUED",
+            note=note,
         )
-
-    def _fit_card_text(self, text, font):
-        """Ellipsizes a long name so it can't push the card strip's right-
-        hand block (CARD · ENTRY + time) off the panel."""
-        available = self.card_body.winfo_width() - self._px(self._s["photo"] + 40 + 220)
-        family, size = font[0], font[1]
-        weight = font[2] if len(font) > 2 else "normal"
-        return _ellipsize(self._tkfont(family, size, weight), text, available)
-
-    def _schedule_card_reset(self):
-        if self._card_reset_job:
-            self.window.after_cancel(self._card_reset_job)
-        self._card_reset_job = self.window.after(RESET_DELAY_MS, self._reset_card)
 
     def _reset_card(self):
         self._card_reset_job = None
@@ -2970,12 +3024,40 @@ class GateMonitorWindow:
                     self._show_alert_banner("unknown", direction=direction)
                 if self._sound_on["unknown"]:
                     self._sounds.play("unknown")
+            # The face as the camera saw it, for the Verify wall's LIVE tile.
+            item["live_image"] = self._crop_live_face(feed, item, image_size)
             self._push_log_entry(item)
 
         self._refresh_stat_labels()
         self._refresh_exit_counts()
         if self._student is not None and direction == "entry":
             self._student.update_recognitions(recognitions, image_size)
+
+    def _crop_live_face(self, feed, item, image_size):
+        """The face, cut from the camera's latest picture with a margin (a
+        PIL image), or None. The box is in the checked frame's pixels, which
+        is the preview frame shrunk - so it's scaled back up."""
+        box = item.get("box")
+        if feed is None or not box or not image_size or image_size[0] <= 1:
+            return None
+        try:
+            import cv2  # already loaded by the camera
+
+            frame = feed.get_preview_frame()
+            if frame is None:
+                return None
+            height, width = frame.shape[:2]
+            scale = width / image_size[0]
+            left, top = box["left"] * scale, box["top"] * scale
+            right, bottom = box["right"] * scale, box["bottom"] * scale
+            margin_x, margin_y = (right - left) * 0.25, (bottom - top) * 0.3
+            x0, y0 = max(0, int(left - margin_x)), max(0, int(top - margin_y))
+            x1, y1 = min(width, int(right + margin_x)), min(height, int(bottom + margin_y))
+            if x1 - x0 < 8 or y1 - y0 < 8:
+                return None
+            return Image.fromarray(cv2.cvtColor(frame[y0:y1, x0:x1], cv2.COLOR_BGR2RGB))
+        except Exception:
+            return None
 
     def _undo_unknowns(self, log_ids):
         """The backend undid these Unknown entries - the same face was just
@@ -2986,13 +3068,9 @@ class GateMonitorWindow:
         if not removed:
             return
         featured_before = self._log_entries[0]
-        for entry in removed:
-            self._destroy_log_row(entry)
         self._log_entries = [entry for entry in self._log_entries if entry.get("log_id") not in log_ids]
-        if self._log_entries and self._log_entries[0] is not featured_before:
-            self._destroy_log_row(self._log_entries[0])  # moves up from the list into the featured card
-        self._show_featured_entry()
-        self._refresh_log_placeholder()
+        if self._view is not None:
+            self._view.on_entries_removed(removed, featured_before)
         unknowns = sum(1 for entry in removed if entry["kind"] == "unknown")
         self.stats["unknown"] = max(0, self.stats["unknown"] - unknowns)
         if unknowns and self._alert and self._alert.get("kind") in ("unknown", "repeated"):
@@ -3020,17 +3098,14 @@ class GateMonitorWindow:
         # and simply stops drawing the banner on its next tick.
 
     def _refresh_stat_labels(self):
-        self.stat_tiles["entries"].configure(text=str(self.stats["entries"]))
-        self.stat_tiles["exits"].configure(text=str(self.stats["exits"]))
-        self.stat_tiles["unknown"].configure(text=str(self.stats["unknown"]))
-        self.stat_tiles["spoof"].configure(text=str(self.stats["spoof"]))
-        self.stat_tiles["today"].configure(text=str(self.stats["entries"]))
+        if self._view is not None:
+            self._view.refresh_stats()  # the layout's own counters (Full camera draws its own each frame)
 
     # ---- live log ---------------------------------------------------------
 
     def _push_log_row(self, *, kind, name, id_text, time, word=None, feature_word=None,
                       conf=None, photo_bytes=None, initials_seed=None, extra="", log_id=None, direction="entry",
-                      details=None):
+                      details=None, note=None, live_image=None):
         """The one way anything reaches the live log. Both credentials go
         through here - a face event from the scan loop and an NFC tap render
         as the same kind of row, differing only in their kind - so the log
@@ -3059,18 +3134,20 @@ class GateMonitorWindow:
             "log_id": log_id,  # so an undone Unknown can be taken out again (_undo_unknowns)
             # STUDENT/STAFF, school or office, department, role (Settings > Live Log Details).
             "details": details or {},
+            # After a card tap: NOT ENROLLED, a distinguishing note, photos due.
+            "note": note,
+            # The face as the camera saw it (the Verify wall's LIVE tile).
+            "live_image": live_image,
+            "direction": direction,  # IN / OUT on the Entrance + Exit log
         })
-        # Only what changed is drawn: the new event takes the featured card,
-        # the one it replaces becomes the top row of the list, and the oldest
-        # row goes once the list is full. (Rebuilding all ~60 rows on every
-        # event froze the gate monitor for 1-2 s each time.)
+        # Only what changed is drawn (the layout's view decides - Split draws
+        # just the new featured card and the row it replaces). Rebuilding all
+        # ~60 rows on every event froze the gate monitor for 1-2 s each time.
         for dropped in self._log_entries[self.MAX_LOG_ROWS:]:
             self._destroy_log_row(dropped)
         self._log_entries = self._log_entries[: self.MAX_LOG_ROWS]
-        self._show_featured_entry()
-        if previous is not None and previous in self._log_entries:
-            self._add_log_row(previous)
-        self._refresh_log_placeholder()
+        if self._view is not None:
+            self._view.on_new_entry(previous)
 
     def _render_after_hours(self, after_hours):
         """The header pill: ENTRY during opening hours, a caution AFTER HOURS
@@ -3092,8 +3169,11 @@ class GateMonitorWindow:
         self._mode_badge.configure(fg_color=background)
         self._mode_icon.configure(text=_icon(icon), text_color=color, fg_color=background)
         self._mode_word.configure(text=word, text_color=color, fg_color=background)
+        self._header_sub.configure(text="Face recognition + NFC card" + (" · 2 cameras" if both else ""))
 
     def _push_log_entry(self, item):
+        # Every row from a face carries the camera's own crop of it (Verify wall).
+        push = functools.partial(self._push_log_row, live_image=item.get("live_image"))
         timestamp = datetime.now().strftime("%I:%M:%S %p")
         # A moment of occlusion seen earlier in this same encounter, even
         # though it isn't this event's own outcome - appended to the meta
@@ -3102,18 +3182,18 @@ class GateMonitorWindow:
         leaving = item.get("direction") == "exit"
         at_exit = " · AT EXIT" if leaving else ""
         if item.get("spoof_suspected"):
-            self._push_log_row(
+            push(
                 kind="spoof", name="Possible spoof", id_text="Liveness check failed", time=timestamp,
                 word="SPOOF · EXIT" if leaving else None, feature_word=f"SPOOF SUSPECTED{at_exit}",
                 photo_bytes=item.get("photo_bytes"), extra=extra, direction=item.get("direction", "entry"),
             )
         elif item.get("occlusion_suspected"):
-            self._push_log_row(
+            push(
                 kind="covered", name="Face covered", id_text="Mouth/nose covered", time=timestamp,
                 feature_word="PLEASE UNCOVER YOUR FACE", photo_bytes=item.get("photo_bytes"),
             )
         elif item.get("refused_not_enrolled"):
-            self._push_log_row(
+            push(
                 kind="not_enrolled_refused", name=item["name"], id_text=item.get("student_id") or "—",
                 time=timestamp, feature_word="NOT ENROLLED · REFUSED", conf=item.get("confidence"),
                 photo_bytes=item.get("photo_bytes"), initials_seed=item["name"], extra=extra,
@@ -3127,7 +3207,7 @@ class GateMonitorWindow:
             kind, word, feature_word, extra = self._pass_kind(
                 "exit" if leaving else "entry", item.get("not_enrolled"), item.get("pattern_flag"), extra,
             )
-            self._push_log_row(
+            push(
                 kind=kind, name=item["name"],
                 id_text=item.get("student_id") or "—", time=timestamp,
                 word=word, feature_word=feature_word,
@@ -3136,7 +3216,7 @@ class GateMonitorWindow:
                 details=item.get("details"),
             )
         else:
-            self._push_log_row(
+            push(
                 kind="unknown", name="Unknown", id_text="No ID on file", time=timestamp,
                 word="UNKNOWN · EXIT" if leaving else None, feature_word=f"UNKNOWN{at_exit}",
                 photo_bytes=item.get("photo_bytes"), extra=extra, log_id=item.get("log_id"),
@@ -3221,6 +3301,11 @@ class GateMonitorWindow:
         self._show_details(entry.get("details"), self.feat_details, self.feat_kind, self.feat_detail_text,
                            self._px(wrap), (FONT, 15), before=self.feat_id)
         self.feat_id.configure(text=entry["id_text"] + entry["extra"])
+        if entry.get("note"):
+            self.feat_note.configure(text=entry["note"], wraplength=wrap)
+            self.feat_note.pack(fill="x", anchor="w", pady=(4, 0))
+        else:
+            self.feat_note.pack_forget()
         if entry.get("conf") is not None:
             self.feat_conf.configure(text=f"{entry['conf']}%")
             self.feat_match.grid()
@@ -3237,7 +3322,9 @@ class GateMonitorWindow:
         for entry in self._log_entries:
             entry.pop("_row", None)
         self._show_featured_entry()
-        for entry in self._log_entries[1:]:
+        # The newest rows only - a layout switch shouldn't stall on all 60;
+        # older ones are a scroll away in the other layouts' history anyway.
+        for entry in self._log_entries[1:self.REBUILD_ROWS]:
             self._add_log_row(entry)
         self._refresh_log_placeholder()
 
@@ -3272,7 +3359,7 @@ class GateMonitorWindow:
         panel_width = self._log_panel.winfo_width()
         if panel_width <= 1:
             panel_width = self._px(560)  # not laid out yet - _on_log_configure re-fits it once it is
-        return panel_width - self._px(self.LIST_THUMB_SIZE + 28 + 40) - word_w
+        return panel_width - self._px(self._s["row_thumb"] + 28 + 40) - word_w
 
     def _add_log_row(self, entry):
         """Draws one entry's row in the list, in its place: newest at the top,
@@ -3304,9 +3391,9 @@ class GateMonitorWindow:
             row=0, column=0, sticky="ns"
         )
         if "_thumb_list" not in entry:  # made once - Tk also needs the image kept referenced
-            entry["_thumb_list"] = self._thumb(entry, self.LIST_THUMB_SIZE)
+            entry["_thumb_list"] = self._thumb(entry, s["row_thumb"])
         ctk.CTkLabel(row, image=entry["_thumb_list"], text="", fg_color=bg).grid(row=0, column=1, padx=(14, 14),
-                                                                                  pady=10)
+                                                                                  pady=s["row_pad"])
 
         text = ctk.CTkFrame(row, fg_color=bg, corner_radius=0)
         text.grid(row=0, column=2, sticky="ew")
@@ -3343,8 +3430,19 @@ class GateMonitorWindow:
         if self._closed:
             return
         started = time.perf_counter()
+        # The alarm started or ended: layouts that show it as a bar of their
+        # own (Verify wall, Entrance + Exit) hear about it here.
+        alert_key = self._alert_state_key()
+        if alert_key != self._alert_key and self._view is not None:
+            self._alert_key = alert_key
+            try:
+                self._view.on_alert(self._alert)
+            except Exception:
+                traceback.print_exc()
         for feed in list(self._feeds.values()):
             try:
+                if not feed.canvas.winfo_exists():
+                    continue  # this layout isn't showing that camera right now
                 feed.refresh()
             except Exception:
                 # Logged, then the next frame tries again - an escaped error
@@ -3402,6 +3500,7 @@ class GateMonitorWindow:
 
     def _handle_close(self):
         self._closed = True
+        self._close_layout_menu()
         self._close_sign_in_dialog()
         self._close_setup_dialog()
         if self._exit_window is not None:

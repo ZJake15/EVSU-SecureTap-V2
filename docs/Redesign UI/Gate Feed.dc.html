@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="width:100%;height:100%;background:#121416;border-radius:{{ f.radius }}px;overflow:hidden;display:flex;flex-direction:column;font-family:'Atkinson Hyperlegible Next',sans-serif;color:#FFFFFF">
+  <sc-if value="{{ f.showBanner }}" hint-placeholder-val="{{ false }}">
+    <div style="flex:none;height:{{ f.bannerH }}px;background:{{ f.banner.fg }};display:flex;align-items:center;gap:14px;padding:0 {{ f.pad }}px;min-width:0">
+      <i class="ph-bold ph-{{ f.banner.icon }}" style="font-size:{{ f.bannerI }}px;flex:none"></i>
+      <span style="flex:none;font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:{{ f.bannerT }}px;letter-spacing:0.01em;white-space:nowrap">{{ f.banner.title }}</span>
+      <span style="flex:1;min-width:0;font-size:{{ f.bannerS }}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ f.banner.sub }}</span>
+      <i class="ph-bold ph-speaker-high" style="flex:none;font-size:24px"></i>
+      <span style="flex:none;font-family:'IBM Plex Mono';font-weight:500;font-size:16px">{{ f.banner.time }}</span>
+    </div>
+  </sc-if>
+  <sc-if value="{{ f.showStrip }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:none;height:{{ f.stripH }}px;display:flex;align-items:center;gap:14px;padding:0 {{ f.pad }}px;min-width:0">
+      <span style="flex:none;display:flex;align-items:center;gap:8px;font-family:'Archivo';font-stretch:75%;font-weight:800;font-size:{{ f.stripF }}px;letter-spacing:0.12em"><span style="width:9px;height:9px;background:{{ f.liveDot }}"></span>{{ f.liveWord }}</span>
+      <span style="flex:none;font-family:'Archivo';font-stretch:75%;font-weight:800;font-size:{{ f.stripF }}px;letter-spacing:0.12em;color:#C89B3C">{{ f.label }}</span>
+      <sc-for list="{{ f.stats }}" as="x" hint-placeholder-count="0">
+        <span style="flex:none;display:flex;align-items:center;gap:7px;padding-left:14px;border-left:1px solid #4B5157"><span style="width:8px;height:8px;background:{{ x.dot }}"></span><span style="font-family:'Archivo';font-stretch:75%;font-weight:700;font-size:{{ f.statL }}px;letter-spacing:0.08em;color:#D9DCDF">{{ x.label }}</span><span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:{{ f.statV }}px;line-height:1">{{ x.val }}</span></span>
+      </sc-for>
+      <span style="flex:1;min-width:0;text-align:right;font-family:'IBM Plex Mono';font-size:{{ f.capF }}px;color:#8A9097;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ f.caption }}</span>
+    </div>
+  </sc-if>
+  <div style="flex:1;min-height:0;position:relative;container-type:size;background:#4B5157;overflow:hidden">
+    <sc-for list="{{ f.faces }}" as="fc" hint-placeholder-count="0">
+      <div style="position:absolute;left:{{ fc.sl }}%;top:calc({{ fc.t }}% + {{ fc.st }}cqw);width:{{ fc.sw }}%;height:100%;background:#8A9097;border-radius:40% 40% 0 0"></div>
+      <div style="position:absolute;left:{{ fc.hl }}%;top:calc({{ fc.t }}% + {{ fc.ht }}cqw);width:{{ fc.hw }}%;height:{{ fc.hh }}cqw;background:#8A9097;border-radius:50%"></div>
+      <div style="position:absolute;left:{{ fc.l }}%;top:{{ fc.t }}%;width:{{ fc.w }}%;height:{{ fc.h }}cqw;border:{{ f.bw }}px solid {{ fc.fg }};border-radius:3px;box-sizing:border-box">
+        <div style="position:absolute;left:-{{ f.bw }}px;bottom:100%;display:flex;align-items:center;gap:6px;background:{{ fc.fg }};color:#FFFFFF;padding:{{ f.tabP }};border-radius:3px 3px 0 0;white-space:nowrap;font-weight:700;font-size:{{ f.tab }}px;line-height:1.1"><i class="ph-bold ph-{{ fc.icon }}" style="font-size:{{ f.tab }}px"></i>{{ fc.label }}</div>
+      </div>
+    </sc-for>
+    <sc-if value="{{ f.noCamera }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;inset:0;background:#121416;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:20px">
+        <i class="ph ph-video-camera-slash" style="font-size:{{ f.ncI }}px;color:#C89B3C"></i>
+        <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:{{ f.ncT }}px;line-height:1.15;max-width:620px">No camera connected — card taps still work.</span>
+      </div>
+    </sc-if>
+    <sc-if value="{{ f.showTap }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;right:{{ f.tapR }}px;bottom:{{ f.tapB }}px;display:flex;align-items:center;gap:10px;background:{{ f.tap.bg }};color:#FFFFFF;padding:{{ f.tapPad }};border-radius:8px;max-width:70%">
+        <i class="ph-bold ph-{{ f.tap.icon }}" style="flex:none;font-size:{{ f.tapI }}px"></i>
+        <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:{{ f.tapF }}px;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ f.tap.text }}</span>
+      </div>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:960,&quot;height&quot;:540},&quot;f&quot;:{&quot;editor&quot;:null,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;}}"></script>
+</body>
+</html>

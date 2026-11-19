@@ -12,6 +12,35 @@
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Atkinson+Hyperlegible+Next:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>body{margin:0;background:#EEF0F2;font-family:'Atkinson Hyperlegible Next',sans-serif;color:#121416}a{color:#7B1113}a:hover{color:#4A0A0C}</style>
 </helmet>
+<section id="layouts" style="padding:68px 68px 42px;border-bottom:1px solid #D9DCDF">
+  <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:26px">
+    <span style="font-family:'IBM Plex Mono';font-weight:600;font-size:14px;background:#121416;color:#FFFFFF;padding:4px 8px;border-radius:3px">L</span>
+    <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:44px;letter-spacing:-0.01em;white-space:nowrap">Gate Monitor layouts</span>
+    <span style="font-size:16px;color:#4B5157">Six arrangements from the Layout menu · top: 1920 × 990, busy · bottom: 1366 × 698, alarm states</span>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:42px 26px;align-items:flex-start;max-width:2700px">
+    <sc-for list="{{ layWide }}" as="g" hint-placeholder-count="6">
+      <div id="{{ g.id }}" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">{{ g.id }}</span><span style="font-size:14px;color:#4B5157">{{ g.label }}</span></div>
+        <div style="width:864px;height:446px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
+          <div style="width:1920px;height:990px;transform:scale(0.45);transform-origin:0 0">
+            <dc-import name="Gate Monitor" embedded="{{ true }}" scenario="{{ g.scenario }}" layout="{{ g.layout }}" dual="{{ g.dual }}" style="width:1920px;height:990px;display:block" hint-size="1920px,990px"></dc-import>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+    <sc-for list="{{ layNarrow }}" as="g" hint-placeholder-count="6">
+      <div id="{{ g.id }}" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">{{ g.id }}</span><span style="font-size:14px;color:#4B5157">{{ g.label }}</span></div>
+        <div style="width:864px;height:442px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
+          <div style="width:1366px;height:698px;transform:scale(0.6325);transform-origin:0 0">
+            <dc-import name="Gate Monitor" embedded="{{ true }}" narrow="{{ true }}" scenario="{{ g.scenario }}" layout="{{ g.layout }}" dual="{{ g.dual }}" style="width:1366px;height:698px;display:block" hint-size="1366px,698px"></dc-import>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</section>
 <section id="launcher" style="padding:68px 68px 42px;border-bottom:1px solid #D9DCDF">
   <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:26px">
     <span style="font-family:'IBM Plex Mono';font-weight:600;font-size:14px;background:#121416;color:#FFFFFF;padding:4px 8px;border-radius:3px">D</span>
@@ -70,15 +99,15 @@
   <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:26px">
     <span style="font-family:'IBM Plex Mono';font-weight:600;font-size:14px;background:#121416;color:#FFFFFF;padding:4px 8px;border-radius:3px">B</span>
     <span style="font-family:'Archivo';font-stretch:112.5%;font-weight:800;font-size:44px;letter-spacing:-0.01em;white-space:nowrap">Gate Monitor</span>
-    <span style="font-size:16px;color:#4B5157">1920 × 1080 · shown at 50% · Windows / CustomTkinter-buildable (solid fills, no transparency)</span>
+    <span style="font-size:16px;color:#4B5157">1920 × 990 window area (1080p minus title bar + taskbar) · shown at 50% · Windows / CustomTkinter-buildable (solid fills, no transparency)</span>
   </div>
   <div style="display:flex;flex-wrap:wrap;gap:42px 26px;align-items:flex-start">
     <sc-for list="{{ gateFrames }}" as="g" hint-placeholder-count="8">
       <div id="{{ g.id }}" style="display:flex;flex-direction:column;gap:10px">
         <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">{{ g.id }}</span><span style="font-size:14px;color:#4B5157">{{ g.label }}</span></div>
-        <div style="width:960px;height:540px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
-          <div style="width:1920px;height:1080px;transform:scale(0.5);transform-origin:0 0">
-            <dc-import name="Gate Monitor" embedded="{{ true }}" scenario="{{ g.scenario }}" style="width:1920px;height:1080px;display:block" hint-size="1920px,1080px"></dc-import>
+        <div style="width:960px;height:495px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
+          <div style="width:1920px;height:990px;transform:scale(0.5);transform-origin:0 0">
+            <dc-import name="Gate Monitor" embedded="{{ true }}" scenario="{{ g.scenario }}" style="width:1920px;height:990px;display:block" hint-size="1920px,990px"></dc-import>
           </div>
         </div>
       </div>
@@ -94,9 +123,9 @@
       </div>
     </sc-for>
     <div id="B9" style="display:flex;flex-direction:column;gap:10px">
-      <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">B9</span><span style="font-size:14px;color:#4B5157">Calm state, narrow window · 1100 × 700 at 100%</span></div>
-      <div style="width:1100px;height:700px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
-        <dc-import name="Gate Monitor" embedded="{{ true }}" scenario="calm" narrow="{{ true }}" style="width:1100px;height:700px;display:block" hint-size="1100px,700px"></dc-import>
+      <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:'IBM Plex Mono';font-weight:600;font-size:12px;background:#D9DCDF;padding:3px 7px;border-radius:3px">B9</span><span style="font-size:14px;color:#4B5157">Calm state, narrow window · 1366 × 698 window area (768p laptop) at 100%</span></div>
+      <div style="width:1366px;height:698px;overflow:hidden;border:1px solid #D9DCDF;background:#FFFFFF">
+        <dc-import name="Gate Monitor" embedded="{{ true }}" scenario="calm" narrow="{{ true }}" style="width:1366px;height:698px;display:block" hint-size="1366px,698px"></dc-import>
       </div>
     </div>
   </div>
@@ -115,6 +144,22 @@ class Component extends DCLogic {
         {id:'C4',file:D,screen:'liveOfficer',label:'Live Monitoring — Security Officer (Main Gate, today only)'},
         {id:'C5',file:D,screen:'logs',label:'Logs — Admin'},
         {id:'C6',file:D,screen:'logsOfficer',label:'Logs — Security Officer + manual override'}
+      ],
+      layWide:[
+        {id:'L1',layout:'split',scenario:'busy',dual:'side',label:'Split — default, unchanged'},
+        {id:'L2',layout:'verify',scenario:'busy',dual:'side',label:'Verify wall — 4 newest as photo-vs-live cards, camera PiP'},
+        {id:'L3',layout:'full',scenario:'busy',dual:'side',label:'Full camera — overlays + ticker'},
+        {id:'L4',layout:'film',scenario:'busy',dual:'side',label:'Filmstrip — camera on top, cards below'},
+        {id:'L5',layout:'dual',scenario:'busy',dual:'side',label:'Entrance + Exit — side by side'},
+        {id:'L6',layout:'rail',scenario:'busy',dual:'side',label:'Compact rail — avatar log, one row expanded'}
+      ],
+      layNarrow:[
+        {id:'L7',layout:'split',scenario:'spoof',dual:'side',label:'Split · 1366 · spoof'},
+        {id:'L8',layout:'verify',scenario:'unknown',dual:'side',label:'Verify wall · 1366 · unknown'},
+        {id:'L9',layout:'full',scenario:'spoof',dual:'side',label:'Full camera · 1366 · spoof'},
+        {id:'L10',layout:'film',scenario:'unknown',dual:'side',label:'Filmstrip · 1366 · unknown'},
+        {id:'L11',layout:'dual',scenario:'spoof',dual:'big',label:'Entrance + Exit, Big + small · 1366 · spoof'},
+        {id:'L12',layout:'rail',scenario:'unknown',dual:'side',label:'Compact rail · 1366 · unknown'}
       ],
       launchFrames:[
         {id:'D1',scenario:'starting',label:'Backend starting'},

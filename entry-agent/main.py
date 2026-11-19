@@ -99,22 +99,25 @@ def _write_last_session_summary(config, monitor):
         pass
 
 
-# How the entrance and exit cameras are shown (ui.GateMonitorWindow.LAYOUTS) -
-# picked in the gate monitor's "Cameras & card readers" window, remembered
-# per computer in the data folder.
+# The gate monitor's screen layout (ui.GateMonitorWindow.LAYOUTS, layouts.py)
+# and, for Entrance + Exit, side by side or big + small - picked from the
+# Layout menu in its status bar, remembered per computer in the data folder.
+# A file from before the Layout menu holds an old name; the window maps it.
 LAYOUT_PATH = Path(data_file("gate_layout.json"))
 
 
 def _load_layout():
+    """(layout, dual mode) - ("split", "side") when nothing's saved."""
     try:
-        return json.loads(LAYOUT_PATH.read_text(encoding="utf-8")).get("layout") or "side_by_side"
+        saved = json.loads(LAYOUT_PATH.read_text(encoding="utf-8"))
+        return saved.get("layout") or "split", saved.get("dual") or "side"
     except (OSError, ValueError, AttributeError):
-        return "side_by_side"
+        return "split", "side"
 
 
-def _save_layout(layout):
+def _save_layout(layout, dual="side"):
     try:
-        LAYOUT_PATH.write_text(json.dumps({"layout": layout}), encoding="utf-8")
+        LAYOUT_PATH.write_text(json.dumps({"layout": layout, "dual": dual}), encoding="utf-8")
     except OSError:
         pass  # a convenience - picking it again next time still works
 
@@ -764,6 +767,7 @@ def main():
             except requests.RequestException:
                 pass  # the backend ends it anyway when the gate monitor next opens, or at the time limit
 
+    saved_layout, saved_dual = _load_layout()
     monitor = GateMonitorWindow(
         config.gate_location, config.direction,
         get_preview_frame=camera.get_preview_frame,
@@ -783,7 +787,8 @@ def main():
         on_sign_out=on_sign_out,
         on_exit_camera_change=pick_exit_camera,
         on_reader_setup=reader_setup,
-        layout=_load_layout(),
+        layout=saved_layout,
+        dual_mode=saved_dual,
         on_layout_change=_save_layout,
         on_face_scan=on_face_scan,
     )

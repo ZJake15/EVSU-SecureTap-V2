@@ -119,18 +119,32 @@ def _choices():
 
 # The exit camera (lanes.py) is remembered beside the entrance one, under its
 # own key; no key, or an empty name, means this gate has no exit camera.
+# Two cameras of the same model have the same name, so which of them it was
+# (its place among the same-named ones, in Windows' order) is kept too.
 _KEYS = {"entry": "name", "exit": "exit_name"}
+_PLACE_KEYS = {"entry": "place", "exit": "exit_place"}
 
 
 def remembered_name(direction="entry"):
     return (_choices().get(_KEYS[direction]) or "").strip() or None
 
 
-def remember(name, direction="entry"):
-    """Remembers a camera someone picked (setup window or the gate monitor's
-    "Cameras & card readers" window) - None for "no exit camera"."""
+def remembered_place(direction="entry"):
+    """Which of the cameras with the remembered name - 0 for the first (and
+    for a choice saved before places were kept)."""
+    try:
+        return max(0, int(_choices().get(_PLACE_KEYS[direction]) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def remember(name, direction="entry", place=0):
+    """Remembers a camera someone picked (the gate monitor's "Cameras & card
+    readers" window) - None for "no exit camera". `place`: which of the
+    cameras with this name (place_of)."""
     data = _choices()
     data[_KEYS[direction]] = name or ""
+    data[_PLACE_KEYS[direction]] = place if name else 0
     try:
         with open(data_file(CHOICE_FILE), "w", encoding="utf-8") as fh:
             json.dump(data, fh)
@@ -138,12 +152,30 @@ def remember(name, direction="entry"):
         pass  # a convenience - picking again next time still works
 
 
-def find_by_name(described, name):
-    """The index of the listed camera with this (remembered) name, or None."""
+def place_of(described, index):
+    """Which of the listed cameras with the same name as the one at `index`
+    it is - 0 for the first (and for a camera whose name is its own)."""
+    name = next((camera_name for i, camera_name, _kind in described if i == index), None)
+    key = _key(name)
+    return sum(1 for i, camera_name, _kind in described if _key(camera_name) == key and i < index) if key else 0
+
+
+def find_by_name(described, name, place=0, avoid=None):
+    """The index of the listed camera with this (remembered) name - the
+    place-th of them when there are several of the same model - or None.
+    `avoid`: a camera already in use (the entrance one, when looking for the
+    exit's): with two of the same model it takes the other one instead,
+    which also restores an exit camera saved before places were kept."""
     key = _key(name)
     if not key:
         return None
-    return next((index for index, camera_name, _kind in described if _key(camera_name) == key), None)
+    matches = [index for index, camera_name, _kind in described if _key(camera_name) == key]
+    if not matches:
+        return None
+    found = matches[place] if place < len(matches) else matches[0]
+    if found == avoid:
+        found = next((index for index in matches if index != avoid), found)
+    return found
 
 
 def same_device(before, index, after):
@@ -161,15 +193,16 @@ def same_device(before, index, after):
     return matches[place] if place < len(matches) else None
 
 
-def choose(described, remembered=None, fallback_index=0):
+def choose(described, remembered=None, fallback_index=0, place=0):
     """The index of the camera to use from classify()'s list, or
-    fallback_index when there are none."""
+    fallback_index when there are none. `place`: which of several cameras
+    with the remembered name (two of the same model)."""
     if not described:
         return fallback_index
-    remembered = _key(remembered)
+    target = find_by_name(described, remembered, place)
 
     def rank(item):
-        index, name, kind = item
-        return PREFERENCE.index(kind), 0 if remembered and _key(name) == remembered else 1, index
+        index, _name, kind = item
+        return PREFERENCE.index(kind), 0 if index == target else 1, index
 
     return min(described, key=rank)[0]

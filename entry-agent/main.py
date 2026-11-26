@@ -626,7 +626,8 @@ def main():
     except Exception as exc:
         print(f"WARNING: could not enumerate cameras ({exc})", file=sys.stderr)
         cameras = []
-    camera_index = camera_select.choose(cameras, camera_select.remembered_name(), fallback_index=config.camera_index)
+    camera_index = camera_select.choose(cameras, camera_select.remembered_name(), fallback_index=config.camera_index,
+                                        place=camera_select.remembered_place())
     camera_names = {index: name for index, name, _kind in cameras}
     camera_options = [(index, f"{name} ({camera_select.LABELS[kind]})") for index, name, kind in cameras]
     print(f"camera: using {camera_names.get(camera_index, f'#{camera_index}')}", file=sys.stderr)
@@ -645,7 +646,7 @@ def main():
         camera.set_index(index)
         live["camera_name"] = camera_names.get(index, f"#{index}")
         if index in camera_names:
-            camera_select.remember(camera_names[index])
+            camera_select.remember(camera_names[index], place=camera_select.place_of(cameras, index))
 
     # The exit camera (lanes.py): only once one has been chosen in the gate
     # monitor's "Cameras & card readers" window - remembered by name, like
@@ -734,7 +735,7 @@ def main():
             return
         start_exit_camera(index)
         if index in camera_names:
-            camera_select.remember(camera_names[index], lanes.EXIT)
+            camera_select.remember(camera_names[index], lanes.EXIT, place=camera_select.place_of(cameras, index))
 
     # Which reader a card was tapped on (card_readers.py): the one set as the
     # exit's makes it an exit tap; any other is the entrance's.
@@ -855,7 +856,10 @@ def main():
     monitor.set_reader_status(readers.status())
     # The exit camera chosen last time, if it's plugged in (and isn't the
     # entrance camera).
-    exit_index = camera_select.find_by_name(cameras, camera_select.remembered_name(lanes.EXIT))
+    # Two of the same webcam model have the same name: the remembered place
+    # tells them apart, and the entrance camera is never taken for the exit's.
+    exit_index = camera_select.find_by_name(cameras, camera_select.remembered_name(lanes.EXIT),
+                                            place=camera_select.remembered_place(lanes.EXIT), avoid=camera_index)
     if exit_index is not None and exit_index != camera_index:
         start_exit_camera(exit_index)
 

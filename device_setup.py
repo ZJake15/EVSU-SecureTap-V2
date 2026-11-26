@@ -356,7 +356,8 @@ def list_cameras(python):
         "import json, camera_select; from camera import list_available_cameras; "
         "d = camera_select.classify(list_available_cameras()); "
         "print(json.dumps({'cameras': [[i, n, camera_select.LABELS[k]] for i, n, k in d], "
-        "'chosen': camera_select.choose(d, camera_select.remembered_name(), None)}))"
+        "'chosen': camera_select.choose(d, camera_select.remembered_name(), None, "
+        "camera_select.remembered_place())}))"
     )
     try:
         result = subprocess.run([python, "-c", code], cwd=ENTRY_AGENT_DIR, capture_output=True, text=True,

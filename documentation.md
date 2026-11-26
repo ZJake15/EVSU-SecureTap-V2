@@ -441,7 +441,13 @@ A gate can have two cameras on one computer and one gate monitor window: the
 **entrance camera** (always) and an **exit camera** beside it. The exit camera
 is chosen in the gate monitor's **Cameras & card readers** window (status bar);
 until one is, the gate records entries only, exactly as before. The choice is
-remembered by camera name (`camera_choice.json`: `name` and `exit_name`).
+remembered by camera name (`camera_choice.json`: `name` and `exit_name`) - and,
+for two cameras of the same model (the same name), by which of them it was
+(`place` / `exit_place`, their order in Windows' list); restoring the exit
+camera never takes the entrance one, so even a choice saved before places
+were kept brings the other twin back. Opening **Cameras & card readers**
+lists the cameras again (names only, on a thread of its own), so one plugged
+in after the gate monitor started can be chosen without a restart.
 
 - **Layout** - the **Layout** button in the status bar opens a menu with a
   picture of each layout (`entry-agent/layouts.py`, from

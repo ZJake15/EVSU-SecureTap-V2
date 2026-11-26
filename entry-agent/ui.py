@@ -1333,7 +1333,12 @@ class GateMonitorWindow:
                  camera_options=None, on_camera_change=None, initial_camera_index=None,
                  video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0,
                  get_camera_size=None, get_camera_fps=None, on_exit_camera_change=None, on_reader_setup=None,
-                 layout="split", on_layout_change=None, on_face_scan=None, dual_mode="side"):
+                 layout="split", on_layout_change=None, on_face_scan=None, dual_mode="side",
+                 on_refresh_cameras=None):
+        # on_refresh_cameras() -> (options, entrance index, exit index) or
+        # None: main.py lists the cameras again when "Cameras & card readers"
+        # opens, so one plugged in since the start can be picked.
+        self._on_refresh_cameras = on_refresh_cameras
         # The screen layout (LAYOUTS, layouts.py) - picked from the Layout
         # menu in the status bar, remembered by main.py through
         # on_layout_change(layout, dual_mode). A value saved before the
@@ -2079,6 +2084,7 @@ class GateMonitorWindow:
         if self._setup_dialog is not None:
             self._setup_dialog.lift()
             return
+        self._refresh_camera_list()
         dialog = ctk.CTkToplevel(self.window)
         dialog.title("Cameras & card readers")
         dialog.configure(fg_color=SURFACE)
@@ -2153,6 +2159,52 @@ class GateMonitorWindow:
         y = self.window.winfo_rooty() + (self.window.winfo_height() - dialog.winfo_reqheight()) // 3
         dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
         dialog.after(150, dialog.lift)
+
+    def _refresh_camera_list(self):
+        """Asks main.py for the cameras as they are now (refresh_cameras) -
+        listed off this thread, so the window opens at once; the lists fill
+        in when the answer comes (_camera_list_ready)."""
+        if not self._on_refresh_cameras:
+            return
+        try:
+            self._on_refresh_cameras(self._camera_list_ready)
+        except Exception:
+            traceback.print_exc()
+
+    def _camera_list_ready(self, fresh):
+        """The fresh camera list (Tk thread): a camera plugged in since the
+        gate monitor opened shows up, and the ones in use keep their right
+        numbers. None: listing failed - the last list stays."""
+        if not fresh or self._closed:
+            return
+        options, entry_index, exit_index = fresh
+        self._camera_options = options
+        self._feeds["entry"].camera_index = entry_index
+        self._exit_camera_index = exit_index
+        if "exit" in self._feeds:
+            self._feeds["exit"].camera_index = exit_index
+        if self._setup_dialog is not None:
+            self._fill_camera_menus()
+
+    def _fill_camera_menus(self):
+        """The two camera lists in the open Cameras & card readers window,
+        from _camera_options - each showing the camera in use."""
+        values = self._camera_values()
+        names = list(values) or ["No camera found"]
+
+        def current(index):
+            return next((name for name, value in values.items() if value == index), None)
+
+        widgets = self._setup_widgets
+        state = "normal" if values else "disabled"
+        widgets["entry"].configure(values=names, state=state)
+        widgets["entry"].set(current(self._feeds["entry"].camera_index) or names[0])
+        widgets["exit"].configure(values=[self.NO_EXIT_CAMERA, *values], state=state)
+        widgets["exit"].set(current(self._exit_camera_index) or self.NO_EXIT_CAMERA)
+
+    def run_on_tk(self, fn):
+        """Runs fn on the Tk thread, from any thread (through the queue)."""
+        self._queue.put(("call", fn))
 
     def _close_setup_dialog(self):
         if self._readers.get("waiting") and self._on_reader_setup:
@@ -2574,6 +2626,8 @@ class GateMonitorWindow:
             self._render_face_step(*payload)
         elif kind == "face_sign_in":
             self._render_face_sign_in(payload)
+        elif kind == "call":
+            payload()
 
     def _set_status(self, icon_label, text_label, ok, ok_text, bad_text, bad_color, bad_icon):
         color = VERIFIED if ok else bad_color

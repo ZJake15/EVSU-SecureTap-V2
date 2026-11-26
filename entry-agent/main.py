@@ -680,6 +680,51 @@ def main():
             exit_lane["camera"].stop()
             exit_lane.clear()
 
+    def refresh_cameras(done):
+        """The "Cameras & card readers" window is opening: the camera list
+        again, so a camera plugged in since the gate monitor started can be
+        picked without restarting it. Names only (Windows' device list,
+        max_probe=0): no camera is ever opened, so the ones in use keep
+        streaming. Asking Windows can take seconds the first time, so it's
+        done on a thread of its own; done(result) then runs on the Tk thread
+        (apply_camera_list)."""
+        def work():
+            try:
+                import ctypes
+
+                ctypes.windll.ole32.CoInitializeEx(None, 0x2)  # this thread asks through COM too (pygrabber)
+            except Exception:
+                pass
+            try:
+                fresh = camera_select.classify(list_available_cameras(max_probe=0))
+            except Exception:
+                traceback.print_exc()
+                fresh = []
+            monitor.run_on_tk(lambda: done(apply_camera_list(fresh)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def apply_camera_list(fresh):
+        """A fresh camera list, on the Tk thread. A camera plugged in can
+        renumber the others, so the ones in use are found again by name and
+        their number corrected - the number is only used when a camera
+        reconnects. Returns (options, entrance index, exit index), or None to
+        keep the list as it was."""
+        if not fresh:
+            return None  # couldn't list them - better the old list than none
+        moved = camera_select.same_device(cameras, camera.index, fresh)
+        if moved is not None:
+            camera.index = moved
+        if exit_lane:
+            moved = camera_select.same_device(cameras, exit_lane["camera"].index, fresh)
+            if moved is not None:
+                exit_lane["camera"].index = exit_lane["index"] = moved
+        cameras[:] = fresh
+        camera_names.clear()
+        camera_names.update({index: name for index, name, _kind in fresh})
+        options = [(index, f"{name} ({camera_select.LABELS[kind]})") for index, name, kind in fresh]
+        return options, camera.index, (exit_lane["camera"].index if exit_lane else None)
+
     def pick_exit_camera(index):
         """The guard chose the exit camera (or None: no exit camera) - Tk thread."""
         stop_exit_camera()
@@ -800,6 +845,7 @@ def main():
         on_sign_in=on_sign_in,
         on_sign_out=on_sign_out,
         on_exit_camera_change=pick_exit_camera,
+        on_refresh_cameras=refresh_cameras,
         on_reader_setup=reader_setup,
         layout=saved_layout,
         dual_mode=saved_dual,

@@ -146,6 +146,21 @@ def find_by_name(described, name):
     return next((index for index, camera_name, _kind in described if _key(camera_name) == key), None)
 
 
+def same_device(before, index, after):
+    """Where the camera listed at `index` in `before` (a classify() list) is
+    in `after` - a fresh list taken later. Plugging a camera in can renumber
+    the others, so it's found again by name - and, among cameras with the
+    same name (two of the same webcam model), by its place in that order.
+    None when it's no longer listed."""
+    entry = next(((i, name) for i, name, _kind in before if i == index), None)
+    if entry is None:
+        return None
+    key = _key(entry[1])
+    place = sum(1 for i, name, _kind in before if _key(name) == key and i < index)
+    matches = [i for i, name, _kind in after if _key(name) == key]
+    return matches[place] if place < len(matches) else None
+
+
 def choose(described, remembered=None, fallback_index=0):
     """The index of the camera to use from classify()'s list, or
     fallback_index when there are none."""

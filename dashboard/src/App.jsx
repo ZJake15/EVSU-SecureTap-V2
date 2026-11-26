@@ -14,6 +14,8 @@ import AuditLog from "./pages/AuditLog";
 import About from "./pages/About";
 import Help from "./pages/Help";
 import GateCameras from "./pages/GateCameras";
+import SystemStatus from "./pages/SystemStatus";
+import DailySummary from "./pages/DailySummary";
 
 export default function App() {
   const { user } = useAuth();
@@ -56,6 +58,22 @@ export default function App() {
           element={
             <ProtectedRoute roles={["admin", "saso"]}>
               <Reports />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/daily"
+          element={
+            <ProtectedRoute roles={["admin", "saso"]}>
+              <DailySummary />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="status"
+          element={
+            <ProtectedRoute roles={["admin", "saso"]}>
+              <SystemStatus />
             </ProtectedRoute>
           }
         />

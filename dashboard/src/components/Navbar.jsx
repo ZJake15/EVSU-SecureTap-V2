@@ -14,6 +14,7 @@ const ALL_LINKS = [
   { to: "/logs", label: "Logs", icon: "list-bullets", roles: ["admin", "saso", "security_officer"] },
   { to: "/users", label: "User Management", icon: "users", roles: ["admin", "saso"] },
   { to: "/reports", label: "Reports", icon: "chart-bar", roles: ["admin", "saso"] },
+  { to: "/status", label: "System Status", icon: "heartbeat", roles: ["admin", "saso"] },
   { to: "/audit-log", label: "Audit Log", icon: "clipboard-text", roles: ["admin", "saso"] },
   { to: "/accounts", label: "Accounts", icon: "user-gear", roles: ["admin"] },
   // SASO sees only Settings > Semester Enrollment's enrolled list.

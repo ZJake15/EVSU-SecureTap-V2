@@ -565,6 +565,104 @@ class ManualOverrideView(APIView):
         return Response(EntryLogSerializer(log, context={"request": request}).data, status=http_status.HTTP_201_CREATED)
 
 
+def _manual_entry_refusal(gate_location):
+    """Why the gate monitor's "Find person" can't let anyone in right now, or
+    None. A manual entry is always someone's decision: it's recorded under
+    the guard signed in at this gate, so without one it isn't allowed."""
+    if not gate_shifts.enabled():
+        return ("Letting someone in by hand needs a guard signed in at this gate - switch on \"Guards sign in "
+                "at the gate monitor\" on the Settings page.")
+    shift = gate_shifts.active_shift(lanes.gate_of(gate_location))
+    if shift is None or shift.user is None:
+        return "Sign in for duty first - a manual entry is recorded under the guard on duty."
+    return None
+
+
+class GatePersonSearchView(APIView):
+    """The gate monitor's "Find person": students and staff by ID number
+    (exact, or starting with what was typed) or by name (any part of it) -
+    at most SEARCH_LIMIT, active people first. Gate monitor only (service
+    token); nothing is written."""
+
+    permission_classes = [HasServiceToken]
+    SEARCH_LIMIT = 8
+
+    def get(self, request):
+        from django.db.models import Q
+
+        query = (request.query_params.get("q") or "").strip()[:60]
+        if len(query) < 2:
+            return Response({"results": [], "detail": "Type at least 2 letters or digits."})
+        people = list(
+            Person.objects.select_related("org_unit", "department")
+            .filter(Q(student_or_employee_id__iexact=query) | Q(student_or_employee_id__istartswith=query)
+                    | Q(full_name__icontains=query))
+            .order_by("-is_active", "full_name")[: self.SEARCH_LIMIT]
+        )
+        # An exact ID match goes first, whatever its name.
+        people.sort(key=lambda person: person.student_or_employee_id.lower() != query.lower())
+        results = [
+            {**person_payload(person, request), "is_active": person.is_active} for person in people
+        ]
+        return Response({"results": results})
+
+
+class GateManualEntryView(APIView):
+    """The gate monitor's "Find person" letting someone in (or out) by hand -
+    forgot their ID, face not recognized, card not working. The same record
+    as the dashboard's manual override (ManualOverrideView): its own row,
+    never merged with a recent automatic one, with the reason - but the
+    "who decided" is the guard signed in at this gate (logs/gate_shifts.py),
+    so it needs gate sign-in on and someone on duty. Written to the Audit Log
+    under that guard."""
+
+    permission_classes = [HasServiceToken]
+
+    def post(self, request):
+        from .serializers import GateManualEntryRequestSerializer
+
+        serializer = GateManualEntryRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        gate = lanes.gate_of(data["gate_location"])
+        refusal = _manual_entry_refusal(gate)
+        if refusal:
+            return Response({"detail": refusal}, status=http_status.HTTP_403_FORBIDDEN)
+        guard = gate_shifts.active_shift(gate).user
+
+        person = Person.objects.filter(student_or_employee_id=data["student_or_employee_id"]).first()
+        if person is None:
+            return Response({"detail": "No student/staff record matches that ID."},
+                            status=http_status.HTTP_404_NOT_FOUND)
+        if not person.is_active:
+            return Response({"detail": "This ID has been deactivated."}, status=http_status.HTTP_400_BAD_REQUEST)
+
+        reason = data["reason"].strip()
+        log = EntryLog.objects.create(
+            person=person,
+            direction=data["direction"],
+            verification_method=EntryLog.VerificationMethod.MANUAL_OVERRIDE,
+            status=EntryLog.Status.SUCCESS,
+            gate_location=gate,
+            failure_reason=reason,  # what was checked - shown in Logs, as for the dashboard's override
+            performed_by=guard,
+        )
+        log_action(
+            guard, "manual_override",
+            target_description=f"{person.full_name} ({person.student_or_employee_id}) - {data['direction']}",
+            detail={"reason": reason, "gate_location": gate, "entry_log_id": log.id, "at_gate_monitor": True},
+        )
+        payload = {
+            "success": True, "reason": None, "reason_code": None, "log_id": log.id,
+            "pattern_flag": log.pattern_flag, "manual_reason": reason,
+            "performed_by": guard.get_full_name() or guard.username,
+            **person_payload(person, request),
+        }
+        if data["direction"] == EntryLog.Direction.EXIT:
+            payload["not_enrolled"] = False  # never on the way out
+        return Response(payload, status=http_status.HTTP_201_CREATED)
+
+
 class VerifyView(APIView):
     """Called when a card is tapped (the entry-agent's shared-secret-
     authenticated kiosk lookup - see ManualOverrideView above for the
@@ -1774,6 +1872,9 @@ class IdentifyView(APIView):
             if sightings >= system_settings.get("repeated_unknown_count"):
                 payload["repeated_unknown"] = True
                 payload["repeated_unknown_count"] = sightings
+                # Kept on the row too - the dashboard's office alarm (AlarmsView).
+                if payload.get("log_id"):
+                    EntryLog.objects.filter(id=payload["log_id"]).update(repeated_unknown=True)
         return payload
 
     @staticmethod

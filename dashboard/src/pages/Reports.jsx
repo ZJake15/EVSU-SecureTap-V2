@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -373,6 +374,11 @@ export default function Reports() {
 
   const header = (
     <PageHeader eyebrow={days === 1 ? `Today · ${todayText}` : rangeLabel} title="Reports">
+      {/* One day on one sheet, for the security office's file (DailySummary.jsx). */}
+      <Link to="/reports/daily" className="btn-secondary">
+        <Icon name="printer" size={16} />
+        Print daily summary
+      </Link>
       <Segmented
         value={days}
         onChange={setDays}

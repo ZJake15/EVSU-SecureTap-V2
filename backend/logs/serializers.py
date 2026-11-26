@@ -48,6 +48,7 @@ class EntryLogSerializer(serializers.ModelSerializer):
             "not_enrolled",
             "person_affiliation",
             "pattern_flag",
+            "repeated_unknown",
             "entered_at",
             "person_details",
         ]
@@ -151,6 +152,17 @@ class ManualOverrideRequestSerializer(serializers.Serializer):
     student_or_employee_id = serializers.CharField(max_length=50)
     direction = serializers.ChoiceField(choices=EntryLog.Direction.choices, default=EntryLog.Direction.ENTRY)
     reason = serializers.CharField(max_length=500)
+
+
+class GateManualEntryRequestSerializer(serializers.Serializer):
+    """The gate monitor's "Find person": the guard on duty letting someone in
+    (or out) by hand - see logs/views.py's GateManualEntryView. The reason is
+    picked from a list on the gate monitor ("Forgot ID card", ...), or typed."""
+
+    gate_location = serializers.CharField(max_length=100)
+    student_or_employee_id = serializers.CharField(max_length=50)
+    direction = serializers.ChoiceField(choices=EntryLog.Direction.choices, default=EntryLog.Direction.ENTRY)
+    reason = serializers.CharField(max_length=255)
 
 
 class VerifyRequestSerializer(serializers.Serializer):

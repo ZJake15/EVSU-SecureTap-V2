@@ -29,6 +29,9 @@ STATUS_CHECK_INTERVAL_SECONDS = 5
 # How often the gate tells the backend what its camera runs at, when nothing
 # changed (Settings > Camera shows it - see camera_report).
 CAMERA_REPORT_SECONDS = 60
+# While a gate has no exit camera: how often to look for a newly plugged-in
+# one to suggest (main's watch_for_exit_camera).
+EXIT_SUGGEST_SECONDS = 30
 
 # Read by the root launcher (launcher.py's _read_last_session_summary) to show
 # a "last session" line before the entry-agent is even started again - in
@@ -120,6 +123,27 @@ def _save_layout(layout, dual="side"):
         LAYOUT_PATH.write_text(json.dumps({"layout": layout, "dual": dual}), encoding="utf-8")
     except OSError:
         pass  # a convenience - picking it again next time still works
+
+
+# How loud the alert sounds are (the speaker button at the top of the gate
+# monitor - alert_sounds.py), remembered per computer in the data folder. A
+# mute isn't remembered: it ends by itself, and a restart ends it too.
+SOUND_PATH = Path(data_file("sound_settings.json"))
+
+
+def _load_sound_volume():
+    try:
+        volume = float(json.loads(SOUND_PATH.read_text(encoding="utf-8")).get("volume", 1.0))
+        return min(1.0, max(0.0, volume))
+    except (OSError, ValueError, AttributeError, TypeError):
+        return 1.0
+
+
+def _save_sound_volume(volume):
+    try:
+        SOUND_PATH.write_text(json.dumps({"volume": round(float(volume), 2)}), encoding="utf-8")
+    except OSError:
+        pass  # a convenience - setting it again next time still works
 
 
 def _extract_image_size(response, fallback):
@@ -350,8 +374,11 @@ def _report_camera(lane_name, api_client, camera, live, last):
     """Sends camera_report when it changes (or once its frame rate is first
     measured), and otherwise once every CAMERA_REPORT_SECONDS - on its own
     thread, so it never delays a face check. Under the camera's lane name
-    (lanes.py), so Settings > Camera lists the exit camera on its own row."""
-    report = camera_report(camera, live)
+    (lanes.py), so Settings > Camera lists the exit camera on its own row.
+    The entrance camera's report also carries the gate monitor's own state
+    for the dashboard's System Status page (live["health"]: its version,
+    card taps waiting in the offline queue, and the last card tap)."""
+    report = {**camera_report(camera, live), **live.get("health", {})}
     if report["resolution"] is None:
         return  # no picture yet
     steady = {**report, "fps": report["fps"] is not None}
@@ -587,6 +614,18 @@ def handle_sign_out(config, api_client, ui, shift_id):
         traceback.print_exc()
 
 
+def _refusal_text(response):
+    """The backend's own reason for refusing (e.g. "Sign in for duty first")
+    - only a refusal of the service token itself reads as a token problem."""
+    try:
+        detail = response.json().get("detail")
+    except (AttributeError, ValueError):
+        detail = None
+    if detail and not str(detail).startswith(("You do not have permission", "Authentication credentials")):
+        return str(detail)
+    return _describe_http_error(response)
+
+
 def _describe_http_error(response):
     if response is None:
         return "Server error."
@@ -639,6 +678,10 @@ def main():
     # What this gate runs with right now (speed mode, then Settings > Camera).
     live = live_settings(config)
     live["camera_name"] = camera_names.get(camera_index, f"#{camera_index}")
+    # For the dashboard's System Status page, sent with the entrance camera's
+    # report (_report_camera): the queue count is kept current by
+    # status_worker, the last tap by tap_from_reader.
+    live["health"] = {"app_version": config.app_version, "queue": 0}
 
     def pick_camera(index):
         """The guard chose the entrance camera in the gate monitor - use it
@@ -737,6 +780,74 @@ def main():
         if index in camera_names:
             camera_select.remember(camera_names[index], lanes.EXIT, place=camera_select.place_of(cameras, index))
 
+    # "Use it as the exit camera?" (gate_tools.ExitCameraQuestion): while this
+    # gate has no exit camera, the camera list is looked at every
+    # EXIT_SUGGEST_SECONDS; a plugged-in camera besides the entrance one gets
+    # the question - once per camera per session ("Not now"), or never again
+    # ("Don't ask again", kept in camera_choice.json).
+    suggestion = {"asking": False, "declined": set(), "names": tuple(name for _i, name, _k in cameras)}
+
+    def suggest_exit_camera(fresh=None):
+        """Tk thread. fresh: a new classify() list, or None to use the one
+        the gate monitor started with."""
+        if monitor.is_closed() or exit_lane or suggestion["asking"] or camera_select.exit_suggestion_off():
+            return
+        if fresh:
+            listed = apply_camera_list(fresh)
+            if listed:
+                monitor.set_camera_list(listed)
+        index = camera_select.exit_candidate(cameras, camera.index)
+        if index is None:
+            return
+        key = (camera_names.get(index), camera_select.place_of(cameras, index))
+        if key in suggestion["declined"]:
+            return
+        suggestion["asking"] = True
+
+        def answer(choice):
+            suggestion["asking"] = False
+            if choice == "use" and not exit_lane:
+                now = next((i for i, name, _k in cameras if (name, camera_select.place_of(cameras, i)) == key), None)
+                if now is not None and now != camera.index:
+                    pick_exit_camera(now)
+            elif choice == "later":
+                suggestion["declined"].add(key)
+            elif choice == "never":
+                camera_select.stop_suggesting_exit()
+
+        monitor.ask_exit_camera(camera_names.get(index, f"Camera {index}"), answer)
+
+    def watch_for_exit_camera():
+        if monitor.is_closed():
+            return
+        monitor.window.after(EXIT_SUGGEST_SECONDS * 1000, watch_for_exit_camera)
+        if exit_lane or suggestion["asking"] or camera_select.exit_suggestion_off():
+            return
+
+        def work():
+            try:
+                import ctypes
+
+                ctypes.windll.ole32.CoInitializeEx(None, 0x2)  # pygrabber asks Windows through COM
+            except Exception:
+                pass
+            try:
+                names = list_available_cameras(max_probe=0)
+            except Exception:
+                return
+            key = tuple(name for _i, name in names)
+            if not names or key == suggestion["names"]:
+                return  # nothing plugged in or out - no need to ask Windows for details again
+            suggestion["names"] = key
+            try:
+                fresh = camera_select.classify(names)
+            except Exception:
+                traceback.print_exc()
+                return
+            monitor.run_on_tk(lambda: suggest_exit_camera(fresh))
+
+        threading.Thread(target=work, daemon=True).start()
+
     # Which reader a card was tapped on (card_readers.py): the one set as the
     # exit's makes it an exit tap; any other is the entrance's.
     readers = CardReaders()
@@ -774,6 +885,7 @@ def main():
     stop_event = threading.Event()
 
     def tap_from_reader(nfc_id):
+        live["health"]["last_tap"] = datetime.now().astimezone().isoformat(timespec="seconds")
         # A moment for the raw input listener to note the last keys of this
         # tap - it runs on its own thread, beside the window's.
         time.sleep(0.05)
@@ -810,6 +922,51 @@ def main():
             face_scan["stop"] = stop
             threading.Thread(target=face_sign_in_loop, args=(config, face_api, camera, monitor, stop, pending),
                              daemon=True).start()
+
+    # Find person (gate_tools.FindPersonWindow): its own connection, so a
+    # search never waits behind the scan loop's frames. Both answers go back
+    # to the window on the Tk thread.
+    find_api = ApiClient(config.api_base_url, config.service_token)
+    find_photos = {}
+
+    def find_person(query, done):
+        def work():
+            try:
+                results = find_api.find_person(config.gate_location, query).get("results") or []
+                for person in results:
+                    person["photo_bytes"] = _fetch_photo_cached(find_api, find_photos, person.get("person_photo"))
+                answer = {"results": results}
+            except requests.exceptions.HTTPError as exc:
+                answer = {"error": _refusal_text(exc.response)}
+            except requests.RequestException:
+                answer = {"error": "Can't reach the backend - try again in a moment."}
+            monitor.run_on_tk(lambda: done(answer))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def let_in(person, direction, reason, done):
+        """Let in (or out) by hand - recorded under the guard on duty; the
+        live log shows it like an accepted card, marked BY HAND."""
+        def work():
+            try:
+                result = find_api.manual_entry(config.gate_location, person.get("student_or_employee_id"),
+                                               direction, reason)
+            except requests.exceptions.HTTPError as exc:
+                message = _refusal_text(exc.response)
+                monitor.run_on_tk(lambda: done({"error": message}))
+                return
+            except requests.RequestException:
+                monitor.run_on_tk(lambda: done({"error": "Can't reach the backend - nothing was saved. Try again."}))
+                return
+            profile = _build_profile(find_api, result, card_id=None, direction=direction)
+            if not profile["photo_bytes"]:
+                profile["photo_bytes"] = person.get("photo_bytes")
+            profile["manual_reason"] = result.get("manual_reason") or reason
+            profile["performed_by"] = result.get("performed_by")
+            monitor.show_card_match(profile)
+            monitor.run_on_tk(lambda: done({"ok": True}))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def on_close():
         # The monitor owns the root window, so closing it ends the process -
@@ -852,6 +1009,10 @@ def main():
         dual_mode=saved_dual,
         on_layout_change=_save_layout,
         on_face_scan=on_face_scan,
+        sound_volume=_load_sound_volume(),
+        on_sound_change=_save_sound_volume,
+        on_find_person=find_person,
+        on_let_in=let_in,
     )
     monitor.set_reader_status(readers.status())
     # The exit camera chosen last time, if it's plugged in (and isn't the
@@ -862,6 +1023,10 @@ def main():
                                             place=camera_select.remembered_place(lanes.EXIT), avoid=camera_index)
     if exit_index is not None and exit_index != camera_index:
         start_exit_camera(exit_index)
+    # Two cameras already plugged in but no exit camera yet: asked a few
+    # seconds after opening; one plugged in later: within EXIT_SUGGEST_SECONDS.
+    monitor.window.after(8000, suggest_exit_camera)
+    monitor.window.after(EXIT_SUGGEST_SECONDS * 1000, watch_for_exit_camera)
 
     try:
         summary = api_client.gate_summary(config.gate_location)
@@ -927,7 +1092,9 @@ def main():
             except requests.RequestException:
                 server_ok = False
             monitor.set_backend_ok(server_ok)
-            monitor.set_queue_count(offline_queue.pending_count())
+            waiting = offline_queue.pending_count()
+            monitor.set_queue_count(waiting)
+            live["health"]["queue"] = waiting
         except Exception:
             traceback.print_exc()
         finally:

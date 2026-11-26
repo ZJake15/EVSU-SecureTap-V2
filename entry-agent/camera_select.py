@@ -152,6 +152,37 @@ def remember(name, direction="entry", place=0):
         pass  # a convenience - picking again next time still works
 
 
+# "Use it as the exit camera?" (main.py asks when a second plugged-in camera
+# shows up at a gate without an exit camera) - "Don't ask again" is kept here.
+_NO_SUGGESTION_KEY = "exit_suggest_off"
+
+
+def exit_suggestion_off():
+    return bool(_choices().get(_NO_SUGGESTION_KEY))
+
+
+def stop_suggesting_exit():
+    data = _choices()
+    data[_NO_SUGGESTION_KEY] = True
+    try:
+        with open(data_file(CHOICE_FILE), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except OSError:
+        pass
+
+
+def exit_candidate(described, entrance_index):
+    """The camera to suggest as the exit camera: a plugged-in one (or one
+    that couldn't be told apart) other than the entrance camera - never the
+    laptop's own camera (it faces the guard), a software or an infrared
+    camera. None when there's no such camera."""
+    for kind in (EXTERNAL, UNKNOWN):
+        for index, _name, camera_kind in described:
+            if camera_kind == kind and index != entrance_index:
+                return index
+    return None
+
+
 def place_of(described, index):
     """Which of the listed cameras with the same name as the one at `index`
     it is - 0 for the first (and for a camera whose name is its own)."""

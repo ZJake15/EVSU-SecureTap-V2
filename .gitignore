@@ -41,6 +41,8 @@ entry-agent/camera_choice.json
 # This gate's exit card reader and camera layout (card_readers.py, main.py) - per computer
 entry-agent/card_readers.json
 entry-agent/gate_layout.json
+# The alert sounds' volume on this computer (main.py) - per computer
+entry-agent/sound_settings.json
 
 # Launcher local state (remembered gate/direction/guard name - per-machine,
 # not something to check in)

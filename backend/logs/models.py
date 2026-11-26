@@ -150,6 +150,10 @@ class EntryLog(models.Model):
     # An odd entry/exit pattern (see PatternFlag) - decided when the row is
     # written, by save() itself.
     pattern_flag = models.CharField(max_length=12, choices=PatternFlag.choices, default="", blank=True)
+    # An Unknown row that was the same unrecognized face seen again at this
+    # gate (Settings > Alerts: "Alert on repeated unknown faces") - the gate
+    # monitor warns the guard, and the dashboard's office alarm pops up.
+    repeated_unknown = models.BooleanField(default=False)
     # Written while the gate monitor was in the capstone test mode (see
     # logs/test_mode.py) - left out of the dashboard, deleted by "delete all
     # test data". Set by save() itself.

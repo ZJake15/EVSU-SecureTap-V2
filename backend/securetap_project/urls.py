@@ -12,7 +12,9 @@ from logs.views import (
     GateCameraStreamView,
     GateDutyView,
     GateFaceSignInView,
+    GateManualEntryView,
     GateMonitorFrameView,
+    GatePersonSearchView,
     TestModeDeleteView,
     TestModeSnapshotView,
     GateSignInView,
@@ -24,7 +26,8 @@ from logs.views import (
     ManualOverrideView,
     VerifyView,
 )
-from reports.views import FarFrrView, SummaryView
+from logs.office_views import AlarmsView, SystemStatusView
+from reports.views import DailySummaryView, FarFrrView, SummaryView
 from securetap_project.media_views import protected_media_serve
 from securetap_project.spa_views import dashboard_index
 from configuration.views import SessionPolicyView, SettingsView
@@ -66,6 +69,13 @@ urlpatterns = [
     path("api/gate/sign-out", GateSignOutView.as_view(), name="gate-sign-out"),
     path("api/gate/face-sign-in", GateFaceSignInView.as_view(), name="gate-face-sign-in"),
     path("api/gate-duty", GateDutyView.as_view(), name="gate-duty"),
+    # The gate monitor's "Find person": look someone up, let them in by hand
+    # under the guard on duty.
+    path("api/gate/find-person", GatePersonSearchView.as_view(), name="gate-find-person"),
+    path("api/gate/manual-entry", GateManualEntryView.as_view(), name="gate-manual-entry"),
+    # The dashboard's office alarm and System Status page (logs/office_views.py).
+    path("api/alarms", AlarmsView.as_view(), name="alarms"),
+    path("api/system-status", SystemStatusView.as_view(), name="system-status"),
     # What each gate's camera actually runs at - Settings > Camera shows it.
     path("api/gate/camera-report", GateCameraReportView.as_view(), name="gate-camera-report"),
     # The dashboard's Cameras page (Admin only): each gate's live picture,
@@ -94,6 +104,7 @@ urlpatterns = [
     path("api/semester/by-hand", SemesterHandView.as_view(), name="semester-by-hand"),
     path("api/reports/summary", SummaryView.as_view(), name="reports-summary"),
     path("api/reports/far-frr", FarFrrView.as_view(), name="reports-far-frr"),
+    path("api/reports/daily", DailySummaryView.as_view(), name="reports-daily"),
     path("api/settings", SettingsView.as_view(), name="system-settings"),
     path("api/session-policy", SessionPolicyView.as_view(), name="session-policy"),
     path("api/", include(router.urls)),

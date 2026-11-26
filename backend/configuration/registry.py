@@ -626,6 +626,13 @@ DEFINITIONS = [
         "The time span those sightings must fall within.",
         INT, 10, 1, 240, 1, unit="minutes", depends_on="alert_repeated_unknown",
     ),
+    SettingDef(
+        "alert_dashboard", "alerts", "Office alarm on the dashboard",
+        "Also pops up a warning with a short alarm sound on whatever dashboard page the Admin or SASO has open, "
+        "for a suspected fake face and for a repeated unknown face (each when its alert above is on).",
+        BOOL, True,
+        note="Security Officers see their own gate's alerts on the gate monitor instead.",
+    ),
     # ---- 10. Live Log Details (users/live_details.py) -------------------------
     SettingDef(
         "livelog_kind", "live_log", "Student / Staff tag",

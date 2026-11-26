@@ -67,6 +67,32 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def find_person(self, gate_location, query):
+        """The gate monitor's Find person: up to 8 students/staff by ID
+        number or name - {"results": [person, ...]}, each with is_active."""
+        response = self.session.get(
+            f"{self.base_url}/gate/find-person",
+            headers={"X-Service-Token": self.service_token},
+            params={"gate_location": gate_location, "q": query},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def manual_entry(self, gate_location, student_or_employee_id, direction, reason):
+        """Lets someone in (or out) by hand under the guard on duty. Raises
+        requests.HTTPError with the reason (nobody on duty, deactivated...)
+        in the response's "detail"."""
+        response = self.session.post(
+            f"{self.base_url}/gate/manual-entry",
+            headers={"X-Service-Token": self.service_token},
+            json={"gate_location": gate_location, "student_or_employee_id": student_or_employee_id,
+                  "direction": direction, "reason": reason},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def gate_sign_in(self, gate_location, username, password):
         """A guard signing in for duty with their password. Returns who's on
         duty now; raises requests.HTTPError with the reason (wrong password,

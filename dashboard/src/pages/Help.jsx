@@ -68,6 +68,15 @@ const GUIDES = [
     steps: [
       "Today, last 7 or last 30 days: entries, unknown attempts, the busiest hours, every outcome by method, and the confidence of matches.",
       "Export CSV saves the by-method numbers for a spreadsheet.",
+      "Print daily summary: one day on one A4 sheet for the office's file - totals, each gate, ins and outs by hour, every security event (with who let someone in by hand, and why) and the guards on duty. Pick any past day.",
+    ],
+  },
+  {
+    key: "status", icon: "heartbeat", title: "System Status", to: "/status", roles: MANAGERS,
+    steps: [
+      "Is every gate monitor running, is each camera sending, who's on duty, card taps waiting from when a gate was offline - and the server's last backup, database size and free disk space.",
+      "Anything that needs attention is listed at the top in plain words. It checks again every 30 seconds.",
+      "Office alarm: a suspected fake face, or the same unknown person seen again at a gate, pops up in the corner of whatever page you have open, with a short sound, until you dismiss it. Click the page once after opening it so the browser allows the sound. Settings › Alerts turns it on or off.",
     ],
   },
   {
@@ -106,6 +115,9 @@ const GUIDES = [
       "The Layout button in the status bar picks how the screen looks: Split (camera + live log), Verify wall (photo on file next to the live face), Full camera, Filmstrip, Entrance + Exit (both cameras, side by side or big + small), Compact rail (small laptop screens), or Separate window (the exit camera on a second monitor). It's remembered on that computer.",
       "Card taps show as a pill on the camera (Tap a card / Card accepted / Card not registered). NOT ENROLLED, a person's note and \"photos due\" show on their newest live-log card.",
       "If the camera fails, students can still tap their school ID card on the reader.",
+      "Find person (status bar): look someone up by ID number or name. To let them in by hand - forgot their ID card, face not recognized, card not working - pick the reason and click Let in. It's recorded under the guard on duty, so someone must be signed in; the live log marks it BY HAND.",
+      "The ? at the top of the gate monitor is a quick guide to every colour, tag and sound (with play buttons). The speaker beside it sets how loud the alert sounds are on that computer, or mutes them for 15 minutes - they come back by themselves.",
+      "Plug a second camera into a gate without an exit camera and the gate monitor asks whether to use it as the exit camera.",
       "Signing in for duty: the sign-in window shows the ways Settings › Security & Accounts allows - password, staff ID card, face scan. With Card, then face, tap your card first, then look at the camera inside the oval until it signs you in.",
     ],
   },

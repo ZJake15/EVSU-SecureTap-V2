@@ -2193,6 +2193,20 @@ or a person vouched for it. Always creates a fresh `EntryLog` row too — never
 deduped against a recent automatic success, since a manual override is never
 "the same event" as an automatic one.
 
+**At the gate monitor (Find person).** The same record can be made at the gate
+itself, where the guard actually is: the status bar's **Find person** looks
+someone up by ID number or name (`GET /api/gate/find-person`, service token, at
+most 8 results, nothing written) and lets them in — or out, at a gate with an
+exit camera — with a reason picked from a list (*Forgot ID card*, *Face not
+recognized*, *Card not working*, or *Other* with what was checked):
+`POST /api/gate/manual-entry`. The gate monitor has no account of its own, so
+"who decided" is **the guard signed in at that gate** (§13.4): the row's
+`performed_by` and its Audit Log entry are that guard. With gate sign-in switched
+off, or nobody on duty, it is refused — a manual entry is never anonymous. A
+deactivated person can't be let in this way. The live log shows the row marked
+**BY HAND** with the reason and the guard's name; the Daily summary (§16) lists
+every one.
+
 ### 13.3 Gate scoping for Security Officer
 
 `AdminProfile.assigned_gate_location` (§6) is read server-side
@@ -2471,3 +2485,59 @@ stays as the backup; once the new one is verified, MySQL is no longer needed
 (it can be set to Manual to free memory). A later code change ships as a new
 Setup.exe installed over this one — the data folder is untouched. The step-by-
 step checklist is in README.md, "Putting it on the demo laptop".
+
+## 16. Everyday helpers (gate monitor and dashboard)
+
+Seven small features that make the system easier to run day to day.
+
+**At the gate monitor** (`entry-agent/gate_tools.py`):
+
+1. **Find person** (status bar) — look someone up by ID number or name and let
+   them in or out by hand, with a reason, under the guard on duty. See §13.2.
+   A card tapped while the guard is typing in its search box still counts as a
+   normal gate tap.
+2. **Quick guide** (the **?** at the top) — what every live-log colour and tag
+   means, each alert sound with a play button, the card pill, the status-bar
+   buttons, and what closing does.
+3. **Sound volume and mute** (the speaker at the top) — a volume slider for the
+   alert sounds, remembered on that computer (`sound_settings.json` in the data
+   folder), and **Mute for 15 minutes**, which ends by itself so a gate is never
+   left silent by mistake. Windows' simple sound player has no volume of its
+   own, so `alert_sounds.py` makes a quieter copy of each `.wav` once per volume
+   (in the temp folder). A play button in the guide is heard even while muted
+   and never holds back a real alarm.
+4. **"Use it as the exit camera?"** — while a gate has no exit camera, the gate
+   monitor looks at the camera list every 30 s (names only; the details are
+   asked from Windows only when the list changed). A plugged-in camera besides
+   the entrance one gets the question: **Use as exit camera**, **Not now**
+   (not asked again for that camera until the gate monitor restarts) or
+   **Don't ask again** (kept in `camera_choice.json`). The laptop's own camera
+   is never suggested — it faces the guard.
+
+**On the dashboard** (Admin and SASO):
+
+5. **System Status** page — every gate monitor heard from in the last week:
+   running or not (each sends a report about once a minute,
+   `logs/camera_status.py`, now also carrying its version, the card taps
+   waiting in its offline queue and its last card tap), each camera sending or
+   not, who's on duty, today's ins and outs; and the server's last backup (from
+   the Audit Log's *Data backed up*), database size and free disk space. What
+   needs attention is listed on top in plain words — a gate monitor not
+   running, a camera not sending, taps waiting, nobody on duty, a backup older
+   than 7 days (the launcher's own reminder), under 5 GB free. Refreshes every
+   30 s. Backend: `GET /api/system-status` (`logs/office_views.py`).
+6. **Office alarm** — on whatever dashboard page is open, a suspected fake face
+   or the same unknown person seen again at a gate pops up in the corner with a
+   short alarm sound (made in the browser, like the gate monitor's), until
+   dismissed. Asked every 5 s from the server's own clock (`GET /api/alarms
+   ?since=`), so nothing is missed, shown twice, or popped up from before the
+   page opened. Settings > Alerts: each event's own switch, and **Office alarm
+   on the dashboard** over both. A repeated unknown is now kept on its row
+   (`EntryLog.repeated_unknown`). Browsers only allow sound once the page has
+   been clicked.
+7. **Printable daily summary** (Reports > **Print daily summary**) — one day on
+   an A4 sheet for the security office's file: the totals, each gate, ins and
+   outs by hour, every security event (fake faces, unknown people, refusals,
+   entries let in by hand with the reason and the guard) and the guards on
+   duty, with a "checked by" line. Any past day can be picked. Backend:
+   `GET /api/reports/daily?date=` (`reports/views.py`).

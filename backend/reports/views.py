@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -218,6 +219,108 @@ class SummaryView(APIView):
         for ts in timestamps:
             hour_counts[timezone.localtime(ts).hour] += 1
         return [{"hour": f"{hour:02d}:00", "count": hour_counts[hour]} for hour in range(24)]
+
+
+class DailySummaryView(APIView):
+    """The Reports page's "Print daily summary": one day on one page, for the
+    security office's file - the totals, each gate, entries and exits by hour,
+    every security event (fake faces, unknown faces, refusals, entries let in
+    by hand - with who and why), and the guards on duty. ?date=YYYY-MM-DD,
+    today by default. Admin and SASO only."""
+
+    permission_classes = [IsAdminOrSaso]
+    EVENTS_SHOWN = 300
+
+    def get(self, request):
+        from datetime import date as date_type
+        from datetime import datetime
+
+        from logs.models import GateShift
+
+        try:
+            day = date_type.fromisoformat(request.query_params.get("date") or "")
+        except ValueError:
+            day = timezone.localdate()
+        start = timezone.make_aware(datetime.combine(day, datetime.min.time()))
+        end = start + timedelta(days=1)
+        logs = EntryLog.real.filter(timestamp__gte=start, timestamp__lt=end).select_related("person", "performed_by")
+
+        def count(rows):
+            return {
+                "entries": rows.filter(direction=EntryLog.Direction.ENTRY, status=EntryLog.Status.SUCCESS).count(),
+                "exits": rows.filter(direction=EntryLog.Direction.EXIT, status=EntryLog.Status.SUCCESS).count(),
+                "unknown": rows.filter(status=EntryLog.Status.FAILED).count(),
+                "spoof": rows.filter(status=EntryLog.Status.SPOOF_SUSPECTED).count(),
+                "covered": rows.filter(status=EntryLog.Status.OCCLUSION_DETECTED).count(),
+                "refused_not_enrolled": rows.filter(status=EntryLog.Status.NOT_ENROLLED).count(),
+                "manual": rows.filter(verification_method=EntryLog.VerificationMethod.MANUAL_OVERRIDE).count(),
+                "not_enrolled_let_in": rows.filter(not_enrolled=True, status=EntryLog.Status.SUCCESS).count(),
+                "unattended": rows.filter(unattended=True).count(),
+                "after_hours": rows.filter(after_hours=True).count(),
+                "odd_pattern": rows.exclude(pattern_flag="").count(),
+            }
+
+        hours = [{"hour": f"{hour:02d}:00", "entries": 0, "exits": 0} for hour in range(24)]
+        for direction, ts in logs.filter(status=EntryLog.Status.SUCCESS).values_list("direction", "timestamp"):
+            hours[timezone.localtime(ts).hour]["entries" if direction == EntryLog.Direction.ENTRY else "exits"] += 1
+
+        gates = sorted(set(logs.values_list("gate_location", flat=True)))
+        events = self._events(logs)
+        shifts = [
+            {
+                "gate": shift.gate_location,
+                "name": (shift.user.get_full_name() or shift.user.username) if shift.user else "(deleted account)",
+                "from": shift.signed_in_at,
+                "to": shift.ended_at,
+                "method": shift.get_method_display(),
+                "ended": shift.get_end_reason_display() if shift.end_reason else "",
+            }
+            for shift in GateShift.objects.select_related("user").filter(signed_in_at__lt=end)
+            .exclude(ended_at__lt=start).order_by("gate_location", "signed_in_at")
+        ]
+        return Response({
+            "date": day.isoformat(),
+            "generated_at": timezone.now(),
+            "generated_by": request.user.get_full_name() or request.user.username,
+            "totals": count(logs),
+            "gates": [{"gate": gate, **count(logs.filter(gate_location=gate))} for gate in gates],
+            "by_hour": hours,
+            "events": events[: self.EVENTS_SHOWN],
+            "events_total": len(events),
+            "shifts": shifts,
+        })
+
+    @staticmethod
+    def _events(logs):
+        """Everything the office should look at, in time order."""
+        rows = logs.filter(
+            Q(status__in=[EntryLog.Status.SPOOF_SUSPECTED, EntryLog.Status.FAILED, EntryLog.Status.NOT_ENROLLED])
+            | Q(verification_method=EntryLog.VerificationMethod.MANUAL_OVERRIDE)
+        ).order_by("timestamp")
+        events = []
+        for log in rows:
+            if log.verification_method == EntryLog.VerificationMethod.MANUAL_OVERRIDE:
+                kind = "Let in by hand" if log.direction == EntryLog.Direction.ENTRY else "Let out by hand"
+                by = (log.performed_by.get_full_name() or log.performed_by.username) if log.performed_by else ""
+                detail = log.failure_reason + (f" - by {by}" if by else "")
+            elif log.status == EntryLog.Status.SPOOF_SUSPECTED:
+                kind, detail = "Fake face suspected", ""
+            elif log.status == EntryLog.Status.NOT_ENROLLED:
+                kind, detail = "Refused - not enrolled", ""
+            else:
+                kind = "Unknown person (seen again)" if log.repeated_unknown else "Unknown person"
+                # A rejected card says why ("Card not registered..."); an unknown face needs no words.
+                detail = "" if log.verification_method == EntryLog.VerificationMethod.FACE_ONLY else log.failure_reason
+            events.append({
+                "time": log.timestamp,
+                "gate": log.gate_location,
+                "direction": log.direction,
+                "kind": kind,
+                "who": log.person.full_name if log.person else "",
+                "id_number": log.person.student_or_employee_id if log.person else "",
+                "detail": detail,
+            })
+        return events
 
 
 class FarFrrView(APIView):

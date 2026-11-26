@@ -17,6 +17,9 @@ FIELDS = {
     "camera": str, "resolution": str, "resolution_asked": str, "fps": float, "fps_asked": str,
     "scan_pause": float, "upload_size": int, "video_fps": int, "student_display_fps": int, "zoom": float,
     "exposure": str, "backlight": str, "focus": str, "driver": str,
+    # For the System Status page (logs/office_views.py): the gate monitor's
+    # version, card taps waiting in its offline queue, and its last card tap.
+    "app_version": str, "queue": int, "last_tap": str,
 }
 # Gates not heard from in this long aren't shown any more.
 SHOW_FOR = timezone.timedelta(days=7)

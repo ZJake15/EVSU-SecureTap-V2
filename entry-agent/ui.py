@@ -181,6 +181,13 @@ ICONS = {
     "columns": "\ue546",
     "picture-in-picture": "\ue64c",
     "user": "\ue4c2",
+    # Find person, the quick guide and the sound button (gate_tools.py)
+    "magnifying-glass": "\ue30c",
+    "question": "\ue3e8",
+    "speaker-low": "\ue44c",
+    "speaker-none": "\ue44e",
+    "speaker-slash": "\ue45a",
+    "play": "\ue3d0",
 }
 
 
@@ -1334,11 +1341,24 @@ class GateMonitorWindow:
                  video_fps=None, student_display_fps=None, on_sign_in=None, on_sign_out=None, camera_zoom=1.0,
                  get_camera_size=None, get_camera_fps=None, on_exit_camera_change=None, on_reader_setup=None,
                  layout="split", on_layout_change=None, on_face_scan=None, dual_mode="side",
-                 on_refresh_cameras=None):
+                 on_refresh_cameras=None, sound_volume=1.0, on_sound_change=None, on_find_person=None,
+                 on_let_in=None):
         # on_refresh_cameras() -> (options, entrance index, exit index) or
         # None: main.py lists the cameras again when "Cameras & card readers"
         # opens, so one plugged in since the start can be picked.
         self._on_refresh_cameras = on_refresh_cameras
+        # The helper windows (gate_tools.py), while open: Find person -
+        # on_find_person(query, done) and on_let_in(person, direction,
+        # reason, done) are main.py's - the quick guide ("?"), and the sound
+        # menu, whose volume main.py remembers through on_sound_change(volume).
+        self._on_find_person = on_find_person
+        self._on_let_in = on_let_in
+        self._on_sound_change = on_sound_change
+        self._find_window = None
+        self._guide_window = None
+        self._sound_menu = None
+        self._sound_button = None
+        self._sound_tick_job = None
         # The screen layout (LAYOUTS, layouts.py) - picked from the Layout
         # menu in the status bar, remembered by main.py through
         # on_layout_change(layout, dual_mode). A value saved before the
@@ -1441,7 +1461,9 @@ class GateMonitorWindow:
         # Settings > Alerts: a sound switch each for unknown, covered and
         # not-enrolled (refused) - all on until the backend says otherwise.
         self._sound_on = {"unknown": True, "covered": True, "not_enrolled": True}
-        self._sounds = AlertSounds()  # a different sound per event (alert_sounds.py)
+        # A different sound per event (alert_sounds.py), as loud as this
+        # computer's sound button last said.
+        self._sounds = AlertSounds(volume=sound_volume)
         # Once per covered person - kept per camera (their boxes are in
         # different pictures).
         self._covered_faces = {"entry": CoveredFaces(), "exit": CoveredFaces()}
@@ -1624,6 +1646,7 @@ class GateMonitorWindow:
         self.clock_label.pack(anchor="e")
         self.date_label = self._label(clock, "", (FONT_MONO, s["date"]), BRASS, height=s["date"] + 4)
         self.date_label.pack(anchor="e")
+        self._build_header_tools(header)
 
         title = ctk.CTkFrame(header, fg_color="transparent")
         title.pack(side="left", fill="x", expand=True, padx=(26, 26))
@@ -1638,6 +1661,124 @@ class GateMonitorWindow:
         self._title_frame = title
         self._title_width = None
         title.bind("<Configure>", self._fit_header_title)
+
+    def _build_header_tools(self, header):
+        """Two small buttons left of the clock: the alert sounds' volume /
+        mute (gate_tools.SoundMenu) and the quick guide, "?"."""
+        tools = ctk.CTkFrame(header, fg_color="transparent")
+        tools.pack(side="right", padx=(0, 26))
+
+        def tool(icon, text, command):
+            frame = ctk.CTkFrame(tools, fg_color=MAROON_DEEP, corner_radius=8, cursor="hand2")
+            frame.pack(side="left", padx=(8, 0))
+            glyph = self._icon_label(frame, icon, 18, "white", fg_color=MAROON_DEEP, cursor="hand2", height=22)
+            glyph.pack(side="left", padx=(10, 6 if text else 10), pady=6)
+            word = None
+            if text is not None:
+                word = self._label(frame, text, (FONT, 13, "bold"), "white", fg_color=MAROON_DEEP, cursor="hand2",
+                                   height=22)
+                word.pack(side="left", padx=(0, 10), pady=6)
+            for widget in (frame, glyph, word):
+                if widget is not None:
+                    widget.bind("<Button-1>", lambda _e: command())
+            return frame, glyph, word
+
+        self._sound_button = tool("speaker-high", "", self._toggle_sound_menu)
+        tool("question", None, self._open_guide)
+        self._refresh_sound_button()
+
+    def _refresh_sound_button(self):
+        """The speaker button: its icon and "70%" - or "Muted · 14 min"."""
+        if self._sound_button is None:
+            return
+        _frame, glyph, word = self._sound_button
+        sounds = self._sounds
+        left = sounds.muted_seconds_left()
+        if left:
+            icon, text = "speaker-slash", f"Muted · {max(1, round(left / 60))} min"
+        elif sounds.volume <= 0:
+            icon, text = "speaker-slash", "Off"
+        else:
+            icon = "speaker-low" if sounds.volume < 0.5 else "speaker-high"
+            text = f"{round(sounds.volume * 100)}%"
+        glyph.configure(text=_icon(icon))
+        word.configure(text=text)
+        # While muted, the minutes count down - and it un-mutes by itself.
+        if self._sound_tick_job is not None:
+            self.window.after_cancel(self._sound_tick_job)
+            self._sound_tick_job = None
+        if left:
+            self._sound_tick_job = self.window.after(min(20000, int(left * 1000) + 200), self._sound_tick)
+
+    def _sound_tick(self):
+        self._sound_tick_job = None
+        if not self._closed:
+            self._refresh_sound_button()
+            if self._sound_menu is not None:
+                self._sound_menu._render()
+
+    def _toggle_sound_menu(self):
+        import gate_tools
+
+        if self._sound_menu is not None:
+            self._sound_menu.close()
+            return
+        self._sound_menu = gate_tools.SoundMenu(self, self._sound_button[0], self._on_sound_change,
+                                                self._sound_menu_closed)
+        self._sound_menu_click = self.window.bind("<Button-1>", self._sound_menu_click_away, add="+")
+
+    def _sound_menu_click_away(self, event):
+        menu = self._sound_menu
+        if menu is None:
+            return
+        widget = str(event.widget)
+        if menu.owns(widget) or widget.startswith(str(self._sound_button[0])):
+            return
+        menu.close()
+
+    def _sound_menu_closed(self):
+        self._sound_menu = None
+        try:
+            self.window.unbind("<Button-1>", self._sound_menu_click)
+        except tk.TclError:
+            pass
+
+    def _open_guide(self):
+        import gate_tools
+
+        if self._guide_window is not None:
+            self._guide_window.lift()
+            return
+        self._guide_window = gate_tools.GuideWindow(self, lambda: setattr(self, "_guide_window", None))
+
+    def _open_find_person(self):
+        import gate_tools
+
+        if self._find_window is not None:
+            self._find_window.lift()
+            return
+        if not self._on_find_person:
+            return
+        self._find_window = gate_tools.FindPersonWindow(self, self._on_find_person, self._on_let_in,
+                                                        lambda: setattr(self, "_find_window", None))
+
+    def ask_exit_camera(self, camera_name, answer):
+        """"A second camera is plugged in - use it as the exit camera?" -
+        answer("use" | "later" | "never") on the Tk thread, or "skip" when it
+        wasn't asked after all. Safe from any thread."""
+        def ask():
+            import gate_tools
+
+            if self._closed or self._exit_camera_index is not None or self._setup_dialog is not None:
+                answer("skip")  # meanwhile one was chosen, or the guard is choosing
+                return
+            gate_tools.ExitCameraQuestion(self, camera_name, answer)
+
+        self.run_on_tk(ask)
+
+    def set_camera_list(self, listed):
+        """A fresh camera list from main.py (apply_camera_list) - Tk thread."""
+        self._camera_list_ready(listed)
 
     def _fit_header_title(self, _event=None):
         """Ellipsizes the gate title to whatever width is left between the
@@ -2017,6 +2158,7 @@ class GateMonitorWindow:
         self._build_setup_button(inner)
         self._build_student_toggle(inner)
         self._build_layout_button(inner)
+        self._build_find_button(inner)
 
         identity = " · ".join(part for part in (self.officer_name, self.version) if part)
         self._identity_label = None
@@ -2068,6 +2210,19 @@ class GateMonitorWindow:
         label.pack(side="left", padx=(0, 12), pady=6)
         for widget in (button, icon, label):
             widget.bind("<Button-1>", lambda _e: self._open_setup_dialog())
+            widget.configure(cursor="hand2")
+
+    def _build_find_button(self, bar):
+        """"Find person" - look someone up, let them in by hand (gate_tools)."""
+        button = ctk.CTkFrame(bar, corner_radius=8, border_width=math.ceil(1 / self._scale), height=34,
+                              fg_color=SURFACE, border_color=INK_400, cursor="hand2")
+        button.pack(side="left", padx=(12, 0))
+        icon = self._icon_label(button, "magnifying-glass", 16, INK, height=20)
+        icon.pack(side="left", padx=(12, 8), pady=6)
+        label = self._label(button, "Find person", (FONT, 14, "bold"), INK, height=20)
+        label.pack(side="left", padx=(0, 12), pady=6)
+        for widget in (button, icon, label):
+            widget.bind("<Button-1>", lambda _e: self._open_find_person())
             widget.configure(cursor="hand2")
 
     # Values are "index: label" strings (e.g. "0: Logitech BRIO") so the
@@ -2652,6 +2807,8 @@ class GateMonitorWindow:
         shouldn't go unattended just because nobody noticed the amber line.
         Scanning carries on either way."""
         self._sign_in = status or {"enabled": False, "on_duty": None}
+        if self._find_window is not None:
+            self._find_window.refresh_duty()  # who a manual entry is recorded under
         if not self._sign_in.get("enabled") or self._sign_in.get("on_duty"):
             self._cancel_sign_in_reminder()
         if not self._sign_in.get("enabled"):
@@ -3060,12 +3217,20 @@ class GateMonitorWindow:
             notes.append(f"Note: {profile['distinguishing_note']}")
         if profile.get("photos_due"):  # Settings > Scheduling > "Show at the gate"
             notes.append("Photos due for update")
+        # Let in (or out) by hand with Find person (gate_tools.py): the reason
+        # and who decided ride on the row.
+        manual = profile.get("manual_reason")
+        if manual:
+            by = f" - {profile['performed_by']}" if profile.get("performed_by") else ""
+            notes.insert(0, f"By hand: {manual}{by}")
+        how = "BY HAND" if manual else "CARD"
         kind, word, feature_word, extra = self._pass_kind(
-            direction, profile.get("not_enrolled"), profile.get("pattern_flag"), "", card=True,
+            direction, profile.get("not_enrolled"), profile.get("pattern_flag"), "", card=how,
         )
-        strip_word = "CARD · AFTER HOURS" if self._after_hours else f"CARD · {direction.upper()}"
+        strip_word = f"{how} · AFTER HOURS" if self._after_hours else f"{how} · {direction.upper()}"
         caution = self._after_hours or kind in ("pattern", "not_enrolled")
-        self._set_tap(f"Card accepted · {name}", "warning" if caution else "check-circle",
+        verb = ("Let out by hand" if direction == "exit" else "Let in by hand") if manual else "Card accepted"
+        self._set_tap(f"{verb} · {name}", "warning" if caution else "check-circle",
                       CAUTION if caution else VERIFIED)
         if self._student is not None and direction == "entry":
             # Their photo and full name, briefly, as for a recognized face.
@@ -3379,8 +3544,11 @@ class GateMonitorWindow:
         """(kind, row word, featured word, extra) for someone let through
         `way` ("entry" or "exit"), by face or by card. In order: not enrolled
         this semester (coming in only), an odd entry/exit pattern
-        (PATTERN_WORDS - the guard should ask), after hours, or a plain pass."""
-        base = ("CARD · " if card else "") + way.upper()
+        (PATTERN_WORDS - the guard should ask), after hours, or a plain pass.
+        `card`: True for a card tap, or the word to use instead of CARD
+        ("BY HAND" - let in with Find person)."""
+        how = card if isinstance(card, str) else "CARD"
+        base = (f"{how} · " if card else "") + way.upper()
         hours = " · AFTER HOURS" if self._after_hours else ""
         if not_enrolled and way == "entry":
             return "not_enrolled", "NOT ENROLLED", f"NOT ENROLLED{hours}", extra

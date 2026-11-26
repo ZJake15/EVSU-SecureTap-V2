@@ -125,8 +125,8 @@ def _save_layout(layout, dual="side"):
         pass  # a convenience - picking it again next time still works
 
 
-# How loud the alert sounds are (the speaker button at the top of the gate
-# monitor - alert_sounds.py), remembered per computer in the data folder. A
+# How loud the alert sounds are (the speaker button in the gate monitor's
+# status bar - alert_sounds.py), remembered per computer in the data folder. A
 # mute isn't remembered: it ends by itself, and a restart ends it too.
 SOUND_PATH = Path(data_file("sound_settings.json"))
 

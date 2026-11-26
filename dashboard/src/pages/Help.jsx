@@ -116,7 +116,7 @@ const GUIDES = [
       "Card taps show as a pill on the camera (Tap a card / Card accepted / Card not registered). NOT ENROLLED, a person's note and \"photos due\" show on their newest live-log card.",
       "If the camera fails, students can still tap their school ID card on the reader.",
       "Find person (status bar): look someone up by ID number or name. To let them in by hand - forgot their ID card, face not recognized, card not working - pick the reason and click Let in. It's recorded under the guard on duty, so someone must be signed in; the live log marks it BY HAND.",
-      "The ? at the top of the gate monitor is a quick guide to every colour, tag and sound (with play buttons). The speaker beside it sets how loud the alert sounds are on that computer, or mutes them for 15 minutes - they come back by themselves.",
+      "The ? in the status bar, right after who's on duty, is a quick guide to every colour, tag and sound (with play buttons). The speaker beside it sets how loud the alert sounds are on that computer, or mutes them for 15 minutes - they come back by themselves.",
       "Plug a second camera into a gate without an exit camera and the gate monitor asks whether to use it as the exit camera.",
       "Signing in for duty: the sign-in window shows the ways Settings › Security & Accounts allows - password, staff ID card, face scan. With Card, then face, tap your card first, then look at the camera inside the oval until it signs you in.",
     ],

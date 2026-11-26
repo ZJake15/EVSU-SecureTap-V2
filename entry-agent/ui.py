@@ -1646,7 +1646,6 @@ class GateMonitorWindow:
         self.clock_label.pack(anchor="e")
         self.date_label = self._label(clock, "", (FONT_MONO, s["date"]), BRASS, height=s["date"] + 4)
         self.date_label.pack(anchor="e")
-        self._build_header_tools(header)
 
         title = ctk.CTkFrame(header, fg_color="transparent")
         title.pack(side="left", fill="x", expand=True, padx=(26, 26))
@@ -1662,22 +1661,24 @@ class GateMonitorWindow:
         self._title_width = None
         title.bind("<Configure>", self._fit_header_title)
 
-    def _build_header_tools(self, header):
-        """Two small buttons left of the clock: the alert sounds' volume /
-        mute (gate_tools.SoundMenu) and the quick guide, "?"."""
-        tools = ctk.CTkFrame(header, fg_color="transparent")
-        tools.pack(side="right", padx=(0, 26))
+    def _build_bar_tools(self, bar):
+        """Two small buttons in the status bar, right after who's on duty:
+        the alert sounds' volume / mute (gate_tools.SoundMenu) and the quick
+        guide, "?"."""
+        tools = ctk.CTkFrame(bar, fg_color="transparent")
+        tools.pack(side="left", padx=(18, 0))
+        self._bar_tools = tools
 
         def tool(icon, text, command):
-            frame = ctk.CTkFrame(tools, fg_color=MAROON_DEEP, corner_radius=8, cursor="hand2")
+            frame = ctk.CTkFrame(tools, corner_radius=8, border_width=math.ceil(1 / self._scale), height=34,
+                                 fg_color=SURFACE, border_color=INK_400, cursor="hand2")
             frame.pack(side="left", padx=(8, 0))
-            glyph = self._icon_label(frame, icon, 18, "white", fg_color=MAROON_DEEP, cursor="hand2", height=22)
+            glyph = self._icon_label(frame, icon, 16, INK, cursor="hand2", height=20)
             glyph.pack(side="left", padx=(10, 6 if text else 10), pady=6)
             word = None
             if text is not None:
-                word = self._label(frame, text, (FONT, 13, "bold"), "white", fg_color=MAROON_DEEP, cursor="hand2",
-                                   height=22)
-                word.pack(side="left", padx=(0, 10), pady=6)
+                word = self._label(frame, text, (FONT, 14, "bold"), INK, cursor="hand2", height=20)
+                word.pack(side="left", padx=(0, 12), pady=6)
             for widget in (frame, glyph, word):
                 if widget is not None:
                     widget.bind("<Button-1>", lambda _e: command())
@@ -2178,6 +2179,9 @@ class GateMonitorWindow:
         self._duty_action.pack(side="left", padx=(10, 0))
         for widget in (self._duty, self._duty_icon, self._duty_label, self._duty_action):
             widget.bind("<Button-1>", lambda _e: self._duty_clicked())
+        # Sound and quick guide - always right after the guard's name or sign-in
+        # (_render_gate_sign_in packs those before them).
+        self._build_bar_tools(inner)
 
         # Right side, packed right-to-left: sync, queue, backend.
         sync = ctk.CTkFrame(inner, fg_color="transparent")
@@ -2814,13 +2818,13 @@ class GateMonitorWindow:
         if not self._sign_in.get("enabled"):
             self._duty.pack_forget()
             if self._identity_label is not None and not self._identity_label.winfo_manager():
-                self._identity_label.pack(side="left", padx=(26, 0))
+                self._identity_label.pack(side="left", padx=(26, 0), before=self._bar_tools)
             self._close_sign_in_dialog()
             return
         if self._identity_label is not None:
             self._identity_label.pack_forget()
         if not self._duty.winfo_manager():
-            self._duty.pack(side="left", padx=(26, 0))
+            self._duty.pack(side="left", padx=(26, 0), before=self._bar_tools)
         on_duty = self._sign_in.get("on_duty")
         if on_duty:
             self._duty_icon.configure(text=_icon("user-focus"), text_color=VERIFIED)

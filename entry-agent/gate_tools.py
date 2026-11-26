@@ -5,9 +5,10 @@
                      face not recognized, card not working. Recorded under
                      the guard on duty, with the reason (backend
                      logs/views.py GateManualEntryView).
-  Quick guide        (the "?" in the header) what the colours, tags, sounds
-                     and buttons mean - with a play button for each sound.
-  Sound menu         (the speaker in the header) how loud the alert sounds
+  Quick guide        (the "?" in the status bar, after who's on duty) what
+                     the colours, tags, sounds and buttons mean - with a
+                     play button for each sound.
+  Sound menu         (the speaker beside it) how loud the alert sounds
                      are, remembered on this computer, and "Mute for 15
                      minutes" - they come back by themselves.
   New camera         "Use it as the exit camera?" when a second camera is
@@ -354,7 +355,8 @@ GUIDE_BUTTONS = (
     ("Layout", "How the cameras and the live log are arranged - 7 choices, remembered on this computer."),
     ("Find person", "Look someone up by ID number or name; let them in or out by hand, with a reason."),
     ("On duty / Sign in", "Who is on duty here. Click it to sign in or out."),
-    ("Speaker (top)", f"Alert sound volume, or mute for {MUTE_MINUTES} minutes - they come back by themselves."),
+    ("Speaker", f"Alert sound volume, or mute for {MUTE_MINUTES} minutes - they come back by themselves."),
+    ("?", "This guide."),
 )
 
 
@@ -401,8 +403,8 @@ class GuideWindow:
             text.pack(side="left", fill="x", expand=True)
             m._label(text, sound, (FONT, 14, "bold"), INK, anchor="w").pack(fill="x")
             m._label(text, meaning, (FONT, 13), INK_600, anchor="w").pack(fill="x")
-        self._note("Each sound can be switched off on the dashboard (Settings > Alerts). The speaker at the top "
-                   "sets the volume on this computer.")
+        self._note("Each sound can be switched off on the dashboard (Settings > Alerts). The speaker button at the "
+                   "bottom sets the volume on this computer.")
 
         self._section("THE CARD PILL ON THE CAMERA")
         self._note("\"Tap a card\" waits for a card. After a tap it shows what happened for 8 seconds. A guard's own "
@@ -446,7 +448,7 @@ class GuideWindow:
 
 
 class SoundMenu:
-    """Pops up under the speaker button in the header. on_change(volume) is
+    """Pops up above the speaker button in the status bar. on_change(volume) is
     main.py's - it remembers the volume on this computer."""
 
     def __init__(self, monitor, anchor, on_change, on_close):
@@ -475,10 +477,11 @@ class SoundMenu:
         self.mute_button = _button(buttons, "", self._toggle_mute, primary=True, width=200, height=32)
         self.mute_button.pack(side="left", padx=(10, 0))
         self._render()
+        # Pops up above its button in the status bar, like the Layout menu.
         m.window.update_idletasks()
-        x = anchor.winfo_rootx() + anchor.winfo_width() - m.window.winfo_rootx()
-        y = anchor.winfo_rooty() + anchor.winfo_height() - m.window.winfo_rooty() + m._px(8)
-        menu.place(x=x, y=y, anchor="ne")
+        x = anchor.winfo_rootx() - m.window.winfo_rootx()
+        y = anchor.winfo_rooty() - m.window.winfo_rooty() - m._px(10)
+        menu.place(x=x, y=y, anchor="sw")
         menu.lift()
 
     def _render(self):

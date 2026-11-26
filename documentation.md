@@ -2496,10 +2496,11 @@ Seven small features that make the system easier to run day to day.
    them in or out by hand, with a reason, under the guard on duty. See §13.2.
    A card tapped while the guard is typing in its search box still counts as a
    normal gate tap.
-2. **Quick guide** (the **?** at the top) — what every live-log colour and tag
+2. **Quick guide** (the **?** in the status bar, right after who's on duty) —
+   what every live-log colour and tag
    means, each alert sound with a play button, the card pill, the status-bar
    buttons, and what closing does.
-3. **Sound volume and mute** (the speaker at the top) — a volume slider for the
+3. **Sound volume and mute** (the speaker beside the **?**) — a volume slider for the
    alert sounds, remembered on that computer (`sound_settings.json` in the data
    folder), and **Mute for 15 minutes**, which ends by itself so a gate is never
    left silent by mistake. Windows' simple sound player has no volume of its

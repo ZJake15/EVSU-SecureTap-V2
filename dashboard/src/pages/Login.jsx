@@ -12,6 +12,10 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // "Forgot password?" - there's no self-service reset (the system runs
+  // offline, with no email to send a link to): it tells the person who can
+  // help. The same steps are on the Help page, which needs a sign-in.
+  const [showForgot, setShowForgot] = useState(false);
   // Read once: set by "Automatic logout" when it signed this user out.
   const [idleMinutes] = useState(() => {
     const value = sessionStorage.getItem(IDLE_NOTICE_KEY);
@@ -107,6 +111,33 @@ export default function Login() {
             {isSubmitting ? "Signing in…" : "Sign in"}
             {!isSubmitting && <Icon name="arrow-right" bold size={16} />}
           </button>
+
+          <div className="flex flex-col gap-s3">
+            <button
+              type="button"
+              onClick={() => setShowForgot((open) => !open)}
+              aria-expanded={showForgot}
+              aria-controls="forgot-password-help"
+              className="link-action self-start"
+            >
+              Forgot password?
+            </button>
+            {showForgot && (
+              <div id="forgot-password-help">
+                <Notice tone="prompt" icon="key">
+                  <p>
+                    Ask an <span className="font-bold">Admin</span> to set a temporary password for you in{" "}
+                    <span className="font-bold">Accounts</span>. It also unlocks a locked account. Sign in with it,
+                    then choose your own new password.
+                  </p>
+                  <p className="mt-s2">
+                    Guards: at the gate monitor you can still sign in with your staff ID card or face, if your
+                    school has turned those on.
+                  </p>
+                </Notice>
+              </div>
+            )}
+          </div>
         </form>
       </div>
     </div>

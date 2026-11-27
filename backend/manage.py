@@ -1,9 +1,15 @@
 #!/usr/bin/env python
+import faulthandler
 import os
 import sys
 
 
 def main():
+    # A crash inside native code (the face model's ONNX Runtime, OpenCV)
+    # ends the process without Python's usual error report - this writes
+    # where it happened to stderr, which the launcher keeps in its log.
+    if sys.stderr is not None:
+        faulthandler.enable()
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "securetap_project.settings")
     # Read when OpenCV loads, which Django does at startup: a command that opens
     # the camera (record_face_motion) needs it set as the gate monitor sets it

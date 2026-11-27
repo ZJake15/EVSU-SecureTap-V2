@@ -1136,7 +1136,21 @@ def main():
     # launcher.ENTRY_AGENT_READY_MARKER.
     print("SECURETAP_ENTRY_AGENT_READY - gate monitor open", flush=True)
     monitor.run()
+    # The window closed normally (the guard closed it) - printed first thing,
+    # before any clean-up that could still fail. Without this line, a gate
+    # monitor that ends with an error code crashed, and the launcher reopens
+    # it. Keep in sync with launcher.ENTRY_AGENT_CLOSED_MARKER.
+    print("SECURETAP_GATE_MONITOR_CLOSED - window closed", flush=True)
 
 
 if __name__ == "__main__":
+    # A crash inside native code (OpenCV, the camera driver, Tk) ends the
+    # process without Python's usual error report - this writes where it
+    # happened to stderr, which the launcher keeps in its log. Its exit code
+    # then tells the launcher it crashed rather than closed (launcher.py
+    # GateStarter._watch_gate reopens it).
+    if sys.stderr is not None:
+        import faulthandler
+
+        faulthandler.enable()
     main()

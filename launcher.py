@@ -132,6 +132,17 @@ ENTRY_AGENT_READY_MARKER = "SECURETAP_ENTRY_AGENT_READY"
 # Printed instead when another gate monitor already runs on this computer
 # (one per computer - see entry-agent/main.py's _claim_single_instance).
 ENTRY_AGENT_ALREADY_OPEN_MARKER = "SECURETAP_GATE_MONITOR_ALREADY_OPEN"
+# Printed by entry-agent/main.py the moment its window closes normally (the
+# guard closed it). A gate monitor that ends without it, and with an error
+# exit code, crashed - and is reopened (see RestartBudget).
+ENTRY_AGENT_CLOSED_MARKER = "SECURETAP_GATE_MONITOR_CLOSED"
+
+# A backend or gate monitor that stops unexpectedly is started again on its
+# own - at most this many times within RESTART_WINDOW_SECONDS, so one that
+# fails on every start (a camera held by another program, a broken .env)
+# stops being retried and says so instead of looping.
+MAX_AUTO_RESTARTS = 3
+RESTART_WINDOW_SECONDS = 600
 
 # How often a "starting" card checks whether it has waited too long - the
 # visible motion is the card's indeterminate progress bar.
@@ -588,6 +599,24 @@ def _detect_nfc_reader(usb_ids, timeout=4.0):
         return None
 
 
+class RestartBudget:
+    """How many automatic restarts are still allowed: MAX_AUTO_RESTARTS within
+    any RESTART_WINDOW_SECONDS."""
+
+    def __init__(self):
+        self._times = deque()
+
+    def take(self):
+        """True (and counted) if one more restart is allowed now."""
+        now = time.monotonic()
+        while self._times and now - self._times[0] > RESTART_WINDOW_SECONDS:
+            self._times.popleft()
+        if len(self._times) >= MAX_AUTO_RESTARTS:
+            return False
+        self._times.append(now)
+        return True
+
+
 class ManagedProcess:
     """One child process the launcher owns: how to start it, whether it's
     still alive, and how to stop it and everything it spawned."""
@@ -596,9 +625,21 @@ class ManagedProcess:
         self.label = label
         self.process = None
         self._on_output = on_output
+        self._pump = None
 
     def is_running(self):
         return self.process is not None and self.process.poll() is None
+
+    def exit_code(self):
+        """How the last run ended: None if never started or still running, 0
+        for a normal exit, anything else for an error or a crash. Waits up to
+        a second for the output reader to take in the last lines first, so a
+        marker printed just before exiting has been seen."""
+        if self.process is None or self.process.poll() is None:
+            return None
+        if self._pump is not None:
+            self._pump.join(timeout=1)
+        return self.process.returncode
 
     def start(self, args, cwd, env_overrides=None):
         if self.is_running():
@@ -623,7 +664,8 @@ class ManagedProcess:
             creationflags=_NO_WINDOW,
             env=env,
         ))
-        threading.Thread(target=self._pump_output, args=(self.process,), daemon=True).start()
+        self._pump = threading.Thread(target=self._pump_output, args=(self.process,), daemon=True)
+        self._pump.start()
         return True
 
     def _pump_output(self, process):
@@ -705,6 +747,14 @@ class LauncherWindow:
         # cleared once it stops instead of describing a window that's closed.
         self._entry_agent_started = False
         self._dashboard_started = False
+        # Set when the gate monitor says its window closed normally - without
+        # it, an exit with an error code is a crash, and it's reopened.
+        self._entry_agent_closed_normally = False
+        # Automatic restarts left for a backend or gate monitor that stopped
+        # unexpectedly (see RestartBudget), and whether Quit is under way.
+        self._backend_restarts = RestartBudget()
+        self._entry_agent_restarts = RestartBudget()
+        self._quitting = False
 
         self.settings = _load_settings()
         self.app_version = _read_app_version()
@@ -1556,6 +1606,7 @@ class LauncherWindow:
         self._append_log(f"[launcher] starting entry-agent (gate={self.settings['gate_location']!r})")
         self._entry_agent_ready = False
         self._entry_agent_already_open = False
+        self._entry_agent_closed_normally = False
         # GATE_LOCATION/OFFICER_NAME are the exact names
         # entry-agent/config.py already reads from the environment (with its
         # own entry-agent/.env-file defaults) - passing them as subprocess
@@ -1683,6 +1734,8 @@ class LauncherWindow:
             self._entry_agent_ready = True
         elif ENTRY_AGENT_ALREADY_OPEN_MARKER in line:
             self._entry_agent_already_open = True
+        elif ENTRY_AGENT_CLOSED_MARKER in line:
+            self._entry_agent_closed_normally = True
 
     # ---- settings -----------------------------------------------------------
 
@@ -2156,6 +2209,16 @@ class LauncherWindow:
             self._backend_external = False
             self._append_log("[launcher] the backend this window was using has closed - starting its own")
             self._start_backend()
+        elif (self.backend.exit_code() not in (None, 0) and not self._quitting
+              and self._backend_restarts.take()):
+            # Our own backend died on its own (a crash, not Quit) - start it
+            # again, as the Gate icon already did for its backend. Each restart
+            # runs the database update first, like the first start.
+            self._backend_ok = False
+            self._append_log(f"[launcher] the backend stopped unexpectedly (exit code "
+                             f"{self.backend.exit_code()}) - starting it again")
+            self._set_status_message("The backend stopped unexpectedly — starting it again…")
+            self._start_backend()
         else:
             self._backend_ok = False
             self._set_status("backend", "stopped")
@@ -2198,12 +2261,25 @@ class LauncherWindow:
             self._set_status("entry-agent", "failed")
             # See the dashboard branch above.
             self._entry_agent_started = False
+        elif (self._entry_agent_started and self._entry_agent_ready and not self._quitting
+              and not self._entry_agent_closed_normally and self.entry_agent.exit_code() not in (None, 0)
+              and self._entry_agent_restarts.take()):
+            # It was up, then ended without its "closed" line and with an
+            # error code: a crash, not the guard closing it. Reopen it straight
+            # away - no pre-flight dialog, which was already answered.
+            self._append_log(f"[launcher] the gate monitor stopped unexpectedly (exit code "
+                             f"{self.entry_agent.exit_code()}) - reopening it")
+            self._entry_agent_started = False
+            self._finish_opening_entry_agent([])
         else:
             self._set_status("entry-agent", "off")
             if self._entry_agent_started:
-                # Ran and was closed normally - clear the card's state strip
-                # rather than leaving "Gate monitor is open" next to a window
-                # that isn't.
+                # Ran and ended - clear the card's state strip rather than
+                # leaving "Gate monitor is open" next to a window that isn't.
+                # A crash that used up its restarts says so in the log.
+                if not self._entry_agent_closed_normally and self.entry_agent.exit_code() not in (None, 0):
+                    self._append_log("[launcher] the gate monitor stopped unexpectedly again - not reopening it "
+                                     "automatically; open it with its button")
                 self._entry_agent_started = False
                 self._set_card_state("entry-agent", None)
 
@@ -2272,6 +2348,7 @@ class LauncherWindow:
     def _stop_all(self):
         """Stop every child we started. Safe to call twice - stop() is a no-op
         once a process is gone, and a no-op for a service we merely adopted."""
+        self._quitting = True  # what's stopped from here on isn't restarted
         for process in (self.entry_agent, self.dashboard, self.backend):
             process.stop()
 
@@ -2315,6 +2392,11 @@ class GateStarter:
         self._log_file = LogFile(GATE_LOG_FILE)
         self._ready = False
         self._already_open = False
+        # The gate monitor printed ENTRY_AGENT_CLOSED_MARKER: the guard closed
+        # it. Ending without it, with an error code, is a crash - reopened up
+        # to RestartBudget's limit.
+        self._closed_normally = False
+        self._gate_restarts = RestartBudget()
         self._started_backend = False
         self._checking_backend = False
         self._last_backend_check = 0.0
@@ -2364,6 +2446,8 @@ class GateStarter:
             self._ready = True
         elif ENTRY_AGENT_ALREADY_OPEN_MARKER in line:
             self._already_open = True
+        elif ENTRY_AGENT_CLOSED_MARKER in line:
+            self._closed_normally = True
 
     def _background(self, work, done):
         box = {}
@@ -2477,12 +2561,27 @@ class GateStarter:
         if self.settings.get("officer_name"):
             overrides["OFFICER_NAME"] = self.settings["officer_name"]
         overrides.update(device_setup.entry_agent_env_overrides(self.profile))
+        self._ready = False
+        self._closed_normally = False
         self.entry_agent.start([venv_python(), "-u", "main.py"], ENTRY_AGENT_DIR, env_overrides=overrides)
         self.root.after(self.WATCH_MS, self._watch_gate)
 
     def _watch_gate(self):
         if not self.entry_agent.is_running():
-            if self._already_open or self._ready:
+            code = self.entry_agent.exit_code()
+            crashed = self._ready and not self._closed_normally and code not in (None, 0)
+            if crashed and self._gate_restarts.take():
+                # It was up and ended without the guard closing it - reopen it.
+                # The guard sees it vanish for a few seconds, then come back
+                # (and sign in again if sign-in is on).
+                self._record(f"[gate] the gate monitor stopped unexpectedly (exit code {code}) - reopening it")
+                self._open_gate_monitor()
+                return
+            if crashed:
+                self._fail("The gate monitor stopped unexpectedly several times in a few minutes. Close this, "
+                           "check the camera, then open the Gate again. If it keeps happening, send the file "
+                           f"{GATE_LOG_FILE} to whoever looks after SecureTap.")
+            elif self._already_open or self._ready:
                 # It said "already open" itself, or the guard closed it.
                 self.root.destroy()
             else:

@@ -2,6 +2,7 @@ import ctypes
 import os
 import threading
 import time
+import traceback
 import uuid
 from collections import deque
 from ctypes import wintypes
@@ -143,26 +144,34 @@ class Camera:
             if not cap.isOpened():
                 cap.release()
                 return
-        self._frames_since_open = 0
-        wanted = dict(self._capture)
-        width, height = _resolution(wanted["camera_resolution"])
-        if wanted["camera_resolution"] != "auto" or wanted["camera_fps"] != "auto":
-            # Most webcams only give big pictures at a full frame rate in their
-            # compressed (MJPG) mode - asked for first, as DirectShow needs.
-            # One that can't just stays in its own mode.
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        if wanted["camera_fps"] != "auto":
-            cap.set(cv2.CAP_PROP_FPS, float(wanted["camera_fps"]))
-        if self._driver == MSMF:
-            # Media Foundation starts the stream on the first read and puts the
-            # camera's controls back then - exposure, backlight and focus set
-            # before it are lost (measured: 1/64 s "applied", picture unchanged).
-            cap.read()
-        self._cap = cap
-        self._frame_times.clear()
-        self._applied = self._apply_picture_settings(wanted)
+        try:
+            self._frames_since_open = 0
+            wanted = dict(self._capture)
+            width, height = _resolution(wanted["camera_resolution"])
+            if wanted["camera_resolution"] != "auto" or wanted["camera_fps"] != "auto":
+                # Most webcams only give big pictures at a full frame rate in their
+                # compressed (MJPG) mode - asked for first, as DirectShow needs.
+                # One that can't just stays in its own mode.
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            if wanted["camera_fps"] != "auto":
+                cap.set(cv2.CAP_PROP_FPS, float(wanted["camera_fps"]))
+            if self._driver == MSMF:
+                # Media Foundation starts the stream on the first read and puts the
+                # camera's controls back then - exposure, backlight and focus set
+                # before it are lost (measured: 1/64 s "applied", picture unchanged).
+                cap.read()
+            self._cap = cap
+            self._frame_times.clear()
+            self._applied = self._apply_picture_settings(wanted)
+        except Exception:
+            # Opened, then a driver call failed: let go of the device, or it
+            # stays held by this half-open handle and every retry finds the
+            # camera busy. _run_loop logs the error and tries again later.
+            self._cap = None
+            cap.release()
+            raise
 
     def _apply_picture_settings(self, wanted):
         """Exposure, backlight and focus - each driver decides whether it
@@ -320,41 +329,63 @@ class Camera:
         while not. Runs on its own thread so a slow/hanging open attempt
         can never freeze the Tk UI or the scan loop."""
         consecutive_failures = 0
+        last_error_logged = float("-inf")
         # This thread looks the camera's name up through COM (pygrabber,
         # Media Foundation) - each thread has to start COM for itself.
         ctypes.windll.ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
         while self._running:
-            if self._reopen:  # Settings > Camera changed (configure)
-                self._reopen = False
-                self._close_after_failure()
-                self._next_open_attempt = 0.0
-            if self._cap is None:
-                now = time.monotonic()
-                if now >= self._next_open_attempt:
-                    self._try_open()
-                    self._next_open_attempt = now + RECONNECT_INTERVAL_SECONDS
-                else:
-                    time.sleep(0.1)
-                continue
-
-            success, frame = self._cap.read()
-            if not success:
-                consecutive_failures += 1
-                if consecutive_failures >= MAX_CONSECUTIVE_READ_FAILURES:
-                    if self._driver == MSMF and not self._frames_since_open:
-                        self._msmf_failed = True  # opened, but never a frame: DirectShow next time
+            try:
+                if self._reopen:  # Settings > Camera changed (configure)
+                    self._reopen = False
                     self._close_after_failure()
-                    consecutive_failures = 0
-                else:
-                    time.sleep(0.1)
-                continue
+                    self._next_open_attempt = 0.0
+                if self._cap is None:
+                    now = time.monotonic()
+                    if now >= self._next_open_attempt:
+                        self._next_open_attempt = now + RECONNECT_INTERVAL_SECONDS
+                        self._try_open()
+                    else:
+                        time.sleep(0.1)
+                    continue
 
-            consecutive_failures = 0
-            self._frames_since_open += 1
-            self._frame_times.append(time.monotonic())
-            with self._lock:
-                self._latest_frame = frame
-                self._frame_number += 1
+                success, frame = self._cap.read()
+                if not success:
+                    consecutive_failures += 1
+                    if consecutive_failures >= MAX_CONSECUTIVE_READ_FAILURES:
+                        if self._driver == MSMF and not self._frames_since_open:
+                            self._msmf_failed = True  # opened, but never a frame: DirectShow next time
+                        self._close_after_failure()
+                        consecutive_failures = 0
+                    else:
+                        time.sleep(0.1)
+                    continue
+
+                consecutive_failures = 0
+                self._frames_since_open += 1
+                self._frame_times.append(time.monotonic())
+                with self._lock:
+                    self._latest_frame = frame
+                    self._frame_number += 1
+            except Exception:
+                # A driver or OpenCV error (a USB glitch, a camera that hiccups)
+                # used to end this thread: the picture froze for the rest of the
+                # shift while is_open() still said "Camera OK". Now the camera
+                # is let go of and reconnected, like an unplug - the gate monitor
+                # shows "No camera connected" meanwhile. Logged at most once a
+                # minute, since a camera that keeps failing fails on every retry.
+                if time.monotonic() - last_error_logged >= 60:
+                    last_error_logged = time.monotonic()
+                    print(f"camera {self.index}: error, reconnecting (repeats in the next 60 s not logged):")
+                    traceback.print_exc()
+                try:
+                    self._close_after_failure()
+                except Exception:
+                    self._cap = None
+                    with self._lock:
+                        self._latest_frame = None
+                consecutive_failures = 0
+                self._next_open_attempt = time.monotonic() + RECONNECT_INTERVAL_SECONDS
+                time.sleep(0.5)
 
     def frame_number(self):
         """Which frame get_preview_frame() would return now - a number that

@@ -96,7 +96,10 @@ def remember_unknown(gate_location, track_id, log_id, now=None):
         tracks = _unknowns.setdefault(gate_location, {})
         for key in [k for k, items in tracks.items() if all(now - t > UNKNOWN_MEMORY_SECONDS for t, _ in items)]:
             del tracks[key]
-        tracks.setdefault(track_id, []).append((now, log_id))
+        items = tracks.setdefault(track_id, [])
+        items.append((now, log_id))
+        while now - items[0][0] > UNKNOWN_MEMORY_SECONDS:  # same reason as note_covered
+            items.pop(0)
 
 
 def note_covered(gate_location, track_id, covered, now=None):
@@ -109,7 +112,15 @@ def note_covered(gate_location, track_id, covered, now=None):
         tracks = _covered.setdefault(gate_location, {})
         for key in [k for k, items in tracks.items() if now - items[-1][0] > UNKNOWN_MEMORY_SECONDS]:
             del tracks[key]
-        tracks.setdefault(track_id, []).append((now, covered))
+        items = tracks.setdefault(track_id, [])
+        items.append((now, covered))
+        # A face that stays in view keeps one track for as long as it's there
+        # (an unenrolled guard at the desk: all shift). Only its last
+        # UNKNOWN_MEMORY_SECONDS are ever read (covered_share - "Scan window
+        # length" is at most 30 s), so older frames are dropped. Kept, they grew
+        # by ~5 a second, ~144,000 in 8 hours, every one re-read on every frame.
+        while now - items[0][0] > UNKNOWN_MEMORY_SECONDS:
+            items.pop(0)
 
 
 def covered_share(gate_location, track_id, within_seconds, now=None):

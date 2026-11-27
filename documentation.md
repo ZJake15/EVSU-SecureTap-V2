@@ -1698,6 +1698,27 @@ an option would just be a step everyone has to perform every time.
   with no intermediate menu. Kept a separate process rather than imported, since
   it owns a camera, worker threads and its own Tk main loop.
 
+**Staying up through a fault.** Both the launcher and the guard's Gate icon
+(`launcher.py --gate`) start a backend or gate monitor again when it stops on
+its own — at most 3 times in 10 minutes each (`RestartBudget`), after which they
+stop retrying and say so, so one that fails on every start (a camera held by
+another program, a broken `.env`) never loops. The gate monitor prints
+`SECURETAP_GATE_MONITOR_CLOSED` the moment its window closes normally; ending
+without that line and with an error exit code is treated as a crash. Closing it,
+or **Quit**, is never undone. A restarted gate monitor ends the guard's shift as
+any reopening does, so the guard signs in again. Inside the gate monitor, a
+camera driver or OpenCV error makes the camera reconnect as if unplugged
+(`camera.py`), instead of ending its thread and freezing the picture. Both
+programs turn on Python's `faulthandler`, so a crash inside native code (ONNX
+Runtime, OpenCV, Tk) still leaves where it happened in the launcher's log.
+
+**Long-run (soak) test — `tools/soak-monitor.ps1`.** Records the memory and CPU
+of the backend, gate monitor and launcher every minute to a CSV on the Desktop
+(plain Windows PowerShell, nothing to install, reads only):
+`powershell -ExecutionPolicy Bypass -File tools\soak-monitor.ps1 -Hours 8`.
+Healthy: each program's memory flat after its first 30 minutes, no "NEW PID"
+rows (restarts) and no "not running" rows; Ctrl+C prints the summary early.
+
 **First-time setup window (`setup_wizard.py`).** The first time the launcher
 opens on a computer — no `device_profile.json` yet, or a missing `.env` — a
 five-step setup window comes first; anything already done is just confirmed:

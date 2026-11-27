@@ -654,9 +654,16 @@ A person can have **up to 5 embeddings** (from a guided multi-angle enrollment);
 match against *any* of their embeddings counts as a match for that person, using
 their single best-scoring embedding.
 
-> **Scale note:** this brute-force approach is fast for hundreds of embeddings but
-> is explicitly not built to scale to a very large student body — a proper vector
-> index (e.g. FAISS) would be the next step if enrollment grew much larger.
+> **Scale note:** the `known_matrix` is kept in memory between frames
+> (`backend/users/face_matrix.py`) and rebuilt only when an enrolled face changes
+> — noticed through save/delete signals, a cheap per-frame check of the active
+> embeddings (count, highest id, owners), and a rebuild at least every 5 minutes.
+> Rebuilding it from the database on every frame used to cost far more than the
+> comparison itself: measured on synthetic data, about 40 ms at 50 people,
+> 0.25 s at 300, 0.8 s at 1,000 and 4.3 s at 5,000, against well under a
+> millisecond for the comparison into the thousands. It holds person ids only;
+> the matched person is read fresh, so an edited name or photo shows at once. A
+> vector index (e.g. FAISS) would only matter far beyond this scale.
 
 ### 5.4 Decision thresholds (configurable from the Settings page)
 
@@ -1989,9 +1996,11 @@ knowing before extending the system:
   distance, until clean and covered are roughly balanced — then retraining.
 - The FAR/FRR evaluation (§5.7) covers identity matching only — there is no
   equivalent held-out accuracy benchmark for the liveness threshold yet.
-- Face matching is a brute-force vectorized NumPy scan — fine at hundreds of
-  embeddings, not built to scale to a very large student body without a proper
-  vector index.
+- Face matching is a brute-force vectorized NumPy scan over an in-memory table
+  (§5.3) — well under a millisecond into the thousands of embeddings; a vector
+  index would only matter far beyond that. An embedding rewritten in place by
+  another process (`recompute_embeddings` while the backend runs) reaches the
+  gate within 5 minutes, or at once after a backend restart.
 - **Resolved** — `backend/media/` (reference/enrollment photos) used to be served
   with no access control at all whenever `DEBUG=True` (the previous default).
   Every media URL the API hands out is now a signed, time-limited link (see §11)

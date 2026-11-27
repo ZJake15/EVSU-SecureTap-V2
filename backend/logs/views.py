@@ -1,3 +1,4 @@
+import logging
 import time
 
 import numpy as np
@@ -31,7 +32,9 @@ from configuration import schedule
 from configuration import store as system_settings
 from configuration.registry import CAMERA_KEYS
 from securetap_project.code_fingerprint import code_fingerprint
-from users import flatness, insightface_utils, live_details, liveness_utils, occlusion_utils, reenrollment, semesters
+from users import (
+    face_matrix, flatness, insightface_utils, live_details, liveness_utils, occlusion_utils, reenrollment, semesters,
+)
 from users.confusable_utils import get_confusable_partner_ids
 from users.models import Person
 
@@ -55,6 +58,24 @@ from .serializers import (
     ManualOverrideRequestSerializer,
     VerifyRequestSerializer,
 )
+
+logger = logging.getLogger(__name__)
+
+# A face model that fails, fails on every frame - its error is written to the
+# backend's log (the launcher keeps it) at most this often, not 5 times a second.
+FACE_CHECK_ERROR_LOG_SECONDS = 60
+_last_face_check_error_log = [float("-inf")]
+
+
+def _log_face_check_error():
+    """Call from inside an `except` block - logs the exception being handled."""
+    now = time.monotonic()
+    if now - _last_face_check_error_log[0] >= FACE_CHECK_ERROR_LOG_SECONDS:
+        _last_face_check_error_log[0] = now
+        logger.exception(
+            "Face check failed on a gate frame - the gate monitor shows \"Face check error\" "
+            "(repeats in the next %d s are not logged)", FACE_CHECK_ERROR_LOG_SECONDS,
+        )
 
 
 def _box_to_dict(box):
@@ -908,10 +929,12 @@ class IdentifyView(APIView):
     a fair look at the face) and never folded into "Unknown" either.
 
     Matching is one vectorized cosine-similarity computation over every
-    enrolled embedding - fast (numpy/BLAS) for hundreds of embeddings, but
-    won't scale gracefully to a huge student body without a proper vector
-    index (FAISS, etc.) - deliberately not built now; not warranted at this
-    project's scale.
+    enrolled embedding, against a matrix kept in memory between frames
+    (users/face_matrix.py) - rebuilding it from the database on every frame
+    used to cost far more than the comparison itself (about 40 ms at 50
+    people, 0.8 s at 1,000). The comparison stays well under a millisecond
+    into the thousands of embeddings; a vector index (FAISS, etc.) would only
+    matter far beyond this project's scale.
     """
 
     permission_classes = [HasServiceToken]
@@ -960,11 +983,22 @@ class IdentifyView(APIView):
             bgr_image = insightface_utils.load_bgr_array(image_file)
             detections = insightface_utils.compute_face_embeddings_and_boxes(bgr_image)
         except Exception:
-            bgr_image = None
-            detections = []
+            # Not "nobody's here": the photo couldn't be read or the face
+            # model failed. This used to pass as "No face detected", so a
+            # broken model looked exactly like an empty gate, with nothing in
+            # any log. Now it's logged (_log_face_check_error), and
+            # face_check_error turns the gate monitor's backend light red with
+            # "Face check error" (entry-agent main.py).
+            self._add_time("faces_ms", faces_started)
+            _log_face_check_error()
+            return Response({
+                "results": [self._transient_payload("Face check error - see the backend log.")],
+                "face_check_error": True,
+                **self._agent_info(gate_location),
+            })
         self._add_time("faces_ms", faces_started)
 
-        if bgr_image is None or not detections:
+        if not detections:
             # Nobody's in frame - this is the idle state for the vast majority of
             # scan cycles, not a security-relevant event, so it isn't logged.
             # Logging it would flood EntryLog with a row every ~0.2s any time the
@@ -976,8 +1010,11 @@ class IdentifyView(APIView):
 
         image_height, image_width = bgr_image.shape[:2]
 
-        candidates = self._active_candidates()
-        if not candidates:
+        # Every active person's embeddings as one matrix, kept in memory
+        # between frames and rebuilt only when the enrolled faces change - see
+        # users/face_matrix.py. owner_ids[i] is the person id of row i.
+        known_matrix, owner_ids = face_matrix.current()
+        if known_matrix is None:
             # A setup/config gap (nothing enrolled yet), not a per-frame security
             # event - same reasoning as above, don't log every idle cycle.
             payload = self._transient_payload("No enrolled faces to compare against.")
@@ -985,8 +1022,6 @@ class IdentifyView(APIView):
                 "results": [payload],
                 **self._agent_info(gate_location),
             })
-
-        known_matrix, owners = self._build_candidate_matrix(candidates)
         # Settings page: "Ignore faces farther than" (0 = off). Clamped to the
         # same 1x-2x the gate monitor allows.
         max_distance = system_settings.get("max_scan_distance")
@@ -1075,9 +1110,14 @@ class IdentifyView(APIView):
             # Skipped outright for a face that already matches an enrolled
             # person - see _already_recognizable - and when "Covered face
             # detection" is switched off on the Settings page.
+            #
+            # This face against every enrolled embedding, worked out once and
+            # shared by that check and the match itself. Both sides are
+            # unit-normalized, so the product is the cosine similarity.
+            similarities = known_matrix @ np.asarray(embedding, dtype=np.float32)
             if (
                 system_settings.get("covered_face_enabled")
-                and not self._already_recognizable(embedding, known_matrix)
+                and not self._already_recognizable(similarities)
                 and self._occlusion_reason(mouth_ratio, texture_ratio, det_score)
             ):
                 motion.note_covered(gate_location, tracked[index][1], True)
@@ -1085,8 +1125,8 @@ class IdentifyView(APIView):
                 continue
             results.append(
                 self._match_one_face(
-                    embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image,
-                    liveness_score, liveness_unsure=liveness_unsure, track_id=tracked[index][1],
+                    embedding, similarities, box, owner_ids, known_matrix, direction, gate_location, request,
+                    bgr_image, liveness_score, liveness_unsure=liveness_unsure, track_id=tracked[index][1],
                 )
             )
         self._follow_unknowns_by_track(results, tracks, gate_location)
@@ -1152,29 +1192,6 @@ class IdentifyView(APIView):
             # so on - "auto" leaves that computer's speed mode in charge.
             "camera": {key: system_settings.get(key) for key in CAMERA_KEYS},
         }
-
-    @staticmethod
-    def _active_candidates():
-        return [
-            person
-            for person in Person.objects.filter(is_active=True).prefetch_related("face_embeddings")
-            if person.face_embeddings.all()  # already prefetched, no extra query
-        ]
-
-    @staticmethod
-    def _build_candidate_matrix(candidates):
-        """Stacks every embedding of every candidate person into one
-        (N, 512) matrix plus a parallel owner list, so one vectorized
-        similarity computation covers all of them - a person with several
-        embeddings just occupies several rows, and their score is the max
-        across their own rows (best-matching photo wins)."""
-        rows = []
-        owners = []
-        for person in candidates:
-            for face_embedding in person.face_embeddings.all():
-                rows.append(face_embedding.embedding)
-                owners.append(person)
-        return np.array(rows, dtype=np.float32), owners
 
     @staticmethod
     def _skip_reason(box, blur_variance, yaw_ratio, image_width, image_height, speed=None):
@@ -1288,7 +1305,7 @@ class IdentifyView(APIView):
         return occlusion_utils.is_occluded(mouth_ratio, texture_ratio, det_score)
 
     @staticmethod
-    def _already_recognizable(embedding, known_matrix):
+    def _already_recognizable(similarities):
         """True if this face already matches some enrolled person at the
         normal match threshold - in which case it's never flagged as covered.
 
@@ -1302,29 +1319,36 @@ class IdentifyView(APIView):
         enrolled person could be told to uncover a face that isn't covered,
         and never be recognized.
 
-        Only a similarity check (a single matrix product against the same
-        known_matrix _match_one_face uses) - no voting, no logging. A face
-        that clears it still goes through liveness and the normal match vote
-        afterwards, including the near-threshold tiebreak (card tap), so a
-        weak match here can't wave anyone through on its own."""
-        query = np.array(embedding, dtype=np.float32)
-        return float((known_matrix @ query).max()) >= system_settings.get("match_strictness")
+        Only a similarity check (the same similarities _match_one_face
+        uses - this face against every enrolled embedding) - no voting, no
+        logging. A face that clears it still goes through liveness and the
+        normal match vote afterwards, including the near-threshold tiebreak
+        (card tap), so a weak match here can't wave anyone through on its own."""
+        return float(similarities.max()) >= system_settings.get("match_strictness")
 
     def _match_one_face(
-        self, embedding, box, owners, known_matrix, direction, gate_location, request, bgr_image, liveness_score,
-        liveness_unsure=False, track_id=None,
+        self, embedding, similarities, box, owner_ids, known_matrix, direction, gate_location, request, bgr_image,
+        liveness_score, liveness_unsure=False, track_id=None,
     ):
-        query = np.array(embedding, dtype=np.float32)
-        similarities = known_matrix @ query  # both sides are unit-normalized -> cosine similarity
+        """similarities: this face against every row of known_matrix
+        (cosine); owner_ids: the person id of each row (users/face_matrix.py)."""
         best_index = int(np.argmax(similarities))
         best_similarity = float(similarities[best_index])
-        best_person = owners[best_index]
+        best_person_id = int(owner_ids[best_index])
 
         if best_similarity < system_settings.get("match_strictness"):
             return self._confirm_or_vote_unmatched(
                 embedding, bgr_image, box, direction, gate_location, request, best_similarity, liveness_score,
                 track_id=track_id,
             )
+
+        # The face table holds ids only - who this is is read fresh, so a name
+        # or photo changed a moment ago shows. None: deactivated or deleted in
+        # the instant since this frame's table was read - just check again.
+        best_person = Person.objects.filter(pk=best_person_id, is_active=True).first()
+        if best_person is None:
+            return {"success": False, "retry": True, "reason": "Checking...", "log_id": None,
+                    "box": _box_to_dict(box)}
 
         tiebreak = None  # (candidate ids, reason) when this face is settled by a card tap
         # Checked before the normal ambiguity-gap logic below, and overrides
@@ -1351,20 +1375,20 @@ class IdentifyView(APIView):
             tiebreak = ([best_person.id] + confusable_partner_ids, PendingTiebreak.Reason.CONFUSABLE_PAIR)
 
         if tiebreak is None:
+            # The best score of anyone else - their own best photo.
             other_best = None
-            other_owner = None
-            for sim, owner in zip(similarities, owners):
-                if owner.id == best_person.id:
-                    continue
-                if other_best is None or sim > other_best:
-                    other_best, other_owner = float(sim), owner
+            other_owner_id = None
+            others = owner_ids != best_person.id
+            if others.any():
+                other_index = int(np.argmax(np.where(others, similarities, -np.inf)))
+                other_best, other_owner_id = float(similarities[other_index]), int(owner_ids[other_index])
 
             borderline = best_similarity < system_settings.get("match_strictness") + system_settings.get("unsure_margin")
             close_second = (other_best is not None
                             and (best_similarity - other_best) < system_settings.get("unsure_margin"))
             # Settings page: "Ask for card when unsure".
             if (borderline or close_second) and system_settings.get("ask_card_when_unsure"):
-                tiebreak = ([best_person.id] + ([other_owner.id] if close_second else []),
+                tiebreak = ([best_person.id] + ([other_owner_id] if close_second else []),
                             PendingTiebreak.Reason.AMBIGUOUS_MATCH)
 
         if tiebreak is not None:
@@ -1392,7 +1416,7 @@ class IdentifyView(APIView):
             best_person, best_similarity, direction, gate_location, request, box, liveness_score, embedding, track_id
         )
         if result.get("log_id") is not None:
-            corrected = self._correct_recent_unknowns(embedding, best_person, owners, known_matrix, gate_location)
+            corrected = self._correct_recent_unknowns(embedding, best_person, owner_ids, known_matrix, gate_location)
             if corrected:
                 result["corrected_log_ids"] = corrected
         return result
@@ -1407,7 +1431,7 @@ class IdentifyView(APIView):
     # scores 0.32-0.49 against its own sharp self.
     UNKNOWN_CORRECTION_SIMILARITY = 0.30
 
-    def _correct_recent_unknowns(self, embedding, person, owners, known_matrix, gate_location):
+    def _correct_recent_unknowns(self, embedding, person, owner_ids, known_matrix, gate_location):
         """Someone just recognized here who was recorded as Unknown moments
         ago - typically because they moved fast and the first frames were
         smeared - was never really Unknown. Deletes those Unknown entries
@@ -1430,12 +1454,12 @@ class IdentifyView(APIView):
             timestamp__gte=cutoff,
         ).exclude(unmatched_encoding__isnull=True)
         live = np.array(embedding, dtype=np.float32)
-        person_rows = np.array([owner.id == person.id for owner in owners])
+        person_rows = owner_ids == person.id
         matched = []
         for log in recent:
             unknown = np.array(log.unmatched_encoding, dtype=np.float32)
             similarities = known_matrix @ unknown
-            if owners[int(np.argmax(similarities))].id != person.id:
+            if int(owner_ids[int(np.argmax(similarities))]) != person.id:
                 continue
             alike = max(float(np.dot(unknown, live)), float(similarities[person_rows].max()))
             if alike >= self.UNKNOWN_CORRECTION_SIMILARITY:
@@ -1829,6 +1853,9 @@ class IdentifyView(APIView):
         reason = "Not enrolled - no matching student/staff record."
         cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("unknown_cooldown_seconds"))
         recent_unmatched = EntryLog.objects.filter(
+            # This gate's only: the same stranger at another gate a moment
+            # later is a sighting there too, with its own record and photo.
+            gate_location=lanes.gate_of(gate_location),
             direction=direction,  # a stranger seen coming in, then going out, is two records
             verification_method=EntryLog.VerificationMethod.FACE_ONLY,
             status=EntryLog.Status.FAILED,
@@ -2074,7 +2101,8 @@ class IdentifyView(APIView):
         reason = "Possible spoof detected - photo, screen, or printout, not a live face."
         cooldown_cutoff = timezone.now() - timezone.timedelta(seconds=system_settings.get("spoof_cooldown_seconds"))
         recent_spoof = EntryLog.objects.filter(
-            status=EntryLog.Status.SPOOF_SUSPECTED, direction=direction, timestamp__gte=cooldown_cutoff
+            gate_location=lanes.gate_of(gate_location),  # this gate's only - see _handle_unmatched_face
+            status=EntryLog.Status.SPOOF_SUSPECTED, direction=direction, timestamp__gte=cooldown_cutoff,
         ).exclude(unmatched_encoding__isnull=True)
 
         query = np.array(embedding, dtype=np.float32)

@@ -37,6 +37,12 @@ class UsersConfig(AppConfig):
 
         photo_files.connect()
 
+        # The gate's in-memory table of enrolled faces is rebuilt when one
+        # changes - see users/face_matrix.py.
+        from . import face_matrix
+
+        face_matrix.connect()
+
         # The face models load on first use, which made the first scans
         # after starting slow - see users/warmup.py. Only for the web server
         # (in the process that serves - with auto-reload that's the child),

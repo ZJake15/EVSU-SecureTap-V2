@@ -33,6 +33,12 @@ CAMERA_REPORT_SECONDS = 60
 # one to suggest (main's watch_for_exit_camera).
 EXIT_SUGGEST_SECONDS = 30
 
+# Per camera (lanes.ENTRY / lanes.EXIT): whether the backend's last answer
+# said its face check itself failed (/api/identify's face_check_error - the
+# face model or the photo broke, not "nobody here"). Set by scan_loop, read by
+# status_worker, which turns the backend light red with "Face check error".
+_face_check_failing = {}
+
 # Read by the root launcher (launcher.py's _read_last_session_summary) to show
 # a "last session" line before the entry-agent is even started again - in
 # the data folder (config.data_file), whatever the working directory.
@@ -436,6 +442,7 @@ def scan_loop(config, api_client, camera, ui, stop_event, test_run=None, live=No
                 test_mode=test_run is not None,
             )
             ui.show_offline(False)
+            _face_check_failing[direction] = bool(response.get("face_check_error"))
             threshold = response.get("threshold")
             if threshold is not None and threshold != last_threshold:
                 ui.set_threshold(threshold)
@@ -1091,7 +1098,12 @@ def main():
                 server_ok = True
             except requests.RequestException:
                 server_ok = False
-            monitor.set_backend_ok(server_ok)
+            if server_ok and any(_face_check_failing.values()):
+                # Reachable, but its face check fails on every frame - the
+                # cameras would otherwise look fine while nobody is recognized.
+                monitor.set_backend_ok(False, "Face check error")
+            else:
+                monitor.set_backend_ok(server_ok)
             waiting = offline_queue.pending_count()
             monitor.set_queue_count(waiting)
             live["health"]["queue"] = waiting

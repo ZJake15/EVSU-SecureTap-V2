@@ -2692,8 +2692,8 @@ class GateMonitorWindow:
         on_duty = self._sign_in.get("on_duty") or {}
         return on_duty.get("shift_id")
 
-    def set_backend_ok(self, ok):
-        self._queue.put(("backend_ok", ok))
+    def set_backend_ok(self, ok, bad_text="Backend not OK"):
+        self._queue.put(("backend_ok", (ok, bad_text)))
 
     def set_camera_ok(self, ok, bad_text="Camera not connected"):
         self._queue.put(("camera_ok", (ok, bad_text)))
@@ -2768,8 +2768,9 @@ class GateMonitorWindow:
                 text=f"Queue {payload}", text_color=CAUTION if payload else INK_600
             )
         elif kind == "backend_ok":
-            self._set_status(self.backend_icon, self.backend_label, payload,
-                             "Backend OK", "Backend not OK", DANGER, "x-circle")
+            ok, bad_text = payload if isinstance(payload, tuple) else (payload, "Backend not OK")
+            self._set_status(self.backend_icon, self.backend_label, ok,
+                             "Backend OK", bad_text, DANGER, "x-circle")
         elif kind == "camera_ok":
             ok, bad_text = payload if isinstance(payload, tuple) else (payload, "Camera not connected")
             self._set_status(self.camera_icon, self.camera_label, ok,
